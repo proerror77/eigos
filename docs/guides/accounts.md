@@ -312,7 +312,7 @@ GRANT UPDATE (email_hash, email, purpose, applied_at) ON <schema>.account_applic
 | `npm run account -- grants <owner\|email>` | 查看该账号或申请人已分配的权限。 |
 | `npm run account -- set-grants <owner\|email> <文件>` | 整体替换该账号或申请人的权限。文件为 JSON 数组，传 `[]` 清空。 |
 
-- 用 `owner` 可以精确选择申请或账号。邮箱匹配到多个申请人时，发码命令要求用 owner。已有账号改权也优先用 owner。
+- 用 `owner` 可以精确选择申请或账号。邮箱匹配到多个身份时，发码和授权命令要求选择明确的 owner。
 - 邀请码是私有材料，由运营逐个交给申请人。码只在发放时输出，数据库只保存摘要。
 - 撤销全部权限后，Gateway 拒绝该账号的 MCP 请求，排队任务在执行前也会被拒绝。停用账号还会阻止它在账号页授权 Grok。恢复停用账号会保留先前的 Grok 授权状态和运营分配的权限。
 

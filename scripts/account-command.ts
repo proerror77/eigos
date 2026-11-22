@@ -44,7 +44,7 @@ export async function accountAccessCommand(db: Database, signup: SignupMode, [co
   }
   if (command === 'grant-catalog') return (await accountGrantCatalogue(db)).slice(1);
   if (!target) throw new Error('Provide the applicant or account owner or email');
-  const owner = (await accounts.find(target))?.owner ?? await accounts.applicationOwner(target);
+  const owner = await accounts.operatorTarget(target);
   if (!owner) throw new Error('Account or application not found');
   const subject = accountGrantSubject(owner);
   if (command === 'set-grants') {

@@ -46,6 +46,7 @@ export async function initializeAccounts(db: Database) {
     CREATE TABLE IF NOT EXISTS ${s}.account_applications (
       owner text PRIMARY KEY, email_hash text NOT NULL, email text NOT NULL, purpose text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS applications_email ON ${s}.account_applications(email_hash);
     CREATE TABLE IF NOT EXISTS ${s}.member_sessions (
       token_hash text PRIMARY KEY, owner text NOT NULL, email_hash text NOT NULL,
       expires_at timestamptz NOT NULL);
@@ -96,19 +97,19 @@ export class Accounts {
       ORDER BY a.applied_at,a.owner LIMIT 100 OFFSET $1`, [offset])).rows;
   }
 
-  async applicationOwner(target: string) {
-    const byOwner = /^[a-f0-9]{64}$/.test(target), s = this.db.schema;
-    const { rows } = await this.db.query<{ owner: string }>(`SELECT owner FROM ${s}.account_applications
-      WHERE ${byOwner ? 'owner' : 'email_hash'}=$1 AND NOT EXISTS (
-        SELECT 1 FROM ${s}.accounts a WHERE a.owner=account_applications.owner) LIMIT 2`,
-    [byOwner ? target : emailDigest(target)]);
-    if (rows.length > 1) throw new InvalidInput('Multiple applications match this email. Use the applicant owner.');
+  async operatorTarget(target: string) {
+    const byOwner = /^[a-f0-9]{64}$/.test(target), column = byOwner ? 'owner' : 'email_hash', s = this.db.schema;
+    const { rows } = await this.db.query<{ owner: string }>(`SELECT owner FROM ${s}.accounts WHERE ${column}=$1
+      UNION SELECT owner FROM ${s}.account_applications WHERE ${column}=$1 AND NOT EXISTS (
+        SELECT 1 FROM ${s}.accounts a WHERE a.owner=account_applications.owner)
+      LIMIT 2`, [byOwner ? target : emailDigest(target)]);
+    if (rows.length > 1) throw new InvalidInput('Multiple identities match this email. Use the applicant or account owner.');
     return rows[0]?.owner;
   }
 
   async invite(target: string, hours: number) {
     if (this.signup !== 'invite') throw new InvalidInput('Invitations require invite sign-up mode');
-    const owner = await this.applicationOwner(target), s = this.db.schema;
+    const owner = await this.operatorTarget(target), s = this.db.schema;
     if (!owner) throw new InvalidInput('No pending application for this email or owner');
     return this.db.transaction(async client => {
       await this.lockApplication(owner, client);

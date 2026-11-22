@@ -299,6 +299,12 @@ test('operators assign only selected active business grants and can clear them',
     await writeFile(file, '[]');
     assert.deepEqual(await run('set-grants', owner, file), { owner, grants: [] });
     assert.equal(await accounts.hasAgentAccess(owner), false);
+
+    const duplicate = 'c'.repeat(64);
+    await accounts.apply({ owner: duplicate, email_hash: emailDigest(email) }, email, 'Separate identity with the same email');
+    await assert.rejects(run('set-grants', email, file), /Multiple identities match this email/);
+    await assert.rejects(accounts.invite(email, 1), /Multiple identities match this email/);
+    assert.deepEqual(await run('grants', duplicate), { owner: duplicate, grants: [] });
   } finally {
     await rm(directory, { recursive: true, force: true });
     await f.close();
