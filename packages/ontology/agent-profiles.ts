@@ -32,7 +32,7 @@ export const businessAgentProfiles: AgentProfile[] = [
       { action: 'ResolveAmapAddress', function: 'readAmapObservation',
         text: 'Resolve named endpoints with MapAddressResolution.geocode. When ambiguous, show the candidates and use only the user’s chosen AmapQueryPoint.' },
       { action: 'PlanAmapRoute', function: 'readAmapObservation',
-        text: 'Use MapRoutePlanning.plan for a known mode and the confirmed AmapQueryPoint references or explicit GCJ-02 coordinates. Transit requires origin and destination administrative codes. Read the same result with resultParameter observation.' },
+        text: 'Use MapRoutePlanning.plan for a known mode and the confirmed AmapQueryPoint references or explicit GCJ-02 coordinates. Transit requires Amap city codes such as 021 for Shanghai, distinct from optional administrative codes. Read the same result with resultParameter observation.' },
       { action: 'MeasureAmapDistances', function: 'readAmapObservation',
         text: 'Use MapDistanceMeasurement.measure for multiple origin points and one chosen destination. Report the requested distance mode.' },
       { action: 'InspectAmapTraffic', function: 'readAmapObservation',

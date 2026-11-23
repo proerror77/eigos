@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import {
-  amapAreaType, amapDistanceInput, amapDistanceLegRecord, amapDistanceLegType, amapDistanceRecord, amapGeocodeInput,
+  amapAreaType, amapCityCode, amapDistanceInput, amapDistanceLegRecord, amapDistanceLegType, amapDistanceRecord, amapGeocodeInput,
   amapGeocodeRecord, amapObservationLinks as links, amapObservationRef, amapObservations as types, amapPointRecord,
   amapPointType, amapRouteInput, amapRouteOptionRecord, amapRouteOptionType, amapRouteRecord, amapTrafficAreaRecord,
   amapTrafficInput, amapTrafficRecord,
@@ -10,7 +10,7 @@ import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 import type { AmapResolver } from './client.js';
-import { geocodeAmapAddress, pointText } from './functions.js';
+import { geocodeAmapPoints, pointText } from './functions.js';
 
 type Graph = FunctionContext['objects'];
 type Point = z.infer<typeof amapPointRecord>;
@@ -24,11 +24,11 @@ const relation = (type: string, from: ObjectRef, to: ObjectRef) => ({ type, from
 
 async function endpoint(graph: Graph, value: Endpoint): Promise<ConfirmedPoint> {
   if ('point' in value) return { point: { point: value.point, evidence: 'caller_provided',
-    name: value.name ?? pointText(value.point), cityCode: value.cityCode } };
+    name: value.name ?? pointText(value.point), cityCode: value.cityCode, adcode: value.adcode } };
   if (value.place.type !== amapPointType) throw new Conflict('Use a point returned by the original Amap observation');
   const original = await graph.read(value.place);
   const { id: _id, ...point } = amapPointRecord.parse(original.properties);
-  return { original, point: { ...point, cityCode: value.cityCode ?? point.cityCode } };
+  return { original, point: { ...point, cityCode: value.cityCode ?? point.cityCode, adcode: value.adcode ?? point.adcode } };
 }
 async function savePoint(graph: Pick<Objects, 'read' | 'create'>, observation: ObjectRef, role: string | number, value: ConfirmedPoint) {
   if (value.original) {
@@ -64,9 +64,11 @@ export function amapObservationFunctions(source: AmapResolver): ReadonlyMap<stri
       let rawOptions: unknown;
       if (input.mode === 'transit') {
         const city1 = origin.point.cityCode, city2 = destination.point.cityCode;
-        if (!city1 || !city2) throw new Conflict('请提供公交起终点的高德行政区代码，或选择已解析的地点。');
+        if (!city1 || !city2) throw new Conflict('请提供公交起终点的高德城市代码（如上海 021），或选择已解析的地点。');
+        const ad1 = origin.point.adcode, ad2 = destination.point.adcode;
         rawOptions = z.object({ route: z.object({ transits: z.array(z.unknown()) }) }).parse(
-          await client.web('/v5/direction/transit/integrated', { ...args, city1, city2, show_fields: 'cost' }, ctx.signal)).route.transits;
+          await client.web('/v5/direction/transit/integrated', { ...args, city1, city2, show_fields: 'cost',
+            ...(ad1 ? { ad1 } : {}), ...(ad2 ? { ad2 } : {}) }, ctx.signal)).route.transits;
       } else if (input.mode === 'bicycling') {
         rawOptions = z.object({ route: z.object({ paths: z.array(z.unknown()) }) }).parse(
           await client.web('/v5/direction/bicycling', args, ctx.signal)).route.paths;
@@ -123,7 +125,7 @@ export function amapObservationFunctions(source: AmapResolver): ReadonlyMap<stri
       if (east <= 0 || north <= 0 || diagonal > 10_000) throw new Conflict('请提供对角线在 10 公里内、方向正确的路况区域。');
       const client = await source(ctx);
       const { trafficinfo: report } = z.object({ trafficinfo: z.object({
-        evaluation: z.object({ status: z.enum(['0', '1', '2', '3']) }),
+        evaluation: z.object({ status: z.coerce.string().pipe(z.enum(['0', '1', '2', '3'])) }),
         description: z.string().max(2000).optional(), roads: z.array(z.unknown()).max(3000).optional(),
       }) }).parse(await client.web('/v3/traffic/status/rectangle', {
         rectangle: pointText(southwest) + ';' + pointText(northeast), level: String(level), extensions: 'all',
@@ -139,12 +141,13 @@ export function amapObservationFunctions(source: AmapResolver): ReadonlyMap<stri
     }],
     [types.geocode.fn, async (raw, ctx) => {
       const input = amapGeocodeInput.parse(raw), { stage, ref } = edit(ctx, types.geocode.type);
-      const result = await geocodeAmapAddress(await source(ctx), input, ctx.signal);
+      const candidates = await geocodeAmapPoints(await source(ctx), input, ctx.signal);
       return stage(ref, async graph => {
-        await graph.create(ref, receipt(ref, '高德地址解析', input, result.candidates));
-        for (const [index, candidate] of result.candidates.entries()) {
+        await graph.create(ref, receipt(ref, '高德地址解析', input, candidates));
+        for (const [index, { point: candidate, cityCode }] of candidates.entries()) {
           const point = await savePoint(graph, ref, index, { point: { name: candidate.address ?? input.address,
-            point: candidate.point, cityCode: candidate.adcode, address: candidate.address, evidence: 'amap_geocode' } });
+            point: candidate.point, cityCode: amapCityCode.safeParse(cityCode).data, adcode: candidate.adcode,
+            address: candidate.address, evidence: 'amap_geocode' } });
           await graph.link(relation(links.geocodeCandidates, ref, point));
         }
       });

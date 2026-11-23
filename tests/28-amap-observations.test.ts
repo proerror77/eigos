@@ -26,8 +26,10 @@ test('Amap Actions record verifiable observations and reuse the linked geocoded 
       if (url.pathname === '/v5/direction/bicycling')
         return answer({ route: { paths: [{ distance: '900', duration: '220' }] } });
       if (url.pathname === '/v5/direction/transit/integrated') {
-        assert.equal(url.searchParams.get('city1'), '310115');
-        assert.equal(url.searchParams.get('city2'), '310000');
+        assert.equal(url.searchParams.get('city1'), '021');
+        assert.equal(url.searchParams.get('city2'), '021');
+        assert.equal(url.searchParams.get('ad1'), '310115');
+        assert.equal(url.searchParams.get('ad2'), '310000');
         assert.equal(url.searchParams.get('show_fields'), 'cost');
         return answer({ route: { transits: [{ distance: '3900', cost: { duration: '1050' },
           segments: [{ bus: [] }, { bus: { buslines: [{ name: '地铁 8 号线' }] } }] }] } });
@@ -49,7 +51,8 @@ test('Amap Actions record verifiable observations and reuse the linked geocoded 
       const search = await call('ResolveAmapAddress', { address: '测试地点', city: '上海市' }, 'geocode');
       assert.equal(search.kind, 'geocode');
       const point = search.candidates[0]!.ref;
-      const destination = { point: { latitude: 31.211, longitude: 121.51, coordinateSystem: 'gcj02' }, cityCode: '310000' };
+      const destination = { point: { latitude: 31.211, longitude: 121.51, coordinateSystem: 'gcj02' },
+        cityCode: '021', adcode: '310000' };
       const origin = { place: point };
       const input = { origin, destination, mode: 'transit' };
       const transit = await call('PlanAmapRoute', input, 'bus');

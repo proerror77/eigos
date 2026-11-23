@@ -6,9 +6,11 @@ import { json, time } from './service-contracts.js';
 const label = z.string().trim().min(1).max(250);
 const metric = z.number().int().nonnegative();
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
+export const amapCityCode = z.string().regex(/^\d{3,4}$/);
+const areaCodes = { cityCode: amapCityCode.optional(), adcode: adcode.optional() };
 const endpoint = z.union([
-  z.strictObject({ point: gcjPoint, name: label.optional(), cityCode: adcode.optional() }),
-  z.strictObject({ place: objectRefSchema, cityCode: adcode.optional() }),
+  z.strictObject({ point: gcjPoint, name: label.optional(), ...areaCodes }),
+  z.strictObject({ place: objectRefSchema, ...areaCodes }),
 ]);
 export const amapRouteInput = z.strictObject({
   origin: endpoint, destination: endpoint, mode: z.enum(['walking', 'driving', 'bicycling', 'transit']),
@@ -28,7 +30,7 @@ export const amapAreaType = 'AmapTrafficArea';
 
 const display = { id: hash, name: label };
 export const amapPointRecord = z.strictObject({
-  ...display, point: gcjPoint, cityCode: adcode.optional(), address: label.optional(),
+  ...display, point: gcjPoint, ...areaCodes, address: label.optional(),
   evidence: z.enum(['caller_provided', 'amap_geocode']),
 });
 export const amapRouteOptionRecord = z.strictObject({
