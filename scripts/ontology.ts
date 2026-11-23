@@ -1,11 +1,12 @@
 import { loadExtensions } from '../packages/runtime/extensions.js';
 import { readFile } from 'node:fs/promises';
 import { businessDefinition } from '../packages/ontology/definition.js';
+import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
-import { Access, setGrants, businessGrants, grantBetaRestaurantSearch, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants, syncAccountGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { configuredSource } from '../packages/core/config.js';
@@ -15,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 import type { ProjectionTransform } from '../packages/runtime/metadata.js';
 import { modelClearanceSchema, setModelClearance } from '../packages/runtime/model-egress.js';
 import { enablePgvector } from '../packages/runtime/semantic-pgvector.js';
-import { Accounts } from '../packages/runtime/accounts.js';
+import { Accounts, accountActionsGroup } from '../packages/runtime/accounts.js';
 import { installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-places/catalogue.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
@@ -48,8 +49,18 @@ else {
       if (args[0] === 'applications') {
         const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
         console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
-      } else if (args[0] === 'grant-restaurant-search') {
-        console.log(JSON.stringify(await grantBetaRestaurantSearch(db, await metadata.active('Eigos'))));
+      } else if (args[0] === 'sync-beta-grants' || args[0] === 'grant-restaurant-search') {
+        const active = await metadata.active('Eigos');
+        await syncAccountGrants(db, active);
+        console.log(JSON.stringify({ release: active.release }));
+      } else if (args[0] === 'grant-didi-pa') {
+        const active = await metadata.active('Eigos');
+        const grants = businessGrants(active).filter(grant => didiPAAccountResources.has(grant.resource));
+        if (grants.length !== didiPAAccountResources.size) throw new Error('The published DiDi pilot contract is incomplete');
+        await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
+          SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
+          ON CONFLICT DO NOTHING`, ['group:' + accountActionsGroup, JSON.stringify(grants)]);
+        console.log(JSON.stringify({ release: active.release, grants: grants.length }));
       } else console.log(JSON.stringify(await accountCommand(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);

@@ -7,12 +7,13 @@ import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
-import { businessGrants, grantBetaRestaurantSearch, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
+import { businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-const accountMcpTools = ['check_restaurant_availability', 'complete_with_action', 'get_task', 'search_restaurants', 'submit_task'];
+const accountMcpTools = ['apply_ontology_action', 'complete_with_action', 'describe_ontology', 'get_task', 'respond_to_task',
+  'search_restaurants', 'select_task_places', 'submit_task', 'supply_task_input'];
 
 test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -20,6 +21,9 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
   const sourceReaders: string[] = [];
   let g: AccountGateway;
   const f = await fixture({ model: 'synthetic-flight-agent', async run(_prompt, tools) {
+    assert.deepEqual([...tools.keys()].sort(), ['apply_action', 'complete_with_action', 'complete_with_function', 'describe_ontology', 'evaluate_function']);
+    await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'readDidiRideWatch', input: {} }), /Permission required: execute_function/);
+    await assert.rejects(tools.get('apply_action')!.invoke({ action: 'EstimateRide', input: route }), /Permission required: apply_action/);
     await tools.get('complete_with_function')!.invoke({ function: 'readFliggyFlights', input: flight });
   } }, async (actor, provider) => {
     assert([g.owner('alice'), g.owner('bob')].includes(actor));
@@ -107,6 +111,8 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     const issuedAt = Math.ceil(Date.now() / 1000), aliceToken = await g.token('alice', { issuedAt });
     const aliceMcp = await makeClient(aliceToken);
     const bobMcp = await makeClient(bobToken);
+    // The rollout must also work against the broad grants left behind by an older release.
+    await setGrants(f.db, 'group:' + accountGroup, businessGrants(f.model));
     assert.equal((await g.call('/ontology', bobToken)).status, 403);
     assert.equal((await g.call('/tasks', bobToken)).status, 403);
     assert.equal((await a2a('GetTask', { id: 'unused' }, 'eigos_agent_' + 'x'.repeat(43))).status, 401);
@@ -198,20 +204,18 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
   }
 });
 
-test('a Grok account can complete a scoped ride quote without submitting a task', async t => {
+test('an authorized task-scoped operator can complete a ride quote without submitting a task', async () => {
   const f = await fixture();
   let g: AccountGateway;
   g = await accountGateway({ ...f, source: async owner => {
     assert.equal(owner, g.owner('rider'));
     return f.provider.source;
-  } }, { signup: 'open' });
+  } }, { signup: 'invite' });
   const mcp = new Client({ name: 'test-grok-quote', version: '1' });
   try {
-    const { cookie } = await g.login('rider', 'rider@example.test');
-    assert.equal((await g.form('approve', cookie)).status, 303);
-    const group = 'group:' + accountGroup, grants = businessGrants(f.model);
-    await setGrants(f.db, group, grants);
-    const token = await g.token('rider', { scope: 'tasks:read tasks:write', issuedAt: Math.ceil(Date.now() / 1000) });
+    const owner = g.owner('rider'), grants = businessGrants(f.model);
+    await setGrants(f.db, owner, grants);
+    const token = await g.token('rider', { azp: 'existing-client', aud: g.config.PUBLIC_URL, scope: 'tasks:read tasks:write' });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
       requestInit: { headers: { Authorization: 'Bearer ' + token } },
     }));
@@ -248,19 +252,10 @@ test('a Grok account can complete a scoped ride quote without submitting a task'
     assert.partialDeepStrictEqual(ambiguous.structuredContent, { status: 409 });
     assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
 
-    await setGrants(f.db, group, grants.filter(grant => grant.resource !== 'Eigos/action/EstimateRide'));
+    await setGrants(f.db, owner, grants.filter(grant => grant.resource !== 'Eigos/action/EstimateRide'));
     const denied = await quote({ ...args, requestId: 'grok-quote-without-grant' });
     assert.partialDeepStrictEqual(denied.structuredContent, { status: 403 });
 
-    await setGrants(f.db, group, grants);
-    const active = Accounts.prototype.active;
-    const accountCheck = t.mock.method(Accounts.prototype, 'active', async function (this: Accounts, ...checks: Parameters<Accounts['active']>) {
-      await this.suspend(g.owner('rider'), 'synthetic');
-      return active.apply(this, checks);
-    });
-    const suspended = await quote();
-    assert.partialDeepStrictEqual(suspended.structuredContent, { status: 403 });
-    assert.equal(accountCheck.mock.callCount(), 1);
     assert.equal(f.provider.flags.orderCreates, 0);
   } finally {
     await mcp.close();
@@ -318,10 +313,7 @@ test('member restaurant search uses the original account source and exposes no g
     });
     const binding = JSON.parse(await readFile(connection, 'utf8'));
     await writeFile(connection, JSON.stringify({ ...binding, owner: g.owner('alice') }), { mode: 0o600 });
-    await setGrants(f.db, 'group:eigos-accounts', businessGrants(f.model)
-      .filter(grant => ['Eigos', 'Eigos/source/Amap', 'Eigos/function/searchMapPlaces'].includes(grant.resource)));
-    assert.equal((await grantBetaRestaurantSearch(f.db, f.model)).length, 5);
-    assert.deepEqual(await grantBetaRestaurantSearch(f.db, f.model), []);
+    await syncAccountGrants(f.db, f.model);
     const approved = async (sub: string) => {
       const email = sub + '@example.test', session = await g.login(sub, email);
       assert.equal((await g.form('apply', session.cookie, new URLSearchParams({ email, purpose: 'Search restaurant listings' }))).status, 303);
@@ -350,6 +342,7 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual(body(await search(alice.client)), result);
     assert.equal((await search(alice.client, { ...input, query: '烧烤' })).isError, true);
     assert.equal((await search(alice.client, { ...input, providers: ['TableCheck'] })).isError, true);
+    assert.equal((await search(alice.client, { ...input, provider: 'TableCheck' })).isError, true);
     assert.equal((await search(alice.client, { ...input, action: 'ConfirmTableCheckReservation' })).isError, true);
     const otherOwner = await search(bob.client);
     assert(!otherOwner.isError, JSON.stringify(otherOwner));
@@ -358,8 +351,9 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual(providerCalls.map(entry => entry.name), ['maps_text_search']);
     assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', alice.token)).status, 403);
-    await assert.rejects(alice.client.callTool({ name: 'describe_ontology', arguments: {} }), /Tool .* not found/);
-    await assert.rejects(alice.client.callTool({ name: 'apply_ontology_action', arguments: {} }), /Tool .* not found/);
+    const catalogue = body(await alice.client.callTool({ name: 'describe_ontology', arguments: {} }));
+    assert(!catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
+    await assert.rejects(alice.client.callTool({ name: 'check_restaurant_availability', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);
     assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations`)).rowCount, 0);

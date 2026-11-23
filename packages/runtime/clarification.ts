@@ -58,7 +58,7 @@ export const placeContinuationSchema = z.strictObject({
   requestId: z.string().min(1),
   action: z.string().min(1),
   input: z.record(z.string(), z.unknown()),
-  read: actionResultReadSchema,
+  read: actionResultReadSchema.optional(),
   waitingFor: z.enum(['city', 'origin', 'destination', 'pa-request', 'retry-source']).optional(),
   receipts: placeSelectionSchema.optional(),
   pickup: pickupCoordinateEvidence.optional(),

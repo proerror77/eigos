@@ -166,7 +166,10 @@ export function restaurantFunctions(functions: () => Functions, paths: Paths): R
     ['findRestaurants', async (raw, ctx) => {
       if (!ctx.edit || !ctx.operationId || ctx.objects.model.scenario) throw new Conflict('Use the live restaurant discovery Action');
       const input = restaurantSearchInput.parse(raw), limit = input.limit ?? 5;
-      const providers = [...new Set(input.providers ?? ['Amap', 'Dianping', 'TableCheck', 'MeituanDining'] as const)];
+      const defaultProviders = ctx.principal.memberAccess ? ['Amap'] as const : ['Amap', 'Dianping', 'TableCheck', 'MeituanDining'] as const;
+      const providers = [...new Set(input.providers ?? defaultProviders)];
+      if (ctx.principal.memberAccess && providers.some(provider => provider !== 'Amap'))
+        throw new PermissionDenied('Beta restaurant search requires Amap');
       const resy = [];
       if (providers.includes('Resy')) {
         try {

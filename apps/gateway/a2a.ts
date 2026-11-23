@@ -50,17 +50,17 @@ export class A2A implements A2ARequestHandler {
       if (!message?.messageId) throw new RequestMalformedError('Message ID is required');
       const text = message.parts.flatMap(part => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
       const { principal, authorizeSubmission } = this.user(context);
-      if (principal.memberAccess) {
-        if (message.taskId || !text.trim() || message.parts.some(part => part.content?.$case !== 'text'))
-          throw new RequestMalformedError('Send a new text request or use GetTask for an existing task');
-        return this.tasks.submit(principal, { requestId: message.messageId, message: text,
-          conversationId: message.contextId || undefined }, { assignConversation: true, authorize: authorizeSubmission });
-      }
       const dataPart = message.parts.find(part => part.content?.$case === 'data')?.content;
       const data = dataPart?.$case === 'data' ? dataPart.value as Record<string, unknown> : undefined;
       if (message.taskId) {
         if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
-        return new PARequests(this.tasks).respond(principal, message.taskId, data.paResponse, message.contextId || undefined);
+        return new PARequests(this.tasks).respond(principal, message.taskId, data.paResponse, message.contextId || undefined, authorizeSubmission);
+      }
+      if (principal.memberAccess) {
+        if (!text.trim() || message.parts.some(part => part.content?.$case !== 'text'))
+          throw new RequestMalformedError('Send a new text request or respond to the existing task');
+        return this.tasks.submit(principal, { requestId: message.messageId, message: text,
+          conversationId: message.contextId || undefined }, { assignConversation: true, authorize: authorizeSubmission });
       }
       if (data?.paResponse) throw new RequestMalformedError('PA response requires the original taskId');
       return this.tasks.submit(principal, { requestId: message.messageId, message: text || data?.message,
