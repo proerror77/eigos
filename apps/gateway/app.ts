@@ -32,6 +32,7 @@ import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { Accounts, accountTaskScopes, agentTokenPattern, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { CodeMode, codeModeInput } from './code-mode.js';
 import { startMcpTiming } from './mcp-timing.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
@@ -171,6 +172,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
     };
   const services=ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions);
+  const codeMode = new CodeMode();
   app.post('/ontology/services/:operation',async(req,res)=>{
     const {_ontology,...input}=z.record(z.string(),z.unknown()).parse(req.body);
     const name=_ontology===undefined?'Eigos':z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).parse(_ontology);
@@ -183,10 +185,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active(ontology));
     return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
   };
+  const confirmReadAccess = async (access: Access) => {
+    if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
+  };
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access).query(input.query);
-    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
+    await confirmReadAccess(access);
     return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
@@ -287,7 +292,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
     const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
-    const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
+    const canExecuteCode = !member && !p.memberAudience && p.scopes.includes('ontology:read');
+    const instructions = [
+      quoteOnly ? rideQuoteInstructions : '',
+      taskInstructions,
+      canExecuteCode ? 'For multiple Ontology reads with joins, pagination, or filtering, use execute_ontology and return a compact result. Discover exact contracts with describe_ontology. Use query_ontology for a single read or as a fallback.' : '',
+    ].filter(Boolean).join(' ');
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);
     const response = async (operation: () => Promise<unknown>) => {
@@ -454,6 +464,29 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
+    if (canExecuteCode) server.registerTool('execute_ontology', {
+      description: 'Run an async JavaScript function for read-only Ontology composition. Supply one function expression such as async ({ query }) => { const page = await query({ type: "TableCheckReservation", select: ["state"], limit: 20 }); return page.items.length; }. query accepts the inner query_ontology object directly and returns { items, cursor }. Await every query and return a compact JSON value. Supports up to 12 reads against one live release.',
+      inputSchema: codeModeInput,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    }, ({ ontology, code }) => response(async () => {
+      requireScope(p, 'ontology:read');
+      const cancel = new AbortController();
+      const disconnected = () => cancel.abort(new InvalidInput('Code Mode request ended'));
+      res.once('close', disconnected);
+      if (res.destroyed) disconnected();
+      try {
+        cancel.signal.throwIfAborted();
+        const access = await Access.load(db, p), model = await metadata.active(ontology);
+        const graph = new Objects(db, model, access);
+        const result = await codeMode.execute(code, async input => {
+          const page = await graph.query(input);
+          await confirmReadAccess(access);
+          return page;
+        }, cancel.signal);
+        await confirmReadAccess(access);
+        return result;
+      } finally { res.removeListener('close', disconnected); }
+    }));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
     if (!quoteOnly) server.registerTool('complete_with_action', {

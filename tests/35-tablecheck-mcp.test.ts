@@ -65,6 +65,14 @@ test('a verified operator can use the scoped catalog and TableCheck tools withou
     assert((await describe(client, { ontology: 'Other' })).isError);
     assert((await describe(noScope)).isError);
     assert((await describe(other)).isError);
+    assert(!(await client.listTools()).tools.some(tool => tool.name === 'execute_ontology'));
+    await assert.rejects(client.callTool({ name: 'execute_ontology', arguments: { code: 'async () => null' } }), /Tool .* not found/);
+    const reader = await authorizedClient('operator', 'tasks:read tasks:write ontology:read');
+    const execution = await reader.callTool({ name: 'execute_ontology', arguments: {
+      code: 'async ({ query }) => (await query({ type: "TableCheckReservation", select: ["state"] })).items.length',
+    } });
+    assert(!execution.isError, JSON.stringify(execution));
+    assert.deepEqual(execution.content, [{ type: 'text', text: '0' }]);
     const names = { names: ['RestaurantDiscovery'] };
     assert(!(await describe(client, names)).isError);
     assert((await describe(client, { ...names, ontology: 'Other' })).isError);
