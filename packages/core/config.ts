@@ -33,6 +33,7 @@ export const connectionConfigSchema = z.object({
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_PA_READS_ENABLED: z.enum(['true', 'false']).optional(),
+  EIGOS_DIDI_PA_ORDERS_ENABLED: z.enum(['true', 'false']).optional(),
   EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
   EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE: z.string().optional(),
   EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
@@ -89,6 +90,8 @@ export const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 export function readConfig(env = process.env): Config {
   const config = configSchema.parse(env);
+  if (config.EIGOS_DIDI_PA_ORDERS_ENABLED === 'true' && config.EIGOS_DIDI_PA_READS_ENABLED !== 'true')
+    throw new Error('DiDi PA ordering requires DiDi PA reads');
   if (config.EIGOS_AUTH_MODE === 'development') {
     if (!config.EIGOS_DEV_TOKEN || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost'].includes(config.HOST)) throw new Error('Development authentication requires an explicit loopback token');
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');

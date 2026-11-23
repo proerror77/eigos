@@ -12,3 +12,14 @@ export const didiPAAccountResources = new Set([
   ...['EstimateRide', 'EstimateRideWithEndpoints', 'SavePersonalPlace', 'StartDidiRideWatch',
     'CheckDidiRideWatch', 'StopDidiRideWatch'].map(name => 'Eigos/action/' + name),
 ]);
+
+export const didiPAOrderAccountResources = new Set([
+  ...didiPAAccountResources,
+  'Eigos/object/DidiImmediateRide',
+  'Eigos/object/ActionConfirmation',
+  'Eigos/function/bookDidiImmediateRide',
+  'Eigos/function/bookDidiRideWithEndpoints',
+  'Eigos/function/readDidiImmediateRide',
+  'Eigos/action/BookDidiImmediateRide',
+  'Eigos/action/BookDidiRideWithEndpoints',
+]);

@@ -1,14 +1,20 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { Conflict, SourceReadFailure, digest } from '../../core/identity.js';
 import { json } from '../../ontology/service-contracts.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
 import { PARequests } from '../../runtime/pa.js';
-import { currentTaskExecution } from '../../runtime/tasks.js';
+import { currentTaskExecution, type Task, type Tasks } from '../../runtime/tasks.js';
+import type { Sql } from '../../runtime/database.js';
 import type { DidiConnector } from './connector.js';
 import { didiDataSchema, didiEndpoint, didiReceiptSchema, didiToolInputs } from './contracts.js';
 import type { SourceResolver } from './functions.js';
 
 export const didiPAReadCapability = 'didi.read';
+export const didiPAAuthorizeCapability = 'didi.authorize';
+export const didiMcpConsole = 'https://mcp.didichuxing.com/';
+export const didiPAConnectionRef = z.string().regex(/^[a-f0-9]{64}$/);
+export const didiPAConnection = new AsyncLocalStorage<string>();
 export const didiPAReadTool = z.enum(['maps_textsearch', 'maps_place_around', 'taxi_estimate', 'maps_direction_driving']);
 const expectedKind = {
   maps_textsearch: 'places', maps_place_around: 'places', taxi_estimate: 'estimate', maps_direction_driving: 'driving',
@@ -17,8 +23,34 @@ export const didiPAReceipt = didiReceiptSchema.omit({ bindingId: true, environme
   endpoint: z.literal(didiEndpoint('production')), tool: didiPAReadTool,
 });
 
+export async function askDidiPA<T extends z.ZodType>(
+  tasks: Tasks, task: Task, operation: string, capability: string, input: Record<string, unknown>, schema: T,
+  beforeDispatch?: (client: Sql) => Promise<void>,
+) {
+  try {
+    const reply = await new PARequests(tasks).requestWithId(task, operation, capability, input, json(schema), undefined, beforeDispatch);
+    return { ...reply, response: schema.parse(reply.response) };
+  } catch (error) {
+    if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
+    throw error;
+  }
+}
+
+const authorizationReply = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('connected'), connectionRef: didiPAConnectionRef }),
+  z.strictObject({ status: z.literal('declined') }),
+]);
+export async function authorizeDidiPA(tasks: Tasks, task: Task, purpose: 'order' | 'read', operation: string, tools: readonly string[]) {
+  const reply = await askDidiPA(tasks, task, operation, didiPAAuthorizeCapability, {
+    provider: 'DiDi', purpose, tools,
+    authorizationUrl: didiMcpConsole, authorizationLabel: '申请或开通滴滴 MCP Key',
+    instruction: 'Check your own DiDi MCP connection for the required tools. If it is missing, show the official authorization link in this conversation and keep this request pending while the user sets up their personal connection. Tell the user to return here after setup. Reply connected with an opaque reference for that connection only after checking it. Keep the key in the PA; never send it to EIGOS or ask the user to paste it into the chat.',
+  }, authorizationReply);
+  return reply.response;
+}
+
 /** The original authenticated PA supplies a normalized observation through its existing task connection. */
-export function withDidiPAReads(fallback: SourceResolver): SourceResolver {
+export function withDidiPAReads(fallback: SourceResolver, ordersEnabled = false): SourceResolver {
   return async (owner, order) => {
     const execution = currentTaskExecution.getStore();
     if (!execution?.task.input.memberAccess || execution.task.owner !== owner || execution.task.cognitive_context)
@@ -30,30 +62,38 @@ export function withDidiPAReads(fallback: SourceResolver): SourceResolver {
       throw new Conflict('The PA DiDi pilot does not authorize order mutations');
     }
     const { task, tasks } = execution;
-    const bindingId = digest(['didi-pa', owner, task.id]);
+    const orderConnection = didiPAConnection.getStore();
+    const bindingId = digest(orderConnection ? ['didi-pa', owner, task.id, orderConnection] : ['didi-pa', owner, task.id]);
     const assertCurrent = () => tasks.current(task);
     const connector: DidiConnector = {
       evidenceKind: 'pa_reported',
       async invoke(_context, tool, input, signal, beforeCall) {
         const method = didiPAReadTool.parse(tool), args = didiToolInputs[method].parse(input), inputDigest = digest(args);
-        const replySchema = z.discriminatedUnion('status', [
-          z.strictObject({ status: z.enum(['unavailable', 'authorization_required']) }),
-          z.strictObject({ status: z.literal('observed'), data: didiDataSchema,
-            receipt: didiPAReceipt.extend({ tool: z.literal(method), inputDigest: z.literal(inputDigest) }) }),
-        ]);
         signal.throwIfAborted();
         await beforeCall?.('prepare');
-        let reply;
-        try {
-          reply = await new PARequests(tasks).requestWithId(task, digest([method, inputDigest, task.execution_step ?? 0]), didiPAReadCapability, {
+        const operation = digest([method, inputDigest, task.execution_step ?? 0]);
+        const read = (key: string, connection?: string) => {
+          const replySchema = z.discriminatedUnion('status', [
+            z.strictObject({ status: z.enum(['unavailable', 'authorization_required']) }),
+            z.strictObject({ status: z.literal('observed'), data: didiDataSchema,
+              receipt: didiPAReceipt.extend({ tool: z.literal(method), inputDigest: z.literal(inputDigest) }),
+              ...(connection ? { connectionRef: z.literal(connection) } : {}) }),
+          ]);
+          return askDidiPA(tasks, task, key, didiPAReadCapability, {
             provider: 'DiDi', endpoint: didiEndpoint('production'), tool: method, arguments: args, inputDigest,
+            ...(connection ? { connectionRef: connection } : {}),
             instruction: 'Use the original PA’s authorized DiDi MCP connection. Call only this exact read tool. Respond with normalized data and its credential-free supplier-call receipt. If connection or authorization is unavailable, return the appropriate status.',
-          }, json(replySchema));
-        } catch (error) {
-          if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
-          throw error;
+          }, replySchema);
+        };
+        let reply = await read(operation, orderConnection);
+        if (reply.response.status === 'authorization_required') {
+          const connected = await authorizeDidiPA(tasks, task, 'read', 'reauthorize:' + operation, [method]);
+          if (connected.status === 'declined') throw new Conflict('DiDi connection authorization was declined');
+          if (orderConnection && connected.connectionRef !== orderConnection)
+            throw new Conflict('The authorized DiDi connection changed; use a new quote for this connection');
+          reply = await read('authorized:' + operation, connected.connectionRef);
         }
-        const observed = replySchema.parse(reply.response);
+        const observed = reply.response;
         if (observed.status !== 'observed')
           throw new Conflict(observed.status === 'authorization_required' ? 'The original PA needs to authorize its DiDi MCP connection' : 'The original PA could not read DiDi');
         const { data, receipt } = observed, now = Date.now();
@@ -66,6 +106,6 @@ export function withDidiPAReads(fallback: SourceResolver): SourceResolver {
         return { data, receipt: { ...receipt, id: reply.requestId, bindingId, environment: 'production' } };
       },
     };
-    return { bindingId, assertCurrent, connector };
+    return { bindingId, assertCurrent, connector, ...(ordersEnabled ? { paOrdersEnabled: true } : {}) };
   };
 }

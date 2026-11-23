@@ -6,6 +6,7 @@ import { readDidiCredential } from './connector.js';
 import { mapDidiResult } from './mapping.js';
 import { sandboxOrderStatusText, sandboxRideStatus } from './sandbox-status.js';
 import { ridePosition, rideProgress } from '../../ontology/ride-watch.js';
+import { didiOrderEvidence } from '../../ontology/travel.js';
 
 const text = z.string().min(1).max(500);
 const commandSchemas = {
@@ -28,7 +29,7 @@ export const rideOrderSchema = z.strictObject({
   status: z.string().max(6000),
   state: z.enum(['created', 'reported', 'unknown']),
   independentRead: z.boolean(),
-  evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+  evidence: didiOrderEvidence,
   observedAt: z.iso.datetime(),
   contentDigest: z.string().length(64),
 });
@@ -89,6 +90,15 @@ export class DidiOperations implements RideOrders {
     const args = commandSchemas[tool].parse(input);
     if (this.sandboxOrderId !== undefined && 'order_id' in args && args.order_id !== this.sandboxOrderId)
       throw new Error('Original sandbox order identity changed');
+    return (await this.request([tool], signal, { tool, args, beforeDispatch }))!;
+  }
+  /** A personal PA can check order access without calling a mutation. */
+  async checkOrderConnection(signal: AbortSignal) {
+    await this.assertAvailable();
+    await this.request(['taxi_estimate', 'taxi_create_order', 'taxi_query_order'], signal);
+  }
+  private async request(tools: readonly Command[], signal: AbortSignal,
+    command?: { tool: Command; args: Record<string, unknown>; beforeDispatch?: () => Promise<void> }) {
     const secret = await readDidiCredential(this.binding),
       url = new URL(didiEndpoint(this.binding.environment));
     url.searchParams.set('key', secret);
@@ -111,9 +121,9 @@ export class DidiOperations implements RideOrders {
         )
           throw new Error('Unexpected MCP operation');
         if (rpc.method === 'tools/call') {
-          if (++calls !== 1 || rpc.params?.name !== tool || digest(rpc.params.arguments) !== digest(args))
+          if (!command || ++calls !== 1 || rpc.params?.name !== command.tool || digest(rpc.params.arguments) !== digest(command.args))
             throw new Error('DiDi command changed');
-          await beforeDispatch?.();
+          await command.beforeDispatch?.();
           await readDidiCredential(this.binding);
         }
       } else if (!['GET', 'DELETE'].includes(init.method ?? 'GET')) throw new Error('Unexpected method');
@@ -145,15 +155,15 @@ export class DidiOperations implements RideOrders {
       });
     try {
       await client.connect(transport, { signal: bounded, timeout: 10000 });
-      let cursor: string | undefined,
-        found = false;
+      let cursor: string | undefined;
+      const found = new Set<string>();
       for (let page = 0; page < 4; page++) {
         const list = await client.listTools(cursor ? { cursor } : {}, { signal: bounded, timeout: 10000 });
         for (const item of list.tools)
-          if (item.name === tool) {
-            if (found) throw new Error('Duplicate DiDi command');
-            found = true;
-            const fields = Object.keys(commandSchemas[tool].shape);
+          if (tools.includes(item.name as Command)) {
+            if (found.has(item.name)) throw new Error('Duplicate DiDi command');
+            found.add(item.name);
+            const fields = Object.keys(commandSchemas[item.name as Command].shape);
             if (
               item.inputSchema.type !== 'object' ||
               (item.inputSchema.required ?? []).some((k) => !fields.includes(k)) ||
@@ -165,13 +175,14 @@ export class DidiOperations implements RideOrders {
         if (!cursor) break;
         if (page === 3) throw new Error('DiDi tool directory incomplete');
       }
-      if (!found) throw new Error('DiDi command unavailable');
-      const raw = await client.callTool({ name: tool, arguments: args }, { signal: bounded, timeout: 20000 });
+      if (found.size !== tools.length) throw new Error('DiDi command unavailable');
+      if (!command) return;
+      const raw = await client.callTool({ name: command.tool, arguments: command.args }, { signal: bounded, timeout: 20000 });
       if (JSON.stringify(raw).includes(secret)) throw new Error('Credential echo blocked');
       if (raw.isError) throw new Error('DiDi rejected the operation');
       return raw;
     } catch {
-      throw new Error(`DiDi ${tool} request failed; inspect the original operation before retrying`);
+      throw new Error(`DiDi ${command?.tool ?? 'tool discovery'} request failed; inspect the original operation before retrying`);
     } finally {
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
