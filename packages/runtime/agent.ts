@@ -2,6 +2,7 @@ import { ObjectSets, evaluateSetViewSchema, aggregateSetViewSchema, saveSetSchem
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, digest, requireScope } from '../core/identity.js';
+import { bindOperationTiming, timeOperation } from '../core/operation-timing.js';
 import { combineClassification, internalClassification, isProtected } from '../ontology/classification.js';
 import { appendTrace, type TraceEvent } from './execution-trace.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
@@ -154,7 +155,7 @@ export class OntologyAgent {
     const tools = new Map<string, AgentTool>();
     const add = <S extends z.ZodType>(name: string, description: string, schema: S, execute: (input: z.output<S>) => Promise<unknown>) => {
       if (cognitive && !cognitiveTools.has(name)) return;
-      tools.set(name, { description, schema, invoke: async raw => {
+      const invoke = bindOperationTiming((raw: unknown) => timeOperation('agent_tool', async () => {
         signal.throwIfAborted();
         if (closing) throw new Error('The task response has already been selected');
         if (cognitiveBusy) throw new Conflict('Wait for the current Workflow tool before calling another');
@@ -260,7 +261,8 @@ export class OntologyAgent {
           cognitiveBusy = false;
           step.durationMs = Math.round(performance.now() - begin);
         }
-      } });
+      }, name));
+      tools.set(name, { description, schema, invoke });
     };
     const objectSets = new ObjectSets(this.db);
     const evaluateSet = async ({ scenarioId, ...input }: z.output<typeof evaluateSetViewSchema>) =>
@@ -445,7 +447,7 @@ export class OntologyAgent {
         throw new ModelEgressDenied();
       }
       signal.throwIfAborted();
-      return replay ? replay(tools) : this.driver.run(prompt, tools, signal);
+      return replay ? replay(tools) : timeOperation('model_session', () => this.driver.run(prompt, tools, signal));
     });
     try {
       const output = await Promise.race([completed, execution.then(() => { throw new Error('Agent ended without returning a Function result or requesting clarification'); })]);

@@ -1,4 +1,5 @@
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
+import { timeOperation } from '../core/operation-timing.js';
 import { validator } from '../ontology/model.js';
 import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
@@ -273,7 +274,8 @@ export class Actions {
     } : undefined;
     let reference: ObjectRef;
     try {
-      reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
+      reference = await timeOperation('action_apply',
+        () => this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal), selected.action);
     } catch (error) {
       if (!execution || !options.allowPause || model.scenario) throw error;
       const original = { ...selected, requestId, read };
@@ -295,9 +297,9 @@ export class Actions {
       throw error;
     }
     options.applied?.(reference);
-    const result = await this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
+    const result = await timeOperation('result_read', () => this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
       principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution?.task.id, execution,
-    });
+    }), read.function);
     signal.throwIfAborted();
     if (model.scenario) {
       if (execution) await execution.tasks.current(execution.task);
