@@ -47,14 +47,7 @@ else {
       console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
       const args = process.argv.slice(3);
-      if (args[0] === 'applications') {
-        const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
-        console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
-      } else if (args[0] === 'sync-beta-grants' || args[0] === 'grant-restaurant-search') {
-        const active = await metadata.active('Eigos');
-        await syncAccountGrants(db, active);
-        console.log(JSON.stringify({ release: active.release }));
-      } else if (args[0] === 'grant-amap-observations') {
+      if (args[0] === 'grant-amap-observations') {
         const active = await metadata.active('Eigos');
         const grants = businessGrants(active).filter(grant => amapObservationAccountResources.has(grant.resource));
         if (grants.length !== amapObservationAccountResources.size) throw new Error('The published Amap Action contract is incomplete');
@@ -62,6 +55,13 @@ else {
           SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
           ON CONFLICT DO NOTHING`, ['group:' + accountActionsGroup, JSON.stringify(grants)]);
         console.log(JSON.stringify({ release: active.release, grants: grants.length }));
+      } else if (args[0] === 'applications') {
+        const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
+        console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
+      } else if (args[0] === 'sync-beta-grants' || args[0] === 'grant-restaurant-search') {
+        const active = await metadata.active('Eigos');
+        await syncAccountGrants(db, active);
+        console.log(JSON.stringify({ release: active.release }));
       } else if (args[0] === 'grant-didi-pa') {
         const active = await metadata.active('Eigos');
         const grants = businessGrants(active).filter(grant => didiPAAccountResources.has(grant.resource));
