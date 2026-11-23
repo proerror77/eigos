@@ -3,6 +3,7 @@ import { digest, InvalidInput, type Principal } from '../core/identity.js';
 import type { Database, Sql } from './database.js';
 
 export const accountGroup = 'eigos-accounts';
+export const accountActionsGroup = 'eigos-account-actions';
 /** Group that held the same grants before member accounts became self-service accounts. */
 const legacyMemberGroup = 'eigos-member-queries';
 export const accountTaskScopes = ['tasks:read', 'tasks:write'] as const;

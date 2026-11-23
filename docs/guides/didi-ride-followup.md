@@ -42,3 +42,13 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 - [Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts/) 沿 `stateLogs` 观察可枚举状态的已提交转换。现有可选通知队列按观察版本发送和撤回，发送前重新复核原对象、归属和许可。Webhook 接收确认表示通知进入 PA 通道，用户端已读需要独立证据。
 
 开发测试使用合成订单、文档状态和替代的通知接收方。生产下单开关保持关闭。本能力未通过真实订单或用户端通知的验收。
+
+## 原 PA 的滴滴连接
+
+受邀账号可以通过通用 `apply_ontology_action` 或 `complete_with_action` 发起已授权的滴滴 Action。调用先返回任务 ID。Worker 发现缺少授权时在同一任务返回 `didi.authorize`，包含请求 ID 和响应结构。原 PA 引导用户在[滴滴开发者控制台](https://mcp.didichuxing.com/)开通官方 MCP，将 Key 保存在 PA 的私有凭据存储。滴滴 MCP 的交易可用性取决于 Key 的供应商权限。 [滴滴 MCP API](https://mcp.didichuxing.com/api)
+
+PA 主机将 `createDidiPARelay` 挂到固定的 HTTPS 入口。经过 EIGOS 身份验证的原 PA 为这次请求登记一个随机 UUID，把它绑定到已验证的 owner、任务 ID、PA 请求 ID、PA 用户批准的访问范围和过期时间。登记的最大期限为 30 分钟。PA 通过 `respond_to_task` 回传 `{status:"authorized",connectionRef,expiresAt,access:"read"}` 或 `{status:"unavailable"}`。支持叫车的连接经用户批准后可以回传 `access:"ride"`。OAuth 凭据和滴滴 Key 留在原 PA，业务任务只保存绑定引用。中转逐次验证身份、任务、请求和有效期，再把限定的 MCP 操作送到滴滴。
+
+Gateway 和 Worker 设置 `EIGOS_DIDI_PA_RELAY_URL` 与 `EIGOS_DIDI_PA_RELAY_TOKEN_FILE`。文件保存 EIGOS 与受信任 PA 主机之间的中转凭据，至少 32 字符，权限为 `0600`。用管理角色运行 `npm run account -- grant-didi-pa` 明确加入询价与即时叫车的试点授权。未启用 `EIGOS_DIDI_PA_ORDERS_ENABLED=true` 时，中转接入只用于真实查询。开启实际叫车还需要 PA 的 `ride` 连接权限和用户在同一任务内对确切车型、起终点和报价的单独确认。订单发送后沿用现有原单回查和防重复发单机制。
+
+验收先检查新账号提交 Action 后出现授权请求，再用原 PA 的短期引用在同一任务读到真实报价。叫车流程使用合成供应商验证第二次批准、单次发送和原单回查。

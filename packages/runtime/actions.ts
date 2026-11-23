@@ -1,4 +1,5 @@
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
+import { timeOperation } from '../core/operation-timing.js';
 import { validator } from '../ontology/model.js';
 import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
@@ -257,15 +258,16 @@ export class Actions {
   }
   /** Complete an MCP invocation, with a durable pause only for task execution. */
   async complete(access: Access, model: PublishedOntology, selected: { action: string; input: Record<string, unknown> },
-    requestId: string, read: ActionResultRead, execution: TaskExecution | undefined, signal: AbortSignal,
+    requestId: string, read: ActionResultRead | undefined, execution: TaskExecution | undefined, signal: AbortSignal,
     options: { allowPause?: boolean; applied?: (reference: ObjectRef) => void; authorize?: (client: Sql) => Promise<void> } = {},
   ) {
-    access.function(model, read.function);
-    const definition = model.functions.get(read.function);
-    if (!definition || definition.edits || !Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter)) {
-      throw new Conflict('Action completion requires a declared result parameter on a read Function');
+    if (read) {
+      access.function(model, read.function);
+      const definition = model.functions.get(read.function);
+      if (!definition || definition.edits || !Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter))
+        throw new Conflict('Action completion requires a declared result parameter on a read Function');
+      if (definition.source) access.source(model, definition.source);
     }
-    if (definition.source) access.source(model, definition.source);
     const guard = execution || options.authorize ? async (client: Sql) => {
       signal.throwIfAborted();
       if (execution) await execution.tasks.current(execution.task, client, true);
@@ -273,7 +275,8 @@ export class Actions {
     } : undefined;
     let reference: ObjectRef;
     try {
-      reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
+      reference = await timeOperation('action_apply',
+        () => this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal), selected.action);
     } catch (error) {
       if (!execution || !options.allowPause || model.scenario) throw error;
       const original = { ...selected, requestId, read };
@@ -295,9 +298,10 @@ export class Actions {
       throw error;
     }
     options.applied?.(reference);
-    const result = await this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
+    if (!read) return reference;
+    const result = await timeOperation('result_read', () => this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
       principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution?.task.id, execution,
-    });
+    }), read.function);
     signal.throwIfAborted();
     if (model.scenario) {
       if (execution) await execution.tasks.current(execution.task);

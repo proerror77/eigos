@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Conflict } from '../core/identity.js';
 import { classificationSchema } from '../ontology/classification.js';
+import { actionCallSchema, actionResultReadSchema } from '../ontology/invocation.js';
 import { cityInputSchema, mapPlaceCorrectionsSchema, placeAmendmentsSchema, placeContinuationSchema, placeSelectionSchema, rideEndpointSchema } from './clarification.js';
 
 // Existing public request fields and persisted input remain readable across runtime releases.
@@ -11,9 +12,12 @@ export const submitSchema = z.strictObject({ requestId: z.string().min(1).max(12
   learnHotelWorkflow: z.literal(true).optional(), replayHotelWorkflow: z.strictObject({ workflowId: z.uuid(), checkIn: z.iso.date() }).optional(),
   conversationId: z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/u).optional(),
 });
+export const taskActionSchema = z.strictObject({ action: actionCallSchema, read: actionResultReadSchema.optional() });
 export const storedInputSchema = submitSchema.extend({
   // Set by the Gateway for member MCP tokens; Workers load the restricted member grants from it.
   memberAccess: z.literal(true).optional(),
+  paClient: z.string().min(1).optional(),
+  actionInvocation: taskActionSchema.optional(),
   places: placeSelectionSchema.partial().optional(),
   placeAmendments: placeAmendmentsSchema.optional(),
   mapPlaceCorrections: mapPlaceCorrectionsSchema.optional(),

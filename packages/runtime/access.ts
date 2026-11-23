@@ -1,7 +1,8 @@
-import { accountGroup } from './accounts.js';
+import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
+import { betaQueries } from '../ontology/beta-queries.js';
 import { allowsClassification, classificationSchema, combineClassification, internalClassification, marksClassification, sensitivityRank, type Classification } from '../ontology/classification.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
 import type { Ontology } from '../ontology/model.js';
@@ -23,6 +24,20 @@ export class TaskResult {
 }
 export const resource = (ontology: string, kind: string, name: string) => `${ontology}/${kind}/${name}`;
 export { PermissionDenied } from '../core/identity.js';
+
+const businessOntology = 'Eigos';
+const accountSearchActions = new Map<string, string>(betaQueries.actions);
+const accountGrantKeys = new Set([
+  'view_definition:Eigos',
+  ...betaQueries.sources.map(name => `read_source:Eigos/source/${name}`),
+  ...betaQueries.objects.map(name => `view_objects:Eigos/object/${name}`),
+  ...[...betaQueries.functions,
+    ...accountSearchActions.values()].map(name => `execute_function:Eigos/function/${name}`),
+  ...[...accountSearchActions.keys()].map(name => `apply_action:Eigos/action/${name}`),
+]);
+
+const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
+const accountActionPermissions = new Set<Permission>(['view_objects', 'apply_action', 'execute_function', 'read_source']);
 
 /** Resource grants and object/property visibility, independent of OAuth transport scopes. */
 export class Access {
@@ -115,17 +130,22 @@ export class Access {
   }
   async refresh(client?: Sql) {
     const grantSubject = this.principal.memberAccess
-      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
+      ? `subject IN ($2,$3,$4) AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
       : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
-    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + accountGroup] : [this.principal.owner];
+    const defaultGroup = 'group:' + accountGroup;
+    const subjects = this.principal.memberAccess
+      ? [this.principal.owner, defaultGroup, 'group:' + accountActionsGroup, 'account-actions:' + this.principal.owner] : [this.principal.owner];
     const result = await this.db.query(`SELECT
-      (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission,'subject',subject)),'[]')
         FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,
       (SELECT coalesce(jsonb_agg(ontology||'/property/'||type||'/'||property),'[]') FROM ${this.db.schema}.property_security) AS properties,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'type',type,'policy',policy)),'[]') FROM ${this.db.schema}.object_policies) AS policies,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('kind',kind,'name',name)),'[]') FROM ${this.db.schema}.security_memberships WHERE subject=$1) AS memberships,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, subjects, client);
-    this.grants = new Set((result.rows[0]!.grants as Grant[]).map(grant => `${grant.permission}:${grant.resource}`));
+    const grants = result.rows[0]!.grants as (Grant & { subject: string })[];
+    this.grants = new Set(grants.filter(grant => !this.principal.memberAccess || (grant.subject === defaultGroup
+      ? accountGrantKeys.has(grantKey(grant))
+      : grant.resource.startsWith(businessOntology + '/') && accountActionPermissions.has(grant.permission))).map(grantKey));
     for (const assignment of result.rows[0]!.projects as {ontology:string;resource:string;project:string}[]) {
       for (const permission of ['view_definition','edit_definition','manage_definition']) {
         if(this.grants.has(`${permission}:${assignment.ontology}/project/${assignment.project}`)) this.grants.add(`${permission}:${assignment.resource}`);
@@ -348,9 +368,12 @@ export class Access {
   }
   action(model: Ontology, name: string) {
     this.requireAvailable(model, 'action', name);
-    this.useModelData(model.actions.get(name)?.classification);
+    const action = model.actions.get(name);
+    this.useModelData(action?.classification);
     this.definition(model, 'action', name);
-    this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name));
+    this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name), this.principal.memberAccess);
+    if (this.principal.memberAccess && accountSearchActions.has(name) && (action?.function !== accountSearchActions.get(name) ||
+        action?.rules?.length || action?.effects?.length)) throw new PermissionDenied('The shared Beta query Action changed its contract');
   }
   function(model: Ontology, name: string) {
     this.requireAvailable(model, 'function', name);
@@ -449,7 +472,8 @@ export class Access {
       this.observeClassification(item.classification);
       return true;
     };
-    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) && this.canDefine(model, 'object', type.apiName) && modelVisible(type));
+    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) &&
+      this.canDefine(model, 'object', type.apiName) && (!this.principal.memberAccess || !executable || this.canRead(model, type.apiName)) && modelVisible(type));
     document.interfaceTypes = document.interfaceTypes.filter(type => include('interface', type.apiName) && this.canDefine(model, 'interface', type.apiName) && modelVisible(type));
     if (limited) {
       for (const type of [...document.objectTypes, ...document.interfaceTypes])
@@ -551,34 +575,12 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }
-/** Grants only the restaurant search and its readback to the existing Beta group. */
-export async function grantBetaRestaurantSearch(db: Database, model: Ontology, client?: Sql) {
-  if (model.document.id !== 'Eigos') throw new Error('Expected the published business Ontology');
-  const paths = new Set([
-    'Eigos/action/FindRestaurants',
-    'Eigos/function/findRestaurants',
-    'Eigos/function/readRestaurantSearch',
-    'Eigos/object/RestaurantSearchResult',
-    'Eigos/object/RestaurantSourceVenue',
-  ]);
-  const grants = businessGrants(model).filter(grant => paths.has(grant.resource));
-  if (grants.length !== paths.size) throw new Error('The restaurant search contract is incomplete');
-  const result = await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
-    SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
-    ON CONFLICT DO NOTHING RETURNING resource`, ['group:' + accountGroup, JSON.stringify(grants)], client);
-  return (result.rows as { resource: string }[]).map(row => row.resource);
-}
-/** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; the operator commands call `syncAccountGrantsAfterActivation`. */
+/** Replace legacy group grants with the fixed subset supported by this release. */
 export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
-  await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
+  if (model.document.id !== businessOntology) throw new Error('Expected the published business Ontology');
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model).filter(grant => accountGrantKeys.has(grantKey(grant))), client);
 }
-const businessOntology = 'Eigos';
-/**
- * Keeps the account group in step with the business Ontology. The operator commands sync after publish/activate.
- * After a branch merge activates a new business release, the operator re-runs `npm run ontology:activate <release>`,
- * because the runtime role cannot write authorization tables. Any other Ontology is ignored: its resources must never
- * replace the business grants of every account.
- */
+
 export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology): Promise<void> {
   if (activated.document.id === businessOntology) await syncAccountGrants(db, activated);
 }

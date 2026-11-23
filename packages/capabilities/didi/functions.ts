@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { OntologyDocument } from '../../ontology/schema.js';
 import { Conflict, digest } from '../../core/identity.js';
+import { timeOperation } from '../../core/operation-timing.js';
 import { objectRefSchema, type ObjectData } from '../../ontology/schema.js';
 import { Functions, type FunctionContext, type FunctionHandler, type VersionedFunction } from '../../runtime/functions.js';
 import type { DidiConnector, DidiCallContext, DidiReadResult } from './connector.js';
@@ -43,11 +44,11 @@ export async function verifiedDidiRead(source: DidiSource, context: FunctionCont
   input: Record<string, unknown>, guard?: () => Promise<void>): Promise<SourceResult> {
   await source.assertCurrent();
   const call: DidiCallContext = { requestId: context.taskId ?? randomUUID(), requestRevision: 1 };
-  const result: DidiReadResult = await source.connector.invoke(call, tool, input, context.signal, async () => {
+  const result: DidiReadResult = await timeOperation('didi_read', () => source.connector.invoke(call, tool, input, context.signal, async () => {
     await context.objects.access.refresh();
     await guard?.();
     await source.assertCurrent();
-  });
+  }), tool);
   await source.assertCurrent();
   if (result.receipt.bindingId !== source.bindingId || result.receipt.inputDigest !== digest(input) ||
       result.receipt.resultDigest !== digest(result.data) || result.receipt.tool !== tool)

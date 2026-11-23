@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { Conflict, digest, PermissionDenied, SourceReadFailure } from '../../core/identity.js';
+import { timeOperation } from '../../core/operation-timing.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_REQUIRED_TOOLS, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
 import { mapDidiResult } from './mapping.js';
 
@@ -47,12 +48,12 @@ export class DidiMcpConnector implements DidiConnector {
   readonly binding: DidiBinding;
   private directoryCache?: { expiresAt: number; tools: DidiDirectory };
   private directoryReads = new Map<string, Promise<DidiDirectory>>();
-  constructor(binding: DidiBinding, private fetcher: typeof fetch = fetch, fixture = false) {
+  constructor(binding: DidiBinding, private fetcher: typeof fetch = fetch, fixture = false, private readonly readKey = readDidiCredential) {
     this.binding = didiBindingSchema.parse(binding);
     if (!isAbsolute(binding.keyFile) || binding.auditDirectory && !isAbsolute(binding.auditDirectory)) throw new DidiReadError('PRIVATE_ABSOLUTE_PATH_REQUIRED');
     this.evidenceKind = fixture ? 'fixture' : binding.environment === 'mock' ? 'provider_mock' : 'live_readonly';
   }
-  private key() { return readDidiCredential(this.binding); }
+  private key() { return this.readKey(this.binding); }
   async verifyCredential(): Promise<void> { await this.key(); }
   private async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<T> {
     const allowed = didiToolInputs;
@@ -159,7 +160,8 @@ export class DidiMcpConnector implements DidiConnector {
       const descriptor = directory.find(t => t.name === tool);
       if (!descriptor) throw new DidiReadError('READ_TOOLS_UNAVAILABLE');
       signal.throwIfAborted();
-      const raw = await client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 });
+      const raw = await timeOperation('didi_rpc',
+        () => client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 }), tool);
       await this.verifyCredential();
       const receivedAt = new Date().toISOString(), serialized = JSON.stringify(raw);
       if (serialized.includes(secret)) throw new DidiReadError('CREDENTIAL_ECHO_BLOCKED');

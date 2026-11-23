@@ -65,6 +65,7 @@ export class DidiOperations implements RideOrders {
     private readonly fetcher: typeof fetch = fetch,
     private readonly sandboxOrderId?: string,
     private readonly cancellationsEnabled = enabled,
+    private readonly readKey = readDidiCredential,
   ) {
     this.environment = binding.environment;
     if (sandboxOrderId !== undefined && (this.environment !== 'mock' || enabled || cancellationsEnabled))
@@ -72,11 +73,11 @@ export class DidiOperations implements RideOrders {
   }
   async assertAvailable() {
     if (!this.enabled) throw new Error('DIDI_ORDER_EXECUTION_DISABLED');
-    await readDidiCredential(this.binding);
+    await this.readKey(this.binding);
   }
   async assertCancellationAvailable() {
     if (!this.cancellationsEnabled) throw new Error('DIDI_ORDER_CANCELLATION_DISABLED');
-    await readDidiCredential(this.binding);
+    await this.readKey(this.binding);
   }
   private async call(
     tool: Command,
@@ -89,7 +90,7 @@ export class DidiOperations implements RideOrders {
     const args = commandSchemas[tool].parse(input);
     if (this.sandboxOrderId !== undefined && 'order_id' in args && args.order_id !== this.sandboxOrderId)
       throw new Error('Original sandbox order identity changed');
-    const secret = await readDidiCredential(this.binding),
+    const secret = await this.readKey(this.binding),
       url = new URL(didiEndpoint(this.binding.environment));
     url.searchParams.set('key', secret);
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
@@ -114,7 +115,7 @@ export class DidiOperations implements RideOrders {
           if (++calls !== 1 || rpc.params?.name !== tool || digest(rpc.params.arguments) !== digest(args))
             throw new Error('DiDi command changed');
           await beforeDispatch?.();
-          await readDidiCredential(this.binding);
+          await this.readKey(this.binding);
         }
       } else if (!['GET', 'DELETE'].includes(init.method ?? 'GET')) throw new Error('Unexpected method');
       const response = await this.fetcher(target, { ...init, redirect: 'error', signal: bounded });
