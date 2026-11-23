@@ -165,7 +165,7 @@ export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch
       const destination = addressed ? addressedDeliveryInput[provider].parse(raw).destination : undefined;
       const connection = await configuredDelivery(paths[provider], provider, ctx);
       const owner = { platformId: service.platformId, accountRef: connection.accountRef };
-      let data: Data, usedAddress: ObjectRef | undefined;
+      let data: Data, usedAddress: Awaited<ReturnType<typeof resolveDeliveryDestination>> | undefined;
       try {
         data = await deliveryMcp(connection, ctx.signal, async call => {
           const chosen = destination && await resolveDeliveryDestination(call, ctx, provider, owner, destination);
@@ -177,7 +177,7 @@ export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch
           const result = await search();
           if (chosen) {
             await confirmDeliveryDestination(call, ctx, provider, owner, chosen.address);
-            usedAddress = chosen.address;
+            usedAddress = chosen;
           }
           return result;
         }, mockFetch ?? fetch);
@@ -190,7 +190,8 @@ export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch
       const now = Date.now(), ref = { type: service.object, id: digest([ctx.principal.owner, addressed ? names.search : service.action, ctx.operationId]) };
       const result = deliveryRecord.parse({
         id: ref.id, name: service.displayName + '查询', bindingId: connection.id,
-        ...(usedAddress ? { deliveryAddressKey: usedAddress.id } : {}),
+        ...(usedAddress ? { deliveryAddressKey: usedAddress.address.id } : {}),
+        ...(usedAddress?.personalVersion ? { personalPlaceVersionKey: usedAddress.personalVersion.id } : {}),
         provider, scope: scope(provider, input), query: input.query ?? null, ...data,
         observedAt: new Date(now).toISOString(), expiresAt: new Date(now + ttl).toISOString(),
         evidence: mockFetch ? 'provider_mock' : 'live_readonly', currency: 'CNY',
@@ -198,11 +199,13 @@ export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch
       return ctx.edit(ref, async graph => {
         await connection.assertBinding();
         if (destination && usedAddress) {
-          await recheckPersonalDestination(graph, provider, destination, usedAddress);
-          await persistDeliveryAddress(graph, usedAddress, provider);
+          await recheckPersonalDestination(graph, provider, destination, usedAddress.address, usedAddress.personalVersion);
+          await persistDeliveryAddress(graph, usedAddress.address, provider, usedAddress.text);
         }
         await graph.create(ref, result);
-        if (usedAddress) await graph.link({ type: names.searchLink, from: ref, to: usedAddress });
+        if (usedAddress) await graph.link({ type: names.searchLink, from: ref, to: usedAddress.address });
+        if (usedAddress?.personalVersion)
+          await graph.link({ type: names.searchVersionLink, from: ref, to: usedAddress.personalVersion });
       });
     };
     handlers.set(service.edit, runSearch(false));
@@ -211,7 +214,7 @@ export function localDeliveryFunctions(paths: DeliveryConnectionPaths, mockFetch
       const { search } = deliveryReportRef.parse(raw);
       if (search.type !== service.object) throw new Conflict('Use the matching delivery search result');
       const connection = await configuredDelivery(paths[provider], provider, ctx);
-      const { id: _id, name: _name, bindingId, deliveryAddressKey, ...report } = deliveryRecord.parse((await ctx.objects.read(search)).properties);
+      const { id: _id, name: _name, bindingId, deliveryAddressKey, personalPlaceVersionKey: _version, ...report } = deliveryRecord.parse((await ctx.objects.read(search)).properties);
       if (bindingId !== connection.id || report.provider !== provider || Date.parse(report.expiresAt) <= Date.now())
         throw new Conflict('The delivery search has expired or its account binding changed; run a new search');
       await connection.check();

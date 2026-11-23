@@ -1,3 +1,4 @@
+import { deliveryAddressNames } from '../packages/ontology/delivery-addresses.js';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -227,7 +228,17 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
   try {
     const graph = new Objects(f.db, f.model, f.access);
     const scope = { channel: 'taobao_meal', merchantId: shopId };
-    const search = await execute('SearchTaobaoInstantDeliveryAtAddress', { query: '汉堡', destination: { source: 'selected' } });
+    const place = await execute('SavePersonalPlace', {
+      address: addressText, city: '上海市', role: 'home', expectedRevision: 0, confirmed: true,
+    });
+    const names = deliveryAddressNames('TaobaoInstantDelivery');
+    const addresses = await f.capabilities.functions.invoke(f.model, names.list, {}, {
+      principal, objects: graph, signal: AbortSignal.timeout(10000),
+    }) as { addresses: { addressKey: string }[] };
+    const deliveryAddress = await execute(names.bind, {
+      place, addressKey: addresses.addresses[0]!.addressKey, expectedRevision: 1, confirmed: true,
+    });
+    const search = await execute('SearchTaobaoInstantDeliveryAtAddress', { query: '汉堡', destination: { source: 'personal', place } });
     const cartChange = { ...scope, itemId: 'meal1', variantRef: variants.meal, quantity: 1, cartRevision: cartVersion.taobao, search };
     await assert.rejects(execute('ChangeTaobaoInstantDeliveryCart', cartChange), /interactive PA task/);
     const declined = await interactive({ alias: 'change', input: cartChange }, 'taobao_instant_delivery.cart_approval', 'decline');
@@ -247,6 +258,11 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     addressText = originalAddress;
     const order = await preview();
     assert.deepEqual((await graph.follow(order, 'cartChange')).map(row => row.ref), [change]);
+    assert.deepEqual((await graph.follow(order, 'deliveryAddress', 'TaobaoInstantDeliveryOrdering')).map(row => row.ref),
+      [deliveryAddress]);
+    const [confirmedVersion] = await graph.follow(order, 'personalPlaceVersion');
+    assert.equal(confirmedVersion?.properties.version, 1);
+    assert.equal(confirmedVersion?.properties.address, originalAddress);
     assert.equal((await checkoutView(order)).totalMinor, 1500);
     const submitted = await interactive({ alias: 'submit', target: order, input: { checkout: order } }, 'taobao_instant_delivery.order_approval');
     assert.equal(submitted.state, 'awaiting_payment');
@@ -254,6 +270,12 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     const [supplier] = await graph.follow(order, 'orders');
     assert.equal(supplier?.properties.nativeOrderId, orderIds.taobao);
     assert.equal(supplier?.properties.state, 'submitted');
+    assert.deepEqual((await graph.follow(supplier!.ref, 'checkout')).map(row => row.ref), [order]);
+    const direct = await execute('PreviewTaobaoInstantDeliveryCheckout', {
+      ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900,
+    });
+    assert.deepEqual((await graph.follow(direct, 'deliveryAddress')).map(row => row.ref), [deliveryAddress]);
+    assert.deepEqual(await graph.follow(direct, 'personalPlaceVersion'), []);
     const job = (await f.db.query(`SELECT id,body FROM ${f.db.schema}.scheduled_actions WHERE body->'arguments'->'checkout'->>'id'=$1`,
       [order.id])).rows[0]!;
     assert.equal(job.body.action, 'RefreshTaobaoInstantDeliveryOrder');

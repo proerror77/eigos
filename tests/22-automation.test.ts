@@ -758,6 +758,9 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
   const historicalRoute = v9Definition.objectTypes.find(type => type.apiName === 'Route')!;
   delete historicalRoute.classificationProperty;
+  const historicalPlace = v9Definition.objectTypes.find(type => type.apiName === 'Place')!;
+  delete historicalPlace.classificationProperty;
+  delete historicalPlace.properties.locationClassification;
   const routeProperties = historicalRoute.properties;
   delete routeProperties.locationClassification;
   delete routeProperties.personalPlaceRevisions;
@@ -777,6 +780,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     ![...restaurantServices.linkTypes, ...tableCheckReservations.linkTypes].some(item => item.apiName === type.apiName) &&
+    !personalPlaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !localDeliveryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>

@@ -18,11 +18,11 @@ EIGOS 分别发布 [淘宝闪购](taobao-instant-delivery.md) 和 [盒马](hema.
 
 ## 常用地点与实际收货地址
 
-在用户明确要求记住地址时，调用 `SavePersonalPlace` 保存用户确认的「家」或「公司」。从 Ontology 查询 `PersonalPlace` 可取得该地点的引用和当前版本。首次保存传 `expectedRevision: 0`，更换地址传当前版本。更换后要重新确认对应的供应商地址。个人地点按 owner 隔离。Agent 可读取角色和引用来做配送查询。详细地址、供应商地址列表和保存或绑定操作需要符合[模型数据出境](model-egress.md)的机密数据权限，也可由已授权 PA 直接调用。更换地址的调用者需要查看和编辑已发布的个人地点地址关系。
+在用户明确要求记住地址时，调用 `SavePersonalPlace` 保存用户确认的「家」或「公司」。从 Ontology 查询 `PersonalPlace` 可取得该地点的引用和当前版本。首次保存传 `expectedRevision: 0`，更换地址传当前版本。地址保存在不可变的 `PersonalPlaceVersion`。更换地址时切换 `currentVersion`，旧版本和旧绑定留作历史。新版本需要重新确认对应的供应商地址。个人地点按 owner 隔离。Agent 可读取角色和引用来做配送查询。详细地址、供应商地址列表和保存或绑定操作需要符合[模型数据出境](model-egress.md)的机密数据权限，也可由已授权 PA 直接调用。更换地址沿个人地点与版本的关系执行。
 
-`listTaobaoInstantDeliveryAddresses` 和 `listHemaDeliveryAddresses` 读取已授权账号的地址、标签和当前选择。用户核对后，使用 `BindTaobaoInstantDeliveryAddress` 或 `BindHemaDeliveryAddress`，传地点引用、当前版本及所选 `addressKey`。Action 将该地点与供应商地址建立 Link。绑定不会修改供应商账号里的默认地址。
+`listTaobaoInstantDeliveryAddresses` 和 `listHemaDeliveryAddresses` 读取已授权账号的地址、标签和当前选择。用户核对后，使用 `BindTaobaoInstantDeliveryAddress` 或 `BindHemaDeliveryAddress`，传地点引用、当前版本及所选 `addressKey`。Action 将当时的常用地点版本与供应商地址快照建立 Link。绑定不会修改供应商账号里的默认地址。
 
-闪购用 `InstantDeliveryInquiry.searchAt`，盒马用 `GroceryDeliveryInquiry.searchAt`。送到家或公司时传 `destination: { source: "personal", place: <地点引用> }`。用户要用平台当前收货地址时传 `destination: { source: "selected" }`。搜索前后校验当前供应商地址。使用个人地点时，当前选择必须匹配已确认的 Link。用 `readTaobaoInstantDeliveryAddressedSearch` 或 `readHemaAddressedSearch` 读取查询结果和 `deliveryAddress`。这条关系记录查询实际使用的供应商地址。地址变化时重新查询，购物车和结算沿用原查询的地址约束。
+闪购用 `InstantDeliveryInquiry.searchAt`，盒马用 `GroceryDeliveryInquiry.searchAt`。送到家或公司时传 `destination: { source: "personal", place: <地点引用> }`。用户要用平台当前收货地址时传 `destination: { source: "selected" }`。搜索前后校验当前供应商地址。使用个人地点时，当前选择必须匹配已确认的 Link。用 `readTaobaoInstantDeliveryAddressedSearch` 或 `readHemaAddressedSearch` 读取查询结果和 `deliveryAddress`。搜索同时记录实际使用的供应商地址和对应的常用地点版本。结算独立记录 `deliveryAddress`。沿原搜索结算时也记录 `personalPlaceVersion`。原单沿 `checkout` 回查这两个 Link。直接结算同样保留实际使用的供应商地址。地址变化时重新查询。
 
 「我附近」由原 PA 提供任务内定位，「家附近」使用 `searchNearbyPersonalPlace`。若想配送到当前位置，先在对应平台确认实际收货地址。现有 `search` 调用继续使用供应商当前地址，旧查询记录可按原契约读回。 [地图与天气](maps-and-weather.md) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)
 

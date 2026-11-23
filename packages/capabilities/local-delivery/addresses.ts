@@ -5,6 +5,7 @@ import {
   deliveryAddressType, type deliveryDestination,
 } from '../../ontology/delivery-addresses.js';
 import { localDeliveryProviders, localDeliveryServices, type LocalDeliveryProvider } from '../../ontology/local-delivery.js';
+import { currentPersonalPlaceVersion } from '../personal-places.js';
 import type { ObjectRef } from '../../ontology/schema.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
@@ -36,15 +37,17 @@ function addressObject(addressKey: string) {
   return { type: deliveryAddressType, id: addressKey };
 }
 
-export async function persistDeliveryAddress(graph: Objects, address: ObjectRef, provider: LocalDeliveryProvider) {
-  await graph.create(address, deliveryAddressRecord.parse({ id: address.id, provider,
+export async function persistDeliveryAddress(graph: Objects, address: ObjectRef, provider: LocalDeliveryProvider, text: string) {
+  await graph.create(address, deliveryAddressRecord.parse({ id: address.id, provider, address: text,
     name: localDeliveryServices[provider].displayName + '配送地址' }));
 }
 
 async function assertPersonalLink(objects: Pick<Objects, 'follow'>, provider: LocalDeliveryProvider, place: ObjectRef, address: ObjectRef) {
-  const links = await objects.follow(place, deliveryAddressNames(provider).personalNavigation);
+  const version = await currentPersonalPlaceVersion(objects, place);
+  const links = await objects.follow(version.ref, deliveryAddressNames(provider).personalNavigation);
   if (!links.some(row => row.ref.id === address.id))
     throw new Conflict('The supplier’s selected address is not linked to this personal place. Review the supplier address and select or link the confirmed address.');
+  return version.ref;
 }
 
 export async function resolveDeliveryDestination(call: DeliveryCall, ctx: FunctionContext, provider: LocalDeliveryProvider,
@@ -52,8 +55,9 @@ export async function resolveDeliveryDestination(call: DeliveryCall, ctx: Functi
   const selected = (await addressChoices(call, account, ctx.principal.owner, provider)).find(row => row.selected);
   if (!selected) throw new DeliveryReadFailure('address_required');
   const address = addressObject(selected.addressKey);
-  if (destination.source === 'personal') await assertPersonalLink(ctx.objects, provider, destination.place, address);
-  return { address, nativeRef: selected.nativeRef };
+  const personalVersion = destination.source === 'personal'
+    ? await assertPersonalLink(ctx.objects, provider, destination.place, address) : undefined;
+  return { address, nativeRef: selected.nativeRef, text: selected.address, personalVersion };
 }
 
 export async function confirmDeliveryDestination(call: DeliveryCall, ctx: FunctionContext, provider: LocalDeliveryProvider,
@@ -62,8 +66,10 @@ export async function confirmDeliveryDestination(call: DeliveryCall, ctx: Functi
   if (selected?.addressKey !== address.id) throw new DeliveryReadFailure('address_required');
 }
 
-export async function recheckPersonalDestination(graph: Objects, provider: LocalDeliveryProvider, destination: Destination, address: ObjectRef) {
-  if (destination.source === 'personal') await assertPersonalLink(graph, provider, destination.place, address);
+export async function recheckPersonalDestination(graph: Objects, provider: LocalDeliveryProvider, destination: Destination,
+  address: ObjectRef, version?: ObjectRef) {
+  if (destination.source === 'personal' && (await assertPersonalLink(graph, provider, destination.place, address)).id !== version?.id)
+    throw new Conflict('The personal delivery address version changed during the search');
 }
 
 export function deliveryAddressFunctions(paths: DeliveryConnectionPaths, fetcher: typeof fetch = fetch): ReadonlyMap<string, FunctionHandler> {
@@ -86,15 +92,17 @@ export function deliveryAddressFunctions(paths: DeliveryConnectionPaths, fetcher
       if (!ctx.edit || ctx.objects.model.scenario) throw new Conflict('Link a confirmed address in the live Ontology');
       const { place, expectedRevision, addressKey } = bindDeliveryAddressInput.parse(raw);
       const { addresses, conn } = await choices(ctx);
-      if (!addresses.some(row => row.addressKey === addressKey))
+      const selected = addresses.find(row => row.addressKey === addressKey);
+      if (!selected)
         throw new Conflict('The reviewed address is no longer available on this supplier account. Read its current addresses again.');
       const address = addressObject(addressKey);
       return ctx.edit(address, async graph => {
         await conn.assertBinding();
         if ((await graph.read(place)).revision !== expectedRevision)
           throw new Conflict('The saved personal place changed after review');
-        await persistDeliveryAddress(graph, address, provider);
-        await graph.link({ type: names.personalLink, from: place, to: address });
+        const snapshot = await currentPersonalPlaceVersion(graph, place);
+        await persistDeliveryAddress(graph, address, provider, selected.address);
+        await graph.link({ type: names.personalLink, from: snapshot.ref, to: address });
       });
     });
   }

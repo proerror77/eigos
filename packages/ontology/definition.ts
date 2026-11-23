@@ -15,7 +15,7 @@ import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
-import { personalPlaceDefinition, personalPlaceType } from './personal-places.js';
+import { currentPersonalPlaceVersionLink, personalPlaceDefinition, personalPlaceType, personalPlaceVersionType } from './personal-places.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink, prepareWithEndpoints,
   ridePersonalPlaceLinks, ridePersonalPlaceRevisions, savedRideEndpoint } from './didi-ride-endpoints.js';
 import { classificationSchema } from './classification.js';
@@ -89,7 +89,7 @@ businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);
 businessDefinition.dataSources.push(...marketplace.dataSources);
 businessDefinition.objectTypes.push(...personalPlaceDefinition.objectTypes, ...localDeliveryDefinition.objectTypes, ...localDeliveryTradeDefinition.objectTypes);
-businessDefinition.linkTypes.push(...localDeliveryDefinition.linkTypes, ...localDeliveryTradeDefinition.linkTypes);
+businessDefinition.linkTypes.push(...personalPlaceDefinition.linkTypes, ...localDeliveryDefinition.linkTypes, ...localDeliveryTradeDefinition.linkTypes);
 businessDefinition.interfaceTypes.push(...localDeliveryDefinition.interfaceTypes, ...localDeliveryTradeDefinition.interfaceTypes);
 businessDefinition.functionTypes.push(...personalPlaceDefinition.functionTypes, ...localDeliveryDefinition.functionTypes, ...localDeliveryTradeDefinition.functionTypes);
 businessDefinition.actionTypes.push(...personalPlaceDefinition.actionTypes, ...localDeliveryDefinition.actionTypes, ...localDeliveryTradeDefinition.actionTypes);
@@ -167,7 +167,7 @@ businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
   {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes,...restaurantServices.objectTypes,...tableCheckReservations.objectTypes].map(type=>type.apiName)},
-  { apiName: 'PersonalPlaces', displayName: '个人地点', description: 'Owner-confirmed locations', objectTypes: [personalPlaceType, 'ProviderDeliveryAddress'] },
+  { apiName: 'PersonalPlaces', displayName: '个人地点', description: 'Owner-confirmed locations', objectTypes: [personalPlaceType, personalPlaceVersionType, 'ProviderDeliveryAddress'] },
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider];
     return { apiName: provider, displayName: service.search.displayName, description: 'Account-scoped supplier transactions',
@@ -273,9 +273,13 @@ const endpointParameters = {
     originPersonalPlace: jsonSchema(savedRideEndpoint), destinationPersonalPlace: jsonSchema(savedRideEndpoint) },
 };
 const extraEndpointDependencies = {
-  objectTypes: [personalPlaceType, 'Route', 'Place'],
-  linkTypes: ['RouteOrigin', 'RouteDestination', ...ridePersonalPlaceLinks.map(link => link.apiName)],
+  objectTypes: [personalPlaceType, personalPlaceVersionType, 'Route', 'Place'],
+  linkTypes: ['RouteOrigin', 'RouteDestination', currentPersonalPlaceVersionLink, ...ridePersonalPlaceLinks.map(link => link.apiName)],
 };
+const placeType = businessDefinition.objectTypes.find(type => type.apiName === 'Place')!;
+placeType.classificationProperty = 'locationClassification';
+placeType.properties.locationClassification = { description: 'Data classification of a private DiDi point observation',
+  schema: jsonSchema(classificationSchema), required: false };
 routeType.classificationProperty = 'locationClassification';
 routeType.properties.locationClassification = { description: 'Data classification of a route using a personal place',
   schema: jsonSchema(classificationSchema), required: false };

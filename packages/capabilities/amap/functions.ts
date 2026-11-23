@@ -1,4 +1,5 @@
-import { personalPlaceRecord } from '../../ontology/personal-places.js';
+import { currentPersonalPlaceVersion } from '../personal-places.js';
+import { personalPlaceVersionRecord } from '../../ontology/personal-places.js';
 import { z } from 'zod';
 import { Conflict, SourceReadFailure } from '../../core/identity.js';
 import { locationPlace, type locationSelection, type locationUse } from '../../ontology/location.js';
@@ -263,7 +264,7 @@ export function amapFunctions(resolve: AmapResolver, publicReads = resolve): Rea
     }],
     ['searchNearbyPersonalPlace', async (raw, ctx) => {
       const input = nearbyPersonalPlace.parse(raw);
-      const { address, city } = personalPlaceRecord.parse((await ctx.objects.read(input.place)).properties);
+      const { address, city } = personalPlaceVersionRecord.parse((await currentPersonalPlaceVersion(ctx.objects, input.place)).properties);
       const client = await resolve(ctx);
       const point = await namedPoint(client, { address, city }, ctx, 'nearby_search', 'specified');
       return nearbyPlaces(client, point, input, ctx.signal);

@@ -127,7 +127,9 @@ test('the PA confirms the exact vehicle and fare on the original MCP task before
     const [rideRoute] = await graph.follow(ride, 'route', 'ImmediateRideBooking');
     assert(rideRoute);
     assert.deepEqual(rideRoute.properties.personalPlaceRevisions, { destination: 1 });
-    assert.deepEqual((await graph.follow(rideRoute.ref, 'destinationPersonalPlace')).map(row => row.ref), [f.saved!.place]);
+    const [version] = await graph.follow(rideRoute.ref, 'destinationPersonalPlace');
+    assert.equal(version?.properties.version, 1);
+    assert.deepEqual((await graph.follow(version!.ref, 'place')).map(row => row.ref), [f.saved!.place]);
     assert.deepEqual((await graph.follow(rideRoute.ref, 'destination')).map(row => row.properties.name), [route.destination]);
     assert.deepEqual((await graph.follow(result.order!.ref, 'immediateRides')).map(row => row.ref), [ride]);
     assert.equal((await tool('submit_task', request)).id, task.id);

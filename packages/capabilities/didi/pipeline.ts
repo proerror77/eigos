@@ -1,6 +1,7 @@
 import {EntityResolution} from '../../runtime/entity-resolution.js';
 import type { RuntimeExtensions } from '../../runtime/extensions.js';
 import { Effects } from '../../runtime/effects.js';
+import { privateLocation } from '../../ontology/personal-places.js';
 import { digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
 import { Database } from '../../runtime/database.js';
@@ -41,7 +42,8 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
           const saved = await graph.read(objectRefSchema.parse(input.savedPlace));
           const { id, name, city, address, coordinates, coordinateSystem, sourceBinding } = saved.properties;
           const point = coordinates as { lat: number; lng: number } | undefined;
-          if (matches.length !== 1 || saved.ref.type !== 'Place' || name !== input.keywords ||
+          if (matches.length !== 1 || saved.ref.type !== 'Place' || saved.properties.locationClassification ||
+              name !== input.keywords ||
               sourceBinding !== result.receipt.bindingId || !point || point.lat !== matches[0]!.lat ||
               point.lng !== matches[0]!.lng)
             throw new Error('The saved quote endpoint changed during the source lookup');
@@ -51,10 +53,21 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
           await graph.link({ type: 'PlaceSource', from: saved.ref, to: receipt });
           return { receipt, objects };
         }
-        const rows = await Promise.all(result.data.places.map(async place => ({ id: (await new EntityResolution(db).resolve(graph,source,String(place.id),digest([result.receipt.bindingId,place.id]))).id, name: place.name, city: place.city,
-          address: place.addressAll || place.address || place.name, coordinates: { lat: place.lat, lng: place.lng }, coordinateSystem: place.coordinateSystem,
-          sourceBinding: result.receipt.bindingId, observedAt: result.receipt.receivedAt })));
-        const objects = await ingest(graph, graph.model, source, rows);
+        const privateEndpoint = input.privateRideEndpoint === true;
+        if (privateEndpoint) graph.access.useModelData(privateLocation);
+        const resolveIdentity = new EntityResolution(db);
+        const rows = await Promise.all(result.data.places.map(async place => ({
+          id: privateEndpoint ? digest(['DidiPrivatePlace', result.receipt.bindingId, place.id])
+            : (await resolveIdentity.resolve(graph, source, String(place.id), digest([result.receipt.bindingId, place.id]))).id,
+          name: place.name, city: place.city, address: place.addressAll || place.address || place.name,
+          coordinates: { lat: place.lat, lng: place.lng }, coordinateSystem: place.coordinateSystem,
+          sourceBinding: result.receipt.bindingId, observedAt: result.receipt.receivedAt,
+        })));
+        const objects = privateEndpoint ? rows.map(row => ({ type: 'Place', id: row.id }))
+          : await ingest(graph, graph.model, source, rows);
+        if (privateEndpoint) await graph.ingestBatch(rows.map((row, index) => ({
+          ref: objects[index]!, properties: { ...row, locationClassification: privateLocation },
+        })), source);
         await graph.linkBatch(objects.map(ref => ({ type: 'PlaceSource', from: ref, to: receipt })));
         return { receipt, objects };
       }

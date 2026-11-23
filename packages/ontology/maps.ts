@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   coordinateSystem, coordinates, requestLocationForService, serviceLocation,
 } from './location.js';
-import { personalPlaceRef, personalPlaceType, privateLocation } from './personal-places.js';
+import { currentPersonalPlaceVersionLink, personalPlaceRef, personalPlaceType, personalPlaceVersionType, privateLocation } from './personal-places.js';
 import type { OntologyDocument } from './schema.js';
 import { json, time } from './service-contracts.js';
 
@@ -100,7 +100,7 @@ export const mapFunctions: OntologyDocument['functionTypes'] = [
   { apiName: 'searchNearbyPlaces', parameters: json(nearbySearch), returns: json(mapPlaceResult), dependencies: locationDependencies,
     description: 'Find nearby Amap venues by keyword around an explicit point or a specified or planned place. Omitting the point asks the original PA for the current device location.' },
   { apiName: 'searchNearbyPersonalPlace', parameters: json(nearbyPersonalPlace), returns: json(mapPlaceResult),
-    dependencies: { ...locationDependencies, objectTypes: [personalPlaceType] }, classification: privateLocation,
+    dependencies: { ...locationDependencies, objectTypes: [personalPlaceType, personalPlaceVersionType], linkTypes: [currentPersonalPlaceVersionLink] }, classification: privateLocation,
     description: 'Find nearby venues around an owner-confirmed PersonalPlace. Uses the authorized Amap connection and the saved city and address.' },
   { apiName: 'estimateMapRoute', parameters: json(mapRouteInput), returns: json(mapRouteResult), dependencies: locationDependencies,
     description: 'Estimate Amap walking or driving distance and travel time. For a named landmark, use searchMapPlaces and readMapPlace to obtain a reliable point. A named address without a precise geocode can request confirmation from the original PA. Omit origin only for a route from the user’s current location.' },

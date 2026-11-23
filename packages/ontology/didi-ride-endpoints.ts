@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { pickupCoordinateEvidence } from './maps.js';
-import { personalPlaceRef, personalPlaceType, privateLocation } from './personal-places.js';
+import { personalPlaceRef, personalPlaceVersionRef, personalPlaceVersionType, privateLocation } from './personal-places.js';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 
 export const rideEndpoints = ['origin', 'destination'] as const;
@@ -12,10 +12,11 @@ export const immediateRideRouteLink = 'ImmediateRideRoute';
 
 const revision = z.number().int().positive();
 export const savedRideEndpoint = z.strictObject({ place: personalPlaceRef, revision });
+const resolvedPersonalEndpoint = savedRideEndpoint.extend({ snapshot: personalPlaceVersionRef, version: revision });
 export const resolvedRideEndpoints = z.strictObject({
   origin: objectRefSchema, destination: objectRefSchema,
   pickup: pickupCoordinateEvidence.optional(),
-  originPersonalPlace: savedRideEndpoint.optional(), destinationPersonalPlace: savedRideEndpoint.optional(),
+  originPersonalPlace: resolvedPersonalEndpoint.optional(), destinationPersonalPlace: resolvedPersonalEndpoint.optional(),
 });
 export type ResolvedRideEndpoints = z.infer<typeof resolvedRideEndpoints>;
 
@@ -28,5 +29,5 @@ export const ridePersonalPlaceLinks: OntologyDocument['linkTypes'] = rideEndpoin
   description: 'The confirmed personal place used for this route endpoint at the revision recorded on the route.',
   classification: privateLocation,
   from: { type: 'Route', name: side + 'PersonalPlace', cardinality: 'one' },
-  to: { type: personalPlaceType, name: side === 'origin' ? 'departures' : 'arrivals', cardinality: 'many' },
+  to: { type: personalPlaceVersionType, name: side === 'origin' ? 'departures' : 'arrivals', cardinality: 'many' },
 }));

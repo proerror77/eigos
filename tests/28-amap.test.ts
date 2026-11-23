@@ -18,6 +18,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
+import { internalClassification } from '../packages/ontology/classification.js';
 import { mapFunctions, pickupCoordinateEvidence } from '../packages/ontology/maps.js';
 import { document, fixture, principal, route } from './fixture.js';
 
@@ -151,7 +152,27 @@ test('a quote from current phone pickup to a saved home links the exact provider
     assert.equal(pickup.conversion, 'converted_by_amap');
     assert.deepEqual(linked.properties.personalPlaceRevisions, { destination: 1 });
     assert.deepEqual((await graph.follow(linked.ref, 'destination')).map(row => row.properties.name), ['青禾虚构园区北门']);
-    assert.deepEqual((await graph.follow(linked.ref, 'destinationPersonalPlace')).map(row => row.ref), [home]);
+    const [snapshot] = await graph.follow(linked.ref, 'destinationPersonalPlace');
+    assert.equal(snapshot?.properties.version, 1);
+    assert.equal(snapshot?.properties.address, address);
+    await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      address: '虚构区云端示例路4号', city: '上海市', role: 'home', expectedRevision: 1, confirmed: true,
+    }, 'move-ride-home');
+    assert.deepEqual((await graph.follow(snapshot!.ref, 'place')).map(row => row.ref), [home]);
+    assert.equal((await graph.follow(home, 'currentVersion'))[0]?.properties.version, 2);
+    assert.equal((await graph.follow(linked.ref, 'destinationPersonalPlace'))[0]?.properties.address, address);
+    const [poi] = await graph.follow(linked.ref, 'destination');
+    assert(poi);
+    const restricted = await Access.load(f.db, principal);
+    const internal = new Objects(f.db, f.model, restricted);
+    const query = (type: string, id: string) => restricted.measureEgress(() =>
+      internal.query({ type, where: { id } }), internalClassification);
+    assert.deepEqual((await query('Place', poi.ref.id)).result.items, []);
+    const interpreted = await restricted.measureEgress(() => internal.query({
+      type: 'Location', where: { name: String(poi.properties.name) },
+    }), internalClassification);
+    assert.deepEqual(interpreted.result.items, []);
+    assert.deepEqual((await query('Route', linked.ref.id)).result.items, []);
     assert.deepEqual(await graph.follow(linked.ref, 'originPersonalPlace'), []);
     assert.equal(f.provider.flags.orderCreates, 0);
   } finally {

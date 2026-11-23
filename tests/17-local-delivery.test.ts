@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import { deliveryAddressNames } from '../packages/ontology/delivery-addresses.js';
+import { objectPolicySchema } from '../packages/runtime/security.js';
+import { Access } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { localDeliveryServices, type LocalDeliveryProvider } from '../packages/ontology/local-delivery.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -192,7 +194,10 @@ test('local delivery Actions retain only owner-bound search results and report l
     const home = await complete('TaobaoInstantDelivery', { query: '牛奶', destination }, 'home-search', true);
     assert.deepEqual(home.deliveryAddress, deliveryAddress);
     const graph = new Objects(f.db, f.model, f.access);
-    assert.deepEqual((await graph.follow(place, names.personalNavigation)).map(row => row.ref), [deliveryAddress]);
+    const [firstVersion] = await graph.follow(place, 'currentVersion');
+    assert(firstVersion);
+    assert.deepEqual((await graph.follow(firstVersion.ref, names.personalNavigation)).map(row => row.ref), [deliveryAddress]);
+    assert.deepEqual((await graph.follow(home.search, 'personalPlaceVersion')).map(row => row.ref), [firstVersion.ref]);
     assert.deepEqual((await graph.follow(home.search, 'deliveryAddress', 'InstantDeliveryInquiry')).map(row => row.ref), [deliveryAddress]);
 
     const task = await f.tasks.submit(principal, { requestId: 'deliver-home', message: '淘宝闪购送到我家，帮我查牛奶库存' });
@@ -222,9 +227,22 @@ test('local delivery Actions retain only owner-bound search results and report l
     changeSelectionOnCatalog = false;
     taobaoSelection = addressRef;
 
+    const policy = objectPolicySchema.parse({ read: { all: [{ op: 'equals', property: 'provider', value: 'Hema' }] } });
+    await f.db.query(`INSERT INTO ${f.schema}.object_policies (ontology,type,policy) VALUES($1,$2,$3)`,
+      ['Eigos', 'ProviderDeliveryAddress', policy]);
+    const hidden = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    assert.deepEqual(await hidden.follow(firstVersion.ref, names.personalNavigation), []);
     const moved = await save(otherAddress, 1, 'move-home');
     assert.notEqual(moved.isError, true, moved.content?.[0]?.text);
-    assert.deepEqual(await graph.follow(place, names.personalNavigation), []);
+    await f.db.query(`DELETE FROM ${f.schema}.object_policies WHERE ontology=$1 AND type=$2`,
+      ['Eigos', 'ProviderDeliveryAddress']);
+    const [newVersion] = await graph.follow(place, 'currentVersion');
+    assert.equal(newVersion?.properties.address, otherAddress);
+    assert.deepEqual(await graph.follow(newVersion!.ref, names.personalNavigation), []);
+    assert.deepEqual((await graph.follow(firstVersion.ref, names.personalNavigation)).map(row => row.ref), [deliveryAddress]);
+    const oldAddress = await requireHome('old-address-after-policy-restored');
+    assert.equal(oldAddress.isError, true);
+    assert.match(oldAddress.content[0].text, /not linked to this personal place/);
     assert.deepEqual((await graph.follow(home.search, 'deliveryAddress')).map(row => row.ref), [deliveryAddress]);
     const staleBind = await invoke('apply_ontology_action', { action: names.bind, requestId: 'stale-bind', input: bindInput });
     assert.equal(staleBind.isError, true);

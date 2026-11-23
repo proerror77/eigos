@@ -24,7 +24,7 @@ PA 在原任务的 `ride.confirm_immediate_order` 请求中展示已解析的起
 
 Action 发单前复核起终点及常用地点版本，并按原起终点和所选车型向滴滴重新估价。常用地点地址更新后，需要按新版本重新确认。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
 
-原单通过 `immediateRides` 关联 `DidiImmediateRide`。新版叫车记录的 `route` Link 指向实际路线，路线指向滴滴的起终点 POI，并记录使用的常用地点和版本。使用手机定位的路线保留坐标系转换证据。该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
+原单通过 `immediateRides` 关联 `DidiImmediateRide`。新版叫车记录的 `route` Link 指向实际路线，路线指向滴滴的起终点 POI 和实际使用的不可变 `PersonalPlaceVersion`。搬家后，历史路线仍指向原版本。由常用地点解析的滴滴 POI 保留机密分级以及独立的对象身份。使用手机定位的路线保留坐标系转换证据。该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
 
 ## 取消已发订单
 

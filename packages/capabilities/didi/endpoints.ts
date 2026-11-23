@@ -1,8 +1,9 @@
 import { Conflict, InvalidInput } from '../../core/identity.js';
 import { rideEndpoints, ridePersonalPlaceLinks, savedRideEndpoint, type ResolvedRideEndpoints } from '../../ontology/didi-ride-endpoints.js';
-import { personalPlaceRecord, privateLocation } from '../../ontology/personal-places.js';
+import { personalPlaceVersionRecord, privateLocation } from '../../ontology/personal-places.js';
 import type { LinkData, ObjectRef } from '../../ontology/schema.js';
 import type { FunctionContext } from '../../runtime/functions.js';
+import { currentPersonalPlaceVersion } from '../personal-places.js';
 import type { Objects } from '../../runtime/objects.js';
 
 export async function readSavedRideEndpoints(input: Record<string, unknown>, context: FunctionContext) {
@@ -16,16 +17,18 @@ export async function readSavedRideEndpoints(input: Record<string, unknown>, con
     const row = await context.objects.read(selected.place);
     if (row.revision !== selected.revision)
       throw new Conflict('The saved ride endpoint changed; confirm the new address before using it');
-    const { address, city } = personalPlaceRecord.parse(row.properties);
-    return { selected, address, city };
+    const current = await currentPersonalPlaceVersion(context.objects, selected.place);
+    const { address, city, version } = personalPlaceVersionRecord.parse(current.properties);
+    return { selected: { ...selected, snapshot: current.ref, version }, address, city };
   };
   const [origin, destination] = await Promise.all(rideEndpoints.map(read));
   return { origin, destination };
 }
 
-export async function assertSavedRideEndpoints(objects: Pick<Objects, 'read'>, endpoints: ResolvedRideEndpoints) {
+export async function assertSavedRideEndpoints(objects: Pick<Objects, 'read' | 'follow'>, endpoints: ResolvedRideEndpoints) {
   for (const selected of [endpoints.originPersonalPlace, endpoints.destinationPersonalPlace]) {
-    if (selected && (await objects.read(selected.place)).revision !== selected.revision)
+    if (selected && ((await objects.read(selected.place)).revision !== selected.revision ||
+        (await currentPersonalPlaceVersion(objects, selected.place)).ref.id !== selected.snapshot.id))
       throw new Conflict('The saved ride endpoint changed; confirm the new address before using it');
   }
 }
@@ -35,15 +38,15 @@ export function rideEndpointLinks(route: ObjectRef, endpoints: ResolvedRideEndpo
   return [
     { type: 'RouteOrigin', from: route, to: origin },
     { type: 'RouteDestination', from: route, to: destination },
-    ...(originPersonalPlace ? [{ type: ridePersonalPlaceLinks[0]!.apiName, from: route, to: originPersonalPlace.place }] : []),
-    ...(destinationPersonalPlace ? [{ type: ridePersonalPlaceLinks[1]!.apiName, from: route, to: destinationPersonalPlace.place }] : []),
+    ...(originPersonalPlace ? [{ type: ridePersonalPlaceLinks[0]!.apiName, from: route, to: originPersonalPlace.snapshot }] : []),
+    ...(destinationPersonalPlace ? [{ type: ridePersonalPlaceLinks[1]!.apiName, from: route, to: destinationPersonalPlace.snapshot }] : []),
   ];
 }
 
 export function savedRideRevisions(endpoints: ResolvedRideEndpoints) {
   const { originPersonalPlace, destinationPersonalPlace } = endpoints;
   if (originPersonalPlace || destinationPersonalPlace) return {
-    ...(originPersonalPlace ? { origin: originPersonalPlace.revision } : {}),
-    ...(destinationPersonalPlace ? { destination: destinationPersonalPlace.revision } : {}),
+    ...(originPersonalPlace ? { origin: originPersonalPlace.version } : {}),
+    ...(destinationPersonalPlace ? { destination: destinationPersonalPlace.version } : {}),
   };
 }

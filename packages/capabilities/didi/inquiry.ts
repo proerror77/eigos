@@ -104,15 +104,15 @@ async function resolvePlaces(
 ): Promise<Resolution> {
   const resumed = resumedPlaceInput(context);
   const selection = input.selection as { origin: ObjectRef; destination: ObjectRef } | undefined;
-  const places = (receipt: ObjectRef) => context.objects.query({
-    type: 'Location', from: { object: receipt, link: 'places' }, limit: 100,
+  const places = (receipt: ObjectRef, privateEndpoint = false) => context.objects.query({
+    type: privateEndpoint ? 'Place' : 'Location', from: { object: receipt, link: 'places' }, limit: 100,
   });
   const find = async (role: Endpoint) => {
     const receipt = objectRefSchema.parse(input[role + 'Receipt']);
     const choice = selection?.[role] ?? resumed?.places?.[role];
     const amendment = resumed?.placeAmendments?.[role];
-    const hint = landmarks[role];
-    const [candidates, nearby] = await Promise.all([places(receipt), hint && places(hint.receipt)]);
+    const hint = landmarks[role], savedAddress = savedAddresses[role];
+    const [candidates, nearby] = await Promise.all([places(receipt, Boolean(savedAddress)), hint && places(hint.receipt)]);
     if (candidates.cursor) throw new Clarification('地点候选过多，请补充完整地址。');
     const anchors = !nearby?.cursor && hint ? nearby?.items.filter(item =>
       cityKey(item.properties.city) === cityKey(city) &&
@@ -121,8 +121,8 @@ async function resolvePlaces(
     const name = amendment?.address && !amendment.name && !hint ? '' : matchName(rawName);
     const abbreviation = hint ? siteName(rawName, city) : '';
     const allowBuildingExpansion = !hint && !amendment && !choice;
-    const savedAddress = savedAddresses[role];
     const matches = candidates.items.filter(item => {
+      if (savedAddress && !item.properties.locationClassification) return false;
       if (savedAddress && (cityKey(item.properties.city) !== cityKey(city) ||
           !(addressMatches(item, savedAddress) || matchName(String(item.properties.name)) === matchName(savedAddress)))) return false;
       if (choice) return item.ref.type === choice.type && item.ref.id === choice.id;
@@ -188,7 +188,7 @@ async function refreshNearbyQuotePlace(sources: Sources, resolveSource: SourceRe
   const saved = await context.objects.query({
     type: 'Place', where: { name: keywords, sourceBinding: source.bindingId }, limit: 10,
   });
-  const seeds = saved.items.filter(place => cityKey(place.properties.city) === cityKey(city));
+  const seeds = saved.items.filter(place => !place.properties.locationClassification && cityKey(place.properties.city) === cityKey(city));
   if (saved.cursor || seeds.length !== 1) return;
   const seed = seeds[0]!;
   const history = await context.objects.query({ type: 'SourceReceipt', from: { object: seed.ref, link: 'sources' },
@@ -281,12 +281,18 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       currentBinding = source.bindingId;
     }
     const lookups = new Map<string, Promise<ObjectRef>>();
-    const lookup = (keywords: string) => {
-      const existing = lookups.get(keywords);
+    const lookup = (keywords: string, privateRideEndpoint = false) => {
+      const key = digest([keywords, privateRideEndpoint]);
+      const existing = lookups.get(key);
       if (existing) return existing;
-      const pending = sources.refresh(model, 'DidiPlaces', { city, keywords },
-        context.objects.access, execution?.task, execution?.tasks, context.signal).then(result => result.receipt).catch(async error => {
-        if (!(error instanceof DidiReadError) || error.code !== 'RATE_LIMITED') throw error;
+      const sourceInput = { city, keywords };
+      const args = [context.objects.access, execution?.task, execution?.tasks, context.signal] as const;
+      const read = privateRideEndpoint
+        ? sources.read(model, 'DidiPlaces', sourceInput, ...args).then(result =>
+          sources.publishRead(model, 'DidiPlaces', { ...sourceInput, privateRideEndpoint }, result, ...args))
+        : sources.refresh(model, 'DidiPlaces', sourceInput, ...args);
+      const pending = read.then(result => result.receipt).catch(async error => {
+        if (privateRideEndpoint || !(error instanceof DidiReadError) || error.code !== 'RATE_LIMITED') throw error;
         const fallback = await refreshNearbyQuotePlace(sources, resolveSource, context, city, keywords).catch(failure => {
           if (failure instanceof SourceReadFailure) return undefined;
           throw failure;
@@ -294,7 +300,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
         if (!fallback) throw error;
         return fallback;
       });
-      lookups.set(keywords, pending);
+      lookups.set(key, pending);
       return pending;
     };
     const findPlaces = async (role: Endpoint) => {
@@ -302,7 +308,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       if (receipt && place && currentBinding && await reusablePlace(context, receipt, place, currentBinding)) return receipt;
       const amendment = resumed?.placeAmendments?.[role];
       const keywords = amendment?.name ?? amendment?.address ?? endpoints[role];
-      return lookup(keywords);
+      return lookup(keywords, Boolean(personal[role]));
     };
     const findLandmark = async (role: Endpoint) => {
       if (selection?.[role]) return;

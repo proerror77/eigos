@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { bindDeliveryAddressInput, deliveryAddressList, deliveryAddressNames, deliveryAddressRecord,
   deliveryAddressRef, deliveryAddressType, deliveryDestination, personalDeliveryLinks } from './delivery-addresses.js';
-import { personalPlaceType, privateLocation } from './personal-places.js';
+import { currentPersonalPlaceVersionLink, personalPlaceType, personalPlaceVersionType, privateLocation } from './personal-places.js';
 import { json, time } from './service-contracts.js';
 
 const text = z.string().trim().min(1).max(300);
@@ -66,7 +66,7 @@ const deliverySearchRead = deliverySearchReport.extend({ search: objectRefSchema
 export const addressedDeliveryReport = deliverySearchRead.extend({ deliveryAddress: deliveryAddressRef.nullable() });
 export const deliveryReportRef = z.strictObject({ search: objectRefSchema });
 export const deliveryRecord = z.strictObject({
-  id: checksum, name: text, bindingId: checksum, deliveryAddressKey: checksum.optional(), ...deliverySearchReport.shape,
+  id: checksum, name: text, bindingId: checksum, deliveryAddressKey: checksum.optional(), personalPlaceVersionKey: checksum.optional(), ...deliverySearchReport.shape,
 });
 export const localDeliveryServices = {
   TaobaoInstantDelivery: {
@@ -99,7 +99,7 @@ export const localDeliveryDefinition: Pick<OntologyDocument, 'objectTypes' | 'in
     apiName: deliveryAddressType, displayName: '配送地址', primaryKey: 'id', titleProperty: 'name', interfaces: {},
     description: 'An opaque address identity observed in an authorized supplier account.',
     properties: Object.fromEntries(Object.entries(deliveryAddressRecord.shape).map(([name, field]) =>
-      [name, { description: name, required: true, schema: json(field) }])),
+      [name, { description: name, required: true, schema: json(field), ...(name === 'address' ? { classification: privateLocation } : {}) }])),
   }, ...services.map(service => ({
     apiName: service.object, displayName: service.displayName + '查询结果',
     description: 'An owner-scoped and time-bounded observation of the selected delivery area.',
@@ -114,6 +114,10 @@ export const localDeliveryDefinition: Pick<OntologyDocument, 'objectTypes' | 'in
     apiName: service.addresses.searchLink, description: 'Supplier address actually used for the search observation.',
     from: { type: service.object, name: 'deliveryAddress', cardinality: 'one' as const },
     to: { type: deliveryAddressType, name: service.addresses.personalNavigation.replace(/Addresses$/, 'Searches'), cardinality: 'many' as const },
+  })), ...services.map(service => ({
+    apiName: service.addresses.searchVersionLink, description: 'Confirmed personal address version used for this search.',
+    from: { type: service.object, name: 'personalPlaceVersion', cardinality: 'one' as const },
+    to: { type: personalPlaceVersionType, name: service.addresses.personalNavigation.replace(/Addresses$/, 'Searches'), cardinality: 'many' as const },
   }))],
   interfaceTypes: services.map(service => ({
     apiName: service.inquiry, description: service.description, properties: { name: structuredClone(properties.name!) },
@@ -150,11 +154,13 @@ export const localDeliveryDefinition: Pick<OntologyDocument, 'objectTypes' | 'in
     }, {
       apiName: service.addresses.editBinding, description: 'Bind a reviewed supplier address to the exact revision of a personal place.',
       parameters: json(bindDeliveryAddressInput), returns: json(deliveryAddressRef), edits: true, source: service.provider,
-      classification: privateLocation, dependencies: { objectTypes: [personalPlaceType, deliveryAddressType], linkTypes: [service.addresses.personalLink] },
+      classification: privateLocation, dependencies: { objectTypes: [personalPlaceType, personalPlaceVersionType, deliveryAddressType],
+        linkTypes: [currentPersonalPlaceVersionLink, service.addresses.personalLink] },
     }, {
       apiName: service.addresses.editSearch, description: 'Record an address-bound delivery search.',
       parameters: json(service.addressedInput), returns: json(objectRefSchema), edits: true, source: service.provider,
-      dependencies: { objectTypes: [service.object, deliveryAddressType], linkTypes: [service.addresses.searchLink] },
+      dependencies: { objectTypes: [service.object, deliveryAddressType, personalPlaceType, personalPlaceVersionType],
+        linkTypes: [service.addresses.searchLink, service.addresses.searchVersionLink, service.addresses.personalLink, currentPersonalPlaceVersionLink] },
     }, {
       apiName: service.addresses.readSearch, description: 'Read the search result together with the verified supplier delivery address reference.',
       parameters: json(deliveryReportRef), returns: json(addressedDeliveryReport), source: service.provider,

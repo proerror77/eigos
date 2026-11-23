@@ -11,14 +11,15 @@ import { didiPAConnectionCapability, withDidiPAConnection } from '../packages/ca
 import { createDidiPARelay, type DidiPALease } from '../packages/capabilities/didi/pa-relay.js';
 import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
 import { immediateRideApprovalCapability } from '../packages/ontology/didi-immediate-ride.js';
-import { businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { accountActionsGroup } from '../packages/runtime/accounts.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
+import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { accountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-test('an invited PA connects DiDi and approves one synthetic ride on the original Action task', async () => {
+test('an invited pilot PA quotes and books a synthetic ride using the confirmed home version', async () => {
   const f = await fixture();
   const folder = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-'));
   const g = await accountGateway(f, { signup: 'invite' });
@@ -74,8 +75,36 @@ test('an invited PA connects DiDi and approves one synthetic ride on the origina
     await g.form('approve', cookie);
     const token = await g.token('pa-ride', { issuedAt: Math.ceil(Date.now() / 1000) });
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
+    const grants = businessGrants(f.model).filter(grant => didiPAAccountResources.has(grant.resource));
+    assert.equal(grants.length, didiPAAccountResources.size);
+    const saved = await call('apply_ontology_action', { action: 'SavePersonalPlace', requestId: randomUUID(),
+      input: { role: 'home', city: route.city, address: route.destination, expectedRevision: 0, confirmed: true } });
+    assert(await worker.runOne('interactive'));
+    const savedTask = await call('get_task', { taskId: saved.id });
+    assert.equal(savedTask.state, 'completed', JSON.stringify(savedTask));
+    const endpoint = { place: savedTask.result, revision: 1 };
+    const { destination: _destination, ...pickup } = route;
+    const input = { ...pickup, destinationPersonalPlace: endpoint };
+    const estimate = await call('complete_with_action', { requestId: randomUUID(),
+      action: { interface: { type: 'RideInquiryWithPlaceClues', action: 'estimateWithEndpoints', implementation: 'RideRequest' }, input },
+      read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
+    });
+    assert(await worker.runOne('interactive'));
+    const quoteAuthorization = await call('get_task', { taskId: estimate.id });
+    assert.equal(quoteAuthorization.result.capability, didiPAConnectionCapability);
+    const quoteConnection = randomUUID(), quoteExpiry = new Date(Date.now() + 60_000).toISOString();
+    leases.set(quoteConnection, { owner, taskId: estimate.id, requestId: quoteAuthorization.result.requestId,
+      expiresAt: quoteExpiry, access: 'read', async readKey() { return key; } });
+    await call('respond_to_task', { taskId: estimate.id, requestId: quoteAuthorization.result.requestId,
+      response: { status: 'authorized', connectionRef: quoteConnection, expiresAt: quoteExpiry, access: 'read' } });
+    assert(await worker.runOne('interactive'));
+    const quote = await call('get_task', { taskId: estimate.id });
+    assert.equal(quote.state, 'completed', JSON.stringify(quote));
+    assert.equal(quote.result.route.destination.name, route.destination);
+    assert.equal(created, 0);
+    f.provider.calls.length = 0;
     const args = { requestId: randomUUID(),
-      action: { interface: { type: 'ImmediateRideBooking', action: 'book', implementation: 'DidiImmediateRide' }, input: route },
+      action: { interface: { type: 'ImmediateRideBooking', action: 'bookWithEndpoints', implementation: 'DidiImmediateRide' }, input },
       read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
     };
     const submitted = await call('complete_with_action', args);
@@ -120,6 +149,13 @@ test('an invited PA connects DiDi and approves one synthetic ride on the origina
     assert.equal(result.result.order.evidence, 'provider_mock');
     assert.equal(created, 1);
     assert.equal(readBack, 1);
+    const access = await Access.load(f.db, { owner, memberAccess: true, scopes: ['tasks:read', 'tasks:write'] });
+    const graph = new Objects(f.db, f.model, access);
+    const [actualRoute] = await graph.follow({ type: 'DidiImmediateRide', id: result.result.id }, 'route');
+    assert(actualRoute);
+    const [confirmedHome] = await graph.follow(actualRoute.ref, 'destinationPersonalPlace');
+    assert.equal(confirmedHome?.properties.version, 1);
+    assert.equal(confirmedHome?.properties.address, route.destination);
     assert(!JSON.stringify((await f.db.query('SELECT response FROM ' + f.schema + '.pa_requests')).rows).includes(key));
   } finally {
     await client.close();
