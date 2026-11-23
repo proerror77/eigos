@@ -353,6 +353,8 @@ test('the account page shows where each account stands', async () => {
     assert.match(fresh, /Beta 账号已开通。/);
     assert.match(fresh, /<button>生成接入令牌<\/button>/);
     assert.match(fresh, /<button>授权 Grok<\/button>/);
+    assert.match(fresh, /复制安装提示词/);
+    assert.match(fresh, /复制首条测试提示词/);
     assert.match(fresh, /<button>退出登录<\/button>/);
     await open.form('approve', erin.cookie);
     const approved = await open.page(erin.cookie);
@@ -368,10 +370,27 @@ test('the account page shows where each account stands', async () => {
     const suspended = await open.page(erin.cookie);
     assert.match(suspended, /这个账号已停用，请联系 EIGOS 支持。/);
     assert.doesNotMatch(suspended, /Grok<\/button>/, 'a suspended account is told so before anything about Grok');
+    assert.doesNotMatch(suspended, /setup-heading/);
+
+    const inviteLanding = await fetch(invite.url + '/account');
+    const landing = await inviteLanding.text();
+    assert.match(landing, /href="\/account\/login">登录<\/a>/);
+    assert.match(landing, /href="\/account\/login\?signup=1">注册<\/a>/);
+    assert.match(landing, /收到邀请码后，回到本页开通/);
+    assert.match(landing, /id="install-prompt"[^>]+readonly>[^<]+https:\/\/127\.0\.0\.1\/mcp/);
+    assert.match(landing, /id="query-prompt"[^>]+readonly>[^<]+上海市今天的天气/);
+    assert.doesNotMatch(landing, /action="\/account\/(agent-token|approve)"/);
+    const copyScript = landing.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(copyScript);
+    const copyScriptHash = createHash('sha256').update(copyScript).digest('base64');
+    assert.equal(inviteLanding.headers.get('content-security-policy')!.split('; ').at(-1), `script-src 'sha256-${copyScriptHash}'`);
+    assert.doesNotMatch(anonymous.headers.get('content-security-policy')!, /script-src/);
 
     // The same session can be read by gateways with another sign-up mode: it is a login without an account.
     const carol = await invite.login('carol', 'carol@example.test');
-    assert.match(await invite.page(carol.cookie), /<button>开通账号<\/button>/);
+    const pending = await invite.page(carol.cookie);
+    assert.match(pending, /<button>开通账号<\/button>/);
+    assert.match(pending, /复制安装提示词/);
     assert.match(await open.page(carol.cookie), /账号还没有开通，请重新登录。/);
     assert.match(await closed.page(carol.cookie), /目前暂停注册新账号。/);
     await setGrants(f.db, open.owner('olivia'), [{ resource: 'Eigos', permission: 'view_definition' }]);
