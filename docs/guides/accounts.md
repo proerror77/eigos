@@ -62,6 +62,23 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 - 停用账号同样立即拒绝它的令牌，见「运营者命令」。
 - 同一个邮箱的另一个用户要并入这个账号，账号页确认了这个账号时，Grok 授权也被撤销，见「注册方式」。
 
+### 明确路线的滴滴估价
+
+用户提供城市及已确认的上、下车地点时，Grok 在当前对话调用 `complete_with_action` 并直接返回报价。
+
+```json
+{
+  "requestId": "ride-quote-001",
+  "action": {
+    "interface": { "type": "RideInquiry", "action": "estimate", "implementation": "RideRequest" },
+    "input": { "city": "上海市", "origin": "上海博物馆", "destination": "上海图书馆" }
+  },
+  "read": { "function": "readRideEstimates", "resultParameter": "request" }
+}
+```
+
+此调用需要 `tasks:read`、`tasks:write` 和现有的估价 Action、来源及结果读取授权。相同 `requestId` 和参数读回原报价，仍核对来源及有效期。地点无法唯一匹配时返回 `409`，Grok 补充确认后再询价。需要 PA 提供定位或组合其他旅行能力时使用 `submit_task`。
+
 ## 上线顺序
 
 第 2 步起的每一项，都会改动 Auth0 租户、数据库或线上服务，须先取得授权，见「需要授权的操作」。

@@ -8,9 +8,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { digest } from '../packages/core/identity.js';
 import { businessGrants, grantBetaRestaurantSearch, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
-import { Accounts } from '../packages/runtime/accounts.js';
+import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
-import { fixture } from './fixture.js';
+import { fixture, route } from './fixture.js';
+
+const accountMcpTools = ['check_restaurant_availability', 'complete_with_action', 'get_task', 'search_restaurants', 'submit_task'];
 
 test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -108,7 +110,7 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/ontology', bobToken)).status, 403);
     assert.equal((await g.call('/tasks', bobToken)).status, 403);
     assert.equal((await a2a('GetTask', { id: 'unused' }, 'eigos_agent_' + 'x'.repeat(43))).status, 401);
-    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), ['check_restaurant_availability', 'get_task', 'search_restaurants', 'submit_task']);
+    assert.deepEqual((await aliceMcp.listTools()).tools.map(tool => tool.name).sort(), accountMcpTools);
     assert.deepEqual((await (await g.call('/identity', aliceToken)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', aliceToken)).status, 403);
     assert.equal((await g.call('/a2a', aliceToken)).status, 403);
@@ -178,7 +180,7 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/identity', renewedToken)).status, 200);
     const renewed = await makeClient(renewedToken);
     for (const client of [renewed, bobMcp])
-      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['check_restaurant_availability', 'get_task', 'search_restaurants', 'submit_task']);
+      assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), accountMcpTools);
     const replacement = await issue();
     assert.equal((await a2a('GetTask', { id: a2aId })).status, 401);
     assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).body.result.id, a2aId);
@@ -191,6 +193,77 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await a2a('GetTask', { id: a2aId }, replacement)).status, 401);
   } finally {
     for (const client of clients) await client.close();
+    await g.close();
+    await f.close();
+  }
+});
+
+test('a Grok account can complete a scoped ride quote without submitting a task', async t => {
+  const f = await fixture();
+  let g: AccountGateway;
+  g = await accountGateway({ ...f, source: async owner => {
+    assert.equal(owner, g.owner('rider'));
+    return f.provider.source;
+  } }, { signup: 'open' });
+  const mcp = new Client({ name: 'test-grok-quote', version: '1' });
+  try {
+    const { cookie } = await g.login('rider', 'rider@example.test');
+    assert.equal((await g.form('approve', cookie)).status, 303);
+    const group = 'group:' + accountGroup, grants = businessGrants(f.model);
+    await setGrants(f.db, group, grants);
+    const token = await g.token('rider', { scope: 'tasks:read tasks:write', issuedAt: Math.ceil(Date.now() / 1000) });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
+      requestInit: { headers: { Authorization: 'Bearer ' + token } },
+    }));
+    const args = {
+      requestId: 'grok-ride-quote',
+      action: { interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: route },
+      read: { function: 'readRideEstimates', resultParameter: 'request' },
+    };
+    const quote = (input: Record<string, unknown> = args) => mcp.callTool({ name: 'complete_with_action', arguments: input });
+    for (const changed of [
+      { ...args, action: { ...args.action, interface: { ...args.action.interface, action: 'book' } } },
+      { ...args, read: { ...args.read, function: 'readInteractiveRideEstimate' } },
+      { ...args, ontology: 'Other' },
+      { ...args, action: { ...args.action, scenarioId: '00000000-0000-4000-8000-000000000000' } },
+    ]) assert.equal((await quote(changed)).isError, true);
+    assert.deepEqual(f.provider.calls, []);
+
+    const readQuote = async () => {
+      const result = await quote();
+      assert(!result.isError, JSON.stringify(result));
+      return JSON.parse((result.content as { text: string }[])[0]!.text);
+    };
+    const first = await readQuote();
+    assert.equal(first.request.type, 'RideRequest');
+    assert.equal(first.estimates.length, 2);
+    assert.deepEqual(first.evidence, ['fixture']);
+    assert.deepEqual((await readQuote()).request, first.request);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.flags.orderCreates, 0);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.tasks WHERE owner=$1`, [g.owner('rider')])).rowCount, 0);
+
+    f.provider.flags.ambiguous = true;
+    const ambiguous = await quote({ ...args, requestId: 'grok-ambiguous-ride' });
+    assert.partialDeepStrictEqual(ambiguous.structuredContent, { status: 409 });
+    assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
+
+    await setGrants(f.db, group, grants.filter(grant => grant.resource !== 'Eigos/action/EstimateRide'));
+    const denied = await quote({ ...args, requestId: 'grok-quote-without-grant' });
+    assert.partialDeepStrictEqual(denied.structuredContent, { status: 403 });
+
+    await setGrants(f.db, group, grants);
+    const active = Accounts.prototype.active;
+    const accountCheck = t.mock.method(Accounts.prototype, 'active', async function (this: Accounts, ...checks: Parameters<Accounts['active']>) {
+      await this.suspend(g.owner('rider'), 'synthetic');
+      return active.apply(this, checks);
+    });
+    const suspended = await quote();
+    assert.partialDeepStrictEqual(suspended.structuredContent, { status: 403 });
+    assert.equal(accountCheck.mock.callCount(), 1);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally {
+    await mcp.close();
     await g.close();
     await f.close();
   }
