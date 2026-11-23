@@ -20,6 +20,8 @@
 
 Action 发单前按原起终点和所选车型向滴滴重新估价。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
 
+从 `DidiImmediateRide` 可以沿 `route`、`order` 和 `approval` 回查路线、原单和 PA 输入审批。Machinery 可从即时叫车日志下钻到审批和原单，再沿 `watches` 查看跟单过程。
+
 该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
 
 ## 取消已发订单
@@ -32,8 +34,8 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 
 ## 进入和退出
 
-- `StartDidiRideWatch` 只接受用户已有的、可沿 Link 回查原 `EventTrip` 的 `DidiRideOrder`。调用者授权一分钟至四小时的观察期限，选择是否向已配置且同 owner 的 PA 递送到车提醒。创建订单权限仍由原出行 Action 处理。
-- Worker 按现有 `ScheduledActions` 运行 `CheckDidiRideWatch`，绑定原账户、订单与同一有界排程。每一步在同一个 Action 事务更新状态并写入下一次时间。使用来源回执摘要，拒绝把别的订单、账号或无结构的状态当作本订单到车。
+- `StartDidiRideWatch` 只接受同一 owner 已有且有已验证供应商绑定的 `DidiRideOrder`。调用者授权一分钟至四小时的观察期限，选择是否向已配置且同 owner 的 PA 递送到车提醒。创建订单权限仍由原出行 Action 处理。
+- Worker 按现有 `ScheduledActions` 运行 `CheckDidiRideWatch`，并写入到期或失败的正式状态与日志，绑定原账户、订单与同一有界排程。每一步在同一个 Action 事务更新状态并写入下一次时间。使用来源回执摘要，拒绝把别的订单、账号或无结构的状态当作本订单到车。
 - `readDidiRideWatch` 读回当前进度与可用提醒，`readDidiDriverPosition` 按需读取司机位置。`StopDidiRideWatch` 停止观察，已发出的供应商订单保持原状态。
 - [Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts/) 沿 `stateLogs` 观察可枚举状态的已提交转换。现有可选通知队列按观察版本发送和撤回，发送前重新复核原对象、归属和许可。Webhook 接收确认表示通知进入 PA 通道，用户端已读需要独立证据。
 
@@ -47,4 +49,4 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 
 Worker 校验调用者、原任务、方法、输入摘要、结果摘要、类型和时间窗口，复用地点解析、报价 Action 和 SourceReceipt 投影。结果标为 pa_reported，完整 PA 回执留在原任务的 PA 请求记录。直接由 EIGOS 验证的 live_readonly 报价仍保留原有 accepted 标志。 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
-部署时保持 EIGOS_SIGNUP=invite。Gateway 和 Worker 设置 EIGOS_DIDI_PA_READS_ENABLED=true，再用管理角色运行 npm run account -- grant-didi-pa 开通邀约账号的询价权限。验收在同一原 PA 对话留存任务 ID、PA 请求、真实报价及来源读回。试点授权仅覆盖只读询价。
+部署时保持 EIGOS_SIGNUP=invite。Gateway 和 Worker 设置 EIGOS_DIDI_PA_READS_ENABLED=true，再用管理角色运行 npm run account -- grant-didi-pa 开通邀约账号的询价权限。验收在同一原 PA 对话留存任务 ID、PA 请求、真实报价及来源读回。试点允许只读询价和跟单。PA 报价回执仅用于原询价任务。跨任务跟单需要已验证的 EIGOS 原单和仍有效的同 owner 供应商绑定。试点清单没有滴滴叫车、取消或付款权限。

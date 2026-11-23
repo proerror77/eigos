@@ -1,3 +1,5 @@
+import { deliveryAddressNames, deliveryAddressType } from './delivery-addresses.js';
+import { personalPlaceVersionType } from './personal-places.js';
 import { z } from 'zod';
 import { deliveryMerchantId, localDeliveryProviders, localDeliveryServices, type LocalDeliveryProvider } from './local-delivery.js';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
@@ -75,11 +77,11 @@ const identity = { id: digest, name: text, channel: tradeChannel, bindingId: dig
   evidence: z.enum(['provider', 'provider_mock']) };
 
 export const deliveryCartChangeRecord = z.strictObject({
-  ...identity, operationRef: z.uuid(),
+  ...identity, operationRef: z.uuid(), deliveryAddressKey: digest.optional(),
   state: z.enum(['changed', 'declined', 'unknown']),
   cart: deliveryCartReport.nullable(),
 });
-const cartChangeRead = deliveryCartChangeRecord.omit({ bindingId: true, operationRef: true }).extend({ change: objectRefSchema });
+const cartChangeRead = deliveryCartChangeRecord.omit({ bindingId: true, operationRef: true, deliveryAddressKey: true }).extend({ change: objectRefSchema });
 const readCartChange = z.strictObject({ change: objectRefSchema });
 
 export const deliveryFulfillment = z.enum(['unknown', 'in_progress', 'completed', 'canceled']);
@@ -97,6 +99,8 @@ export const deliveryCheckoutRecord = z.strictObject({
   sourceTaskId: z.uuid().nullable(),
   scope: deliveryScope,
   addressDigest: digest,
+  deliveryAddressKey: digest.optional(),
+  personalPlaceVersionKey: digest.optional(),
   version: digest,
   quoteRef: z.uuid(),
   expiresAt: time,
@@ -115,7 +119,7 @@ export const deliveryCheckoutRecord = z.strictObject({
   supplierObservedAt: time.nullable().optional(),
   observation: z.enum(['idle', 'watching', 'finished', 'timed_out', 'source_unavailable', 'stopped']).optional(),
 });
-const checkoutRead = deliveryCheckoutRecord.omit({ bindingId: true, sourceTaskId: true, addressDigest: true, version: true,
+const checkoutRead = deliveryCheckoutRecord.omit({ bindingId: true, sourceTaskId: true, addressDigest: true, deliveryAddressKey: true, personalPlaceVersionKey: true, version: true,
   quoteRef: true, windows: true }).extend({
   checkout: objectRefSchema,
   windows: z.array(z.strictObject({ index: z.number().int().nonnegative(), label: text, feeMinor: cents, selected: z.boolean() })).max(50),
@@ -213,6 +217,9 @@ function definitionFor(service: TradeService): Definition {
     { type: cartChangeType, contract: cartContract, fields: change.shape, operations: cartOps, description: 'Change to the bound supplier account cart.' },
     { type: checkoutType, contract: orderContract, fields: checkoutShape.shape, operations: checkoutOps, description: 'Original checkout and order lifecycle.' },
   ];
+  const addressLinks = deliveryAddressNames(provider);
+  const noLinks: Record<string, string> = {};
+  const checkoutLinks = { deliveryAddress: deliveryAddressType, personalPlaceVersion: personalPlaceVersionType };
   const editTypes = groups.flatMap(({ type, operations }) => operations.map(op => ({ ...op, type,
     fn: deliveryEditFunction(op.apiName), existing: 'checkout' in op.schema.shape,
   })));
@@ -224,7 +231,8 @@ function definitionFor(service: TradeService): Definition {
     objectTypes: [
       object(orderType, 'Confirmed supplier order and its independently observed fulfillment.', order.shape),
       ...groups.map(({ type, contract, fields, description, operations }) => ({
-        ...object(type, description, fields), interfaces: { [contract]: { properties: { name: 'name' }, links: {},
+        ...object(type, description, fields), interfaces: { [contract]: { properties: { name: 'name' },
+          links: type === checkoutType ? { deliveryAddress: 'deliveryAddress', personalPlaceVersion: 'personalPlaceVersion' } : noLinks,
           actions: Object.fromEntries(operations.map(op => [op.alias, { action: op.apiName,
             parameters: Object.fromEntries(Object.keys(op.schema.shape).map(name => [name, name])) }])) } },
       })),
@@ -234,12 +242,20 @@ function definitionFor(service: TradeService): Definition {
         from: { type: search.object, name: 'cartChanges', cardinality: 'many' }, to: { type: cartChangeType, name: 'search', cardinality: 'one' } },
       { apiName: cartCheckoutLink, description: 'Checkout that used the exact cart revision produced by the original change.',
         from: { type: cartChangeType, name: 'checkouts', cardinality: 'many' }, to: { type: checkoutType, name: 'cartChange', cardinality: 'one' } },
+      ...Object.entries(checkoutLinks).map(([name, target]) => ({
+        apiName: name === 'deliveryAddress' ? addressLinks.checkoutAddressLink : addressLinks.checkoutVersionLink,
+        description: 'The ' + name + ' used to quote this checkout.',
+        from: { type: checkoutType, name, cardinality: 'one' as const },
+        to: { type: target, name: provider[0]!.toLowerCase() + provider.slice(1) + 'Checkouts', cardinality: 'many' as const },
+      })),
       { apiName: checkoutOrderLink, description: 'Supplier orders produced by this approved checkout.',
         from: { type: checkoutType, name: 'orders', cardinality: 'many' }, to: { type: orderType, name: 'checkout', cardinality: 'one' } },
     ],
     interfaceTypes: groups.map(({ contract, description, operations }) => ({
       apiName: contract, description, properties: { name: { description: 'Delivery record name', required: true, schema: json(text) } },
-      optionalProperties: [], links: {},
+      optionalProperties: [],
+      links: contract === orderContract ? Object.fromEntries(Object.entries(checkoutLinks).map(([name, target]) =>
+        [name, { target, cardinality: 'one' as const, required: false }])) : {},
       actions: Object.fromEntries(operations.map(op => {
         const objectParameters: Record<string, string> = 'checkout' in op.schema.shape ? { checkout: contract } : {};
         return [op.alias, { parameters: json(op.schema), objectParameters, required: true }];
@@ -264,7 +280,9 @@ function definitionFor(service: TradeService): Definition {
         apiName: op.fn, description: op.description, parameters: json(op.schema), returns: json(objectRefSchema), edits: true,
         ...(op.alias !== 'stopObservation' ? { source: provider } : {}),
         dependencies: op.alias === 'change' ? { objectTypes: [cartChangeType, search.object], linkTypes: [searchCartLink] }
-          : op.alias === 'preview' ? { objectTypes: [checkoutType, cartChangeType], linkTypes: [cartCheckoutLink] }
+          : op.alias === 'preview' ? { objectTypes: [checkoutType, cartChangeType, search.object, deliveryAddressType, personalPlaceVersionType],
+            linkTypes: [cartCheckoutLink, searchCartLink, addressLinks.searchVersionLink, 'PersonalPlaceCurrentVersion',
+              addressLinks.checkoutAddressLink, addressLinks.checkoutVersionLink] }
             : op.alias === 'submit' || op.alias === 'refresh'
               ? { objectTypes: [checkoutType, orderType], linkTypes: [checkoutOrderLink] } : { objectTypes: [checkoutType] },
       })),

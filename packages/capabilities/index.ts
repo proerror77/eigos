@@ -27,6 +27,9 @@ import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workf
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import type { DeliveryConnectionPaths } from './local-delivery/mcp.js';
+import { deliveryAddressFunctions } from './local-delivery/addresses.js';
+import { savePersonalPlace } from './personal-places.js';
+import { personalPlaceEdit } from '../ontology/personal-places.js';
 import { localDeliveryFunctions } from './local-delivery/functions.js';
 import { localDeliveryTradeFunctions } from './local-delivery/trade-functions.js';
 import { marketplaceFunctions } from './marketplace/functions.js';
@@ -40,6 +43,7 @@ import type { Database } from '../runtime/database.js';
 import { hasBetaReadAccess } from '../runtime/accounts.js';
 import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
+import { closeRideWatchSchedule } from './didi/watch-schedule-status.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
 import { rideCapabilities } from './didi/pipeline.js';
@@ -126,6 +130,8 @@ export function createCapabilities(
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
+    [personalPlaceEdit, savePersonalPlace],
+    ...deliveryAddressFunctions(connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...localDeliveryFunctions(connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...localDeliveryTradeFunctions(db, connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...fliggyHandoffFunctions(services),
@@ -149,7 +155,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
   sources = capabilities.sources;
-  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+  return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
     scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
     taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
     projectTaskResult: publicHotelTaskResult };

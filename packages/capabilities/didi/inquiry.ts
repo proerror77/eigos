@@ -1,6 +1,9 @@
 import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, CityConfirmationRequired, Clarification, PARequestRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired } from '../../runtime/clarification.js';
+import { privateLocation } from '../../ontology/personal-places.js';
+import type { ResolvedRideEndpoints } from '../../ontology/didi-ride-endpoints.js';
+import { assertSavedRideEndpoints, readSavedRideEndpoints, rideEndpointLinks, savedRideRevisions } from './endpoints.js';
 import { ridePickupResult } from '../../ontology/maps.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { PermissionDenied } from '../../runtime/access.js';
@@ -95,21 +98,21 @@ function embeddedVenue(place: ObjectData, venues: ObjectData[], city: string | u
 
 async function resolvePlaces(
   input: Record<string, unknown>, context: FunctionContext,
-  { landmarks = {}, addresses = {}, city, pickupAddress }: {
-    landmarks?: LandmarkReceipts; addresses?: AddressClues; city?: string; pickupAddress?: string;
+  { landmarks = {}, addresses = {}, savedAddresses = {}, city, pickupAddress }: {
+    landmarks?: LandmarkReceipts; addresses?: AddressClues; savedAddresses?: AddressClues; city?: string; pickupAddress?: string;
   } = {},
 ): Promise<Resolution> {
   const resumed = resumedPlaceInput(context);
   const selection = input.selection as { origin: ObjectRef; destination: ObjectRef } | undefined;
-  const places = (receipt: ObjectRef) => context.objects.query({
-    type: 'Location', from: { object: receipt, link: 'places' }, limit: 100,
+  const places = (receipt: ObjectRef, privateEndpoint = false) => context.objects.query({
+    type: privateEndpoint ? 'Place' : 'Location', from: { object: receipt, link: 'places' }, limit: 100,
   });
   const find = async (role: Endpoint) => {
     const receipt = objectRefSchema.parse(input[role + 'Receipt']);
     const choice = selection?.[role] ?? resumed?.places?.[role];
     const amendment = resumed?.placeAmendments?.[role];
-    const hint = landmarks[role];
-    const [candidates, nearby] = await Promise.all([places(receipt), hint && places(hint.receipt)]);
+    const hint = landmarks[role], savedAddress = savedAddresses[role];
+    const [candidates, nearby] = await Promise.all([places(receipt, Boolean(savedAddress)), hint && places(hint.receipt)]);
     if (candidates.cursor) throw new Clarification('地点候选过多，请补充完整地址。');
     const anchors = !nearby?.cursor && hint ? nearby?.items.filter(item =>
       cityKey(item.properties.city) === cityKey(city) &&
@@ -119,7 +122,11 @@ async function resolvePlaces(
     const abbreviation = hint ? siteName(rawName, city) : '';
     const allowBuildingExpansion = !hint && !amendment && !choice;
     const matches = candidates.items.filter(item => {
+      if (savedAddress && !item.properties.locationClassification) return false;
+      if (savedAddress && (cityKey(item.properties.city) !== cityKey(city) ||
+          !(addressMatches(item, savedAddress) || matchName(String(item.properties.name)) === matchName(savedAddress)))) return false;
       if (choice) return item.ref.type === choice.type && item.ref.id === choice.id;
+      if (savedAddress) return true;
       if (role === 'origin' && pickupAddress && !amendment)
         return cityKey(item.properties.city) === cityKey(city) &&
           (addressMatches(item, pickupAddress) || matchName(String(item.properties.name)) === matchName(pickupAddress));
@@ -148,7 +155,7 @@ async function resolvePlaces(
       // explicit selection authorizes the quote for that recommendation.
       if ((!hint || choice) && !expanded) return { selected: venue.ref, candidates: eligible };
     }
-    return { candidates: eligible.length || (!choice && (hint || amendment?.address)) ? eligible : candidates.items };
+    return { candidates: savedAddress || eligible.length || (!choice && (hint || amendment?.address)) ? eligible : candidates.items };
   };
   const [origin, destination] = await Promise.all([find('origin'), find('destination')]);
   return origin.selected && destination.selected ? { status: 'resolved', origin: origin.selected, destination: destination.selected }
@@ -181,7 +188,7 @@ async function refreshNearbyQuotePlace(sources: Sources, resolveSource: SourceRe
   const saved = await context.objects.query({
     type: 'Place', where: { name: keywords, sourceBinding: source.bindingId }, limit: 10,
   });
-  const seeds = saved.items.filter(place => cityKey(place.properties.city) === cityKey(city));
+  const seeds = saved.items.filter(place => !place.properties.locationClassification && cityKey(place.properties.city) === cityKey(city));
   if (saved.cursor || seeds.length !== 1) return;
   const seed = seeds[0]!;
   const history = await context.objects.query({ type: 'SourceReceipt', from: { object: seed.ref, link: 'sources' },
@@ -207,7 +214,7 @@ async function refreshNearbyQuotePlace(sources: Sources, resolveSource: SourceRe
 }
 
 type ResolvedRideHandler = (input: Record<string, unknown>, context: FunctionContext,
-  resolved: { origin: ObjectData; destination: ObjectData; quote: SourceResult }) => Promise<ObjectRef>;
+  resolved: { origin: ObjectData; destination: ObjectData; quote: SourceResult; endpoints: ResolvedRideEndpoints }) => Promise<ObjectRef>;
 
 /** Implementation of the published edit Function backing the RideInquiry Action. */
 export function prepareRideInquiry(getSources: () => Sources, getFunctions: () => Functions, resolveSource: SourceResolver,
@@ -217,9 +224,16 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const model = context.objects.model, sources = getSources(), functions = getFunctions(), execution = context.execution;
     const selection = execution?.task.input.places;
     const resumed = resumedPlaceInput(context);
-    let city = String(resumed?.rideCity ?? input.city ?? '').trim();
-    let originName = String(resumed?.rideOrigin ?? input.origin ?? '').trim();
-    const destinationName = String(resumed?.rideDestination ?? input.destination ?? '').trim();
+    const savedInput = { ...input,
+      ...(resumed?.rideOrigin || resumed?.placeAmendments?.origin ? { originPersonalPlace: undefined } : {}),
+      ...(resumed?.rideDestination || resumed?.placeAmendments?.destination ? { destinationPersonalPlace: undefined } : {}),
+    };
+    const personal = await readSavedRideEndpoints(savedInput, context);
+    let city = String(resumed?.rideCity ?? input.city ?? personal.origin?.city ?? personal.destination?.city ?? '').trim();
+    if ([personal.origin, personal.destination].some(place => place && cityKey(place.city) !== cityKey(city)))
+      throw new Clarification('常用地点与本次行程城市不一致，请确认起终点。');
+    let originName = String(resumed?.rideOrigin ?? input.origin ?? personal.origin?.address ?? '').trim();
+    const destinationName = String(resumed?.rideDestination ?? input.destination ?? personal.destination?.address ?? '').trim();
     if (interactivePickup && !destinationName)
       throw new RideEndpointRequired('destination', '你要去哪里？请提供目的地名称或地址。');
     let pickup: ReturnType<typeof ridePickupResult.parse> | undefined;
@@ -252,8 +266,8 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const submitted = execution?.task.input.route;
     const structuredRoute = submitted && cityKey(submitted.city) === cityKey(city) ? submitted : undefined;
     const message = execution?.task.input.message ?? '';
-    const originEndpoint = quoteEndpoint(originName, pickup || resumed?.rideOrigin ? undefined : structuredRoute?.origin, message);
-    const destinationEndpoint = quoteEndpoint(destinationName, resumed?.rideDestination ? undefined : structuredRoute?.destination, message);
+    const originEndpoint = quoteEndpoint(originName, personal.origin || pickup || resumed?.rideOrigin ? undefined : structuredRoute?.origin, message);
+    const destinationEndpoint = quoteEndpoint(destinationName, personal.destination || resumed?.rideDestination ? undefined : structuredRoute?.destination, message);
     const endpoints = { origin: originEndpoint.name, destination: destinationEndpoint.name };
     const addresses = { origin: originEndpoint.address, destination: destinationEndpoint.address };
     const pickupEvidence = pickup ? pickupEvidenceFrom(pickup) :
@@ -267,12 +281,18 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       currentBinding = source.bindingId;
     }
     const lookups = new Map<string, Promise<ObjectRef>>();
-    const lookup = (keywords: string) => {
-      const existing = lookups.get(keywords);
+    const lookup = (keywords: string, privateRideEndpoint = false) => {
+      const key = digest([keywords, privateRideEndpoint]);
+      const existing = lookups.get(key);
       if (existing) return existing;
-      const pending = sources.refresh(model, 'DidiPlaces', { city, keywords },
-        context.objects.access, execution?.task, execution?.tasks, context.signal).then(result => result.receipt).catch(async error => {
-        if (!(error instanceof DidiReadError) || error.code !== 'RATE_LIMITED') throw error;
+      const sourceInput = { city, keywords };
+      const args = [context.objects.access, execution?.task, execution?.tasks, context.signal] as const;
+      const read = privateRideEndpoint
+        ? sources.read(model, 'DidiPlaces', sourceInput, ...args).then(result =>
+          sources.publishRead(model, 'DidiPlaces', { ...sourceInput, privateRideEndpoint }, result, ...args))
+        : sources.refresh(model, 'DidiPlaces', sourceInput, ...args);
+      const pending = read.then(result => result.receipt).catch(async error => {
+        if (privateRideEndpoint || !(error instanceof DidiReadError) || error.code !== 'RATE_LIMITED') throw error;
         const fallback = await refreshNearbyQuotePlace(sources, resolveSource, context, city, keywords).catch(failure => {
           if (failure instanceof SourceReadFailure) return undefined;
           throw failure;
@@ -280,7 +300,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
         if (!fallback) throw error;
         return fallback;
       });
-      lookups.set(keywords, pending);
+      lookups.set(key, pending);
       return pending;
     };
     const findPlaces = async (role: Endpoint) => {
@@ -288,7 +308,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       if (receipt && place && currentBinding && await reusablePlace(context, receipt, place, currentBinding)) return receipt;
       const amendment = resumed?.placeAmendments?.[role];
       const keywords = amendment?.name ?? amendment?.address ?? endpoints[role];
-      return lookup(keywords);
+      return lookup(keywords, Boolean(personal[role]));
     };
     const findLandmark = async (role: Endpoint) => {
       if (selection?.[role]) return;
@@ -315,10 +335,11 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     // Landmark receipts are internal inputs to this Action, obtained from the same
     // source; the existing published read Function retains its original contract.
     let resolution: Resolution;
-    if (originLandmark || destinationLandmark || pickup || addresses.origin || addresses.destination) {
+    if (originLandmark || destinationLandmark || pickup || addresses.origin || addresses.destination || personal.origin || personal.destination) {
       context.objects.access.function(model, 'resolveRideLocations');
       resolution = await resolvePlaces(resolveInput, context, {
         landmarks: { origin: originLandmark, destination: destinationLandmark }, addresses, city, pickupAddress: pickup?.address,
+        savedAddresses: { origin: personal.origin?.address, destination: personal.destination?.address },
       });
     } else {
       resolution = await functions.invoke(model, 'resolveRideLocations', resolveInput, context) as Resolution;
@@ -338,7 +359,11 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
     const quote = await sources.read(model, 'DidiEstimates', quoteInput, context.objects.access,
       execution?.task, execution?.tasks, context.signal).catch(error => sourceFailed(error, 'estimate', receipts));
     const [origin, destination] = await Promise.all([context.objects.read(resolution.origin), context.objects.read(resolution.destination)]);
-    if (onResolved) return onResolved(input, context, { origin, destination, quote: sourceResultSchema.parse(quote) });
+    const resolvedEndpoints: ResolvedRideEndpoints = {
+      origin: origin.ref, destination: destination.ref, pickup: pickupEvidence,
+      originPersonalPlace: personal.origin?.selected, destinationPersonalPlace: personal.destination?.selected,
+    };
+    if (onResolved) return onResolved(input, context, { origin, destination, quote: sourceResultSchema.parse(quote), endpoints: resolvedEndpoints });
     const drivingEstimate = interactivePickup && model.objects.get('Route')?.properties.drivingEstimate
       ? await readDidiDriving(resolveSource, origin, destination, context).catch(error => {
         if (!(error instanceof SourceReadFailure)) throw error;
@@ -346,11 +371,13 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
         return null;
       }) : undefined;
     return context.edit(request, async graph => {
-      await graph.create(route, { id: route.id, name: `${origin.properties.name} → ${destination.properties.name}`,
+      await assertSavedRideEndpoints(graph, resolvedEndpoints);
+      const personalPlaceRevisions = savedRideRevisions(resolvedEndpoints);
+      await graph.create(route, { id: route.id, ...(personalPlaceRevisions ? { personalPlaceRevisions, locationClassification: privateLocation } : {}), name: `${origin.properties.name} → ${destination.properties.name}`,
         ...(drivingEstimate !== undefined ? { drivingEstimate } : {}), ...(pickupEvidence ? { pickup: pickupEvidence } : {}) });
       await graph.create(request, { id: request.id, name: 'Ride estimate request', status: 'requested',
         requestedAt: execution?.task.created_at.toISOString() ?? new Date().toISOString(), ...(input.serviceClass ? { serviceClass: input.serviceClass } : {}) });
-      await graph.linkBatch([{ type: 'RouteOrigin', from: route, to: origin.ref }, { type: 'RouteDestination', from: route, to: destination.ref }, { type: 'RequestRoute', from: request, to: route }]);
+      await graph.linkBatch([...rideEndpointLinks(route, resolvedEndpoints), { type: 'RequestRoute', from: request, to: route }]);
       await sources.project(graph, 'DidiEstimates', quoteInput, quote, context.signal);
     });
   };

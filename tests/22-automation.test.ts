@@ -1,8 +1,11 @@
 import { restaurantServices } from '../packages/ontology/restaurant-services.js';
 import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
+import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink,
+  prepareWithEndpoints, ridePersonalPlaceLinks } from '../packages/ontology/didi-ride-endpoints.js';
 import { localDeliveryProviders } from '../packages/ontology/local-delivery.js';
 import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
 import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
+import { personalPlaceDefinition } from '../packages/ontology/personal-places.js';
 import { scheduleJourneyDefinition } from '../packages/ontology/schedule-journey.js';
 import { itineraryDefinition } from '../packages/ontology/itinerary-continuity.js';
 import { executeHotelDependentTrip, tripHotelDependencyDefinition } from '../packages/ontology/trip-hotel-dependency.js';
@@ -686,18 +689,18 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, restaurantServices, tableCheckReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, personalPlaceDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
   ]);
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
-  const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
+  const addedLogs = logs.filter(log => addedTypes.has(log.objectType) || log.type === 'DidiRideOrderStateLog');
   const addedActions = new Set([...laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)),
     ...scheduleJourneyDefinition.actionTypes.map(action => action.apiName)]);
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
-  addedActions.add(bookImmediateRideAction);
+  for (const action of [bookImmediateRideAction, bookWithEndpoints, estimateWithEndpoints]) addedActions.add(action);
   addedActions.add(executeHotelDependentTrip);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
@@ -709,7 +712,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('EstimateRideWithPlaceClues');
   for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
   for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
-  addedFunctions.add('bookDidiImmediateRide');
+  for (const name of ['bookDidiImmediateRide', bookWithEndpointsFunction, prepareWithEndpoints]) addedFunctions.add(name);
   addedFunctions.add('readDidiImmediateRide');
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
   addedFunctions.add('readInteractiveRideEstimate');
@@ -752,6 +755,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
   delete didiOrder.properties.cancellationReceipt;
+  delete didiOrder.properties.sourceAuthority;
   for (const type of didiOrderDefinitions.interfaceTypes) delete didiOrder.interfaces[type.apiName];
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type =>
     !didiOrderDefinitions.interfaceTypes.some(item => item.apiName === type.apiName));
@@ -762,11 +766,19 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete tripProperties.hotelBooking;
   delete tripProperties.pendingHotelDependencyReview;
   v9Definition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
-  const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
+  const historicalRoute = v9Definition.objectTypes.find(type => type.apiName === 'Route')!;
+  delete historicalRoute.classificationProperty;
+  const historicalPlace = v9Definition.objectTypes.find(type => type.apiName === 'Place')!;
+  delete historicalPlace.classificationProperty;
+  delete historicalPlace.properties.locationClassification;
+  const routeProperties = historicalRoute.properties;
+  delete routeProperties.locationClassification;
+  delete routeProperties.personalPlaceRevisions;
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
-    type.apiName !== immediateOrderLink && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    type.apiName !== 'ImmediateDidiApproval' && type.apiName !== immediateOrderLink && type.apiName !== immediateRideRouteLink &&
+    !ridePersonalPlaceLinks.some(link => link.apiName === type.apiName) && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
@@ -778,6 +790,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     ![...restaurantServices.linkTypes, ...tableCheckReservations.linkTypes].some(item => item.apiName === type.apiName) &&
+    !personalPlaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    !localDeliveryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
   v9Definition.dataSources = v9Definition.dataSources.filter(source =>
     !fliggyServicesDefinition.dataSources.some(item => item.apiName === source.apiName) &&
@@ -788,7 +802,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   v9Definition.functionTypes.find(fn => fn.apiName === 'resolveRideLocations')!.description =
     'Resolve each venue by querying exact Location.name within its source receipt. One exact match resolves even when other entrances or nearby shops were returned. Multiple exact matches or no exact match require clarification. Explicit selections must belong to the corresponding source response.';
   v9Definition.valueTypes = v9Definition.valueTypes?.filter(type => type.apiName !== taskLocationValueType.apiName);
-  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents' && !localDeliveryProviders.some(provider => provider === group.apiName));
+  v9Definition.typeGroups = v9Definition.typeGroups?.filter(group => group.apiName !== 'Documents' && group.apiName !== 'PersonalPlaces' && !localDeliveryProviders.some(provider => provider === group.apiName));
   for (const group of v9Definition.typeGroups ?? []) group.objectTypes = group.objectTypes.filter(type => !addedTypes.has(type));
   assert.equal(new Ontology(v9Definition).digest, 'ab7a4e8a4c6d6c0e56eaef294ae849911f78da535e9cef2fb213bdfaa39c4d8a');
 

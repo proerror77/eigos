@@ -30,7 +30,7 @@ import type { Database, Sql } from '../../runtime/database.js';
 import { withScenarioEvaluation, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Sources } from '../../runtime/sources.js';
 import type { SourceResolver } from '../didi/functions.js';
-import { originalDidiRide } from '../didi/original-order.js';
+import { originalDidiRide, originalDidiOrderAuthority } from '../didi/original-order.js';
 import { rideOrderSchema, type RideOrder } from '../didi/operations.js';
 import type { ServiceResolver } from '../services/sources.js';
 import { currentService, assertServiceAuthority } from '../services/functions.js';
@@ -572,7 +572,10 @@ export function travelFunctions(
 
   handlers.set('readDidiRideOrder', async (raw, context) => {
     const { order: ref } = didiOrderRef.parse(raw);
-    const { order, orderId, bindingId } = await readOriginal(context.objects, ref);
+    if (ref.type !== 'DidiRideOrder') throw new Conflict('Use the original DiDi order');
+    const order = await context.objects.read(ref);
+    await originalDidiOrderAuthority(context.objects, order);
+    const orderId = String(order.properties.orderId), bindingId = String(order.properties.bindingId);
     const receipt = rideCancellationReceipt.nullable().parse(order.properties.cancellationReceipt ?? null);
     const operation = receipt ? null : await effects.inspect(context.principal.owner, cancellationKey(bindingId, orderId));
     return {
@@ -667,7 +670,8 @@ export function travelFunctions(
       await assertOriginal(graph);
       const current = await graph.read(ref);
       if (ms(current.properties.observedAt) <= ms(order.observedAt))
-        await graph.ingestBatch([{ ref, properties: { id: ref.id, name: current.properties.name, ...order, bindingId } }],
+        await graph.ingestBatch([{ ref, properties: { id: ref.id, name: current.properties.name, ...order, bindingId,
+          ...(current.properties.sourceAuthority ? { sourceAuthority: current.properties.sourceAuthority } : {}) } }],
           'DidiRideOrders', order.observedAt);
       const latest = await graph.read(ref);
       if (!latest.properties.cancellationReceipt)

@@ -1,5 +1,8 @@
+import { deliveryAddressNames, deliveryAddressType } from './delivery-addresses.js';
+import { personalPlaceType, savePersonalPlace } from './personal-places.js';
 import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
+import { bookWithEndpoints, estimateWithEndpoints, immediateRideRouteLink } from './didi-ride-endpoints.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import type { OntologyDocument } from './schema.js';
 
@@ -20,26 +23,32 @@ export const businessAgentProfiles: AgentProfile[] = [
     apiName: 'RideQuote',
     terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate', '打车链接', '滴滴跳转', '滴滴小程序', 'ride link',
       '叫车', '叫个车', '叫辆车', '打个车', '打辆车', '网约车', '专车', '快车', '用车'],
-    objects: ['RideRequest', 'Route', 'Place', 'RideEstimate'],
+    objects: ['RideRequest', 'Route', 'Place', 'RideEstimate', personalPlaceType],
     interfaces: ['RideInquiry', 'RideInquiryWithPlaceClues', 'RideEstimatable'],
-    actions: ['EstimateRide', 'EstimateRideWithPlaceClues'],
+    actions: ['EstimateRide', 'EstimateRideWithPlaceClues', estimateWithEndpoints],
     functions: ['readRideEstimates', 'readInteractiveRideEstimate', 'generateDidiRideAppLink'],
     instructions: [
       { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
       { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
+      { action: estimateWithEndpoints, function: 'readInteractiveRideEstimate',
+        text: 'For a saved endpoint such as home or work, query PersonalPlace by role with select [id, name, role]. Use RideInquiryWithPlaceClues.estimateWithEndpoints and pass originPersonalPlace or destinationPersonalPlace as {place: reference, revision}. Omit origin for the original PA’s current device pickup when that is the requested origin. Keep the exact confirmed endpoint and use readInteractiveRideEstimate (resultParameter: request). Ask for an exact endpoint if the personal place is unavailable or permission is missing.' },
       { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
     ],
   },
   {
     apiName: 'DidiImmediateBooking',
     terms: ['叫车', '叫个车', '叫一辆车', '叫辆车', '打个车', '打一辆车', '打辆车', '现在打车', '现在下单', 'book a ride', 'call a taxi'],
-    objects: [immediateRideType, 'DidiRideOrder'],
+    objects: [immediateRideType, 'DidiRideOrder', 'Route', personalPlaceType],
     interfaces: [immediateRideInterface],
-    actions: [bookImmediateRideAction],
+    actions: [bookImmediateRideAction, bookWithEndpoints],
+    links: [immediateRideRouteLink],
     functions: ['readDidiImmediateRide'],
     instructions: [{
       action: bookImmediateRideAction, function: 'readDidiImmediateRide',
-      text: 'For an explicit request to book a ride now, such as 帮我叫辆车, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+      text: 'For clients using the legacy booking contract, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+    }, {
+      action: bookWithEndpoints, function: 'readDidiImmediateRide',
+      text: 'For an explicit order now, prefer ImmediateRideBooking.bookWithEndpoints on DidiImmediateRide. For home or work, query PersonalPlace by role and send the reference and revision on the correct side. Omit origin only for current pickup from the original PA. The Action asks for missing information and requires exact fare approval. The result is linked to its confirmed route and original order. For a quote only, use the ride inquiry capability.',
     }],
   },
   {
@@ -124,25 +133,40 @@ export const businessAgentProfiles: AgentProfile[] = [
       { action: 'PrepareFliggyFlightBooking', text: 'For a booking proposal use the installed partner fare and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and ticket issuance only with independent evidence.' },
     ],
   },
+  {
+    apiName: 'PersonalPlaces',
+    terms: ['家里', '我家', '到家', '回家', '家附近', '家地址', '家的地址', '公司附近', '常用地址', '记住地址', 'home address'],
+    objects: [personalPlaceType],
+    actions: [savePersonalPlace],
+    functions: ['searchNearbyPersonalPlace'],
+    instructions: [
+      { action: savePersonalPlace, text: 'Save or replace a PersonalPlace only when the user has explicitly requested and confirmed the address and its role. Query PersonalPlace by role first and use the current revision when replacing it. Preserve device location for the original task only.' },
+      { function: 'searchNearbyPersonalPlace', text: 'For nearby map results around home or work, query PersonalPlace by role with select [id, name, role] and pass that object reference to searchNearbyPersonalPlace. For nearby maps around the user now, omit location in searchNearbyPlaces so the original PA can provide a fresh device position.' },
+    ],
+  },
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider], { search, names, read } = service;
-    const taobao = provider === 'TaobaoInstantDelivery';
+    const taobao = provider === 'TaobaoInstantDelivery', address = deliveryAddressNames(provider);
     return {
       apiName: provider,
       terms: taobao ? ['淘宝闪购', '闪购', '淘宝外卖', 'taobao instant delivery'] : ['盒马', '盒马鲜生', 'hema', 'freshippo'],
-      objects: [search.object, service.cartChangeType, service.checkoutType, service.orderType],
+      objects: [search.object, service.cartChangeType, service.checkoutType, service.orderType, deliveryAddressType, personalPlaceType],
       interfaces: [search.inquiry, service.cartContract, service.orderContract],
-      actions: [search.action, names.change, names.preview, names.submit, names.preparePayment, names.refresh,
+      actions: [search.action, address.search, address.bind, names.change, names.preview, names.submit, names.preparePayment, names.refresh,
         names.stopObservation, taobao ? names.pay : names.selectWindow],
-      links: [service.searchCartLink, service.cartCheckoutLink, service.checkoutOrderLink],
-      functions: [search.read, ...Object.values(read)],
+      links: [service.searchCartLink, service.cartCheckoutLink, service.checkoutOrderLink, address.searchLink, address.personalLink],
+      functions: [search.read, address.readSearch, address.list, ...Object.values(read)],
       instructions: [
+        { action: address.search, function: address.readSearch, text:
+          'Use complete_with_action with ' + search.inquiry + '.searchAt and ' + address.readSearch + ' (resultParameter: search). For delivery to home or work, query PersonalPlace by role with select [id, name, role] and supply destination source personal with its reference. Use source selected only when the account’s selected address is appropriate for the request. For a request to deliver to the user here, ask them to confirm the actual delivery address in the supplier account before using the selected address. An unlinked or changed address requires review. Preserve the resulting deliveryAddress reference and original search for later operations.' },
+        { action: address.bind, function: address.list, text:
+          'Read this supplier account’s delivery addresses. Bind an address to a PersonalPlace only after the user reviews and confirms that exact address and role. Use its addressKey and the current PersonalPlace revision.' },
         { action: search.action, function: search.read, text: taobao
-          ? 'Use the Taobao Instant Delivery account and chosen delivery address for dishes, nearby stores or menus. A Hema merchant returned by this source is a Taobao Instant Delivery observation.'
-          : 'Use the direct Hema account and its selected delivery groups. Report listed prices, checked SKU stock, unknown quantities and verification requirements.' },
+          ? 'For an account-selected legacy search, use the Taobao Instant Delivery account for dishes, nearby stores or menus. A Hema merchant returned by this source is a Taobao Instant Delivery observation.'
+          : 'For an account-selected legacy search, use the direct Hema account and its selected delivery groups. Report listed prices, checked SKU stock, unknown quantities and verification requirements.' },
         { action: names.submit, function: read.checkout,
           text: 'Use ' + service.cartContract + '.change and ' + service.orderContract +
-            '.submit with complete_with_action. Preserve the original search, checkout and PA approval from this service.' },
+            '.submit with complete_with_action. Pass the original search reference when changing the cart. Preserve the original checkout and PA approval from this service.' },
         taobao
           ? { action: names.pay, text: 'Obtain separate approval for the original Taobao Instant Delivery amount, then refresh its independent payment state.' }
           : { action: names.preparePayment, text: 'Hand off only the original Hema order to the Hema official app for payment.' },

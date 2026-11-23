@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
+import { classificationSchema } from './classification.js';
 import { json, time } from './service-contracts.js';
 
 export const immediateRideType = 'DidiImmediateRide';
 export const immediateRideInterface = 'ImmediateRideBooking';
 export const bookImmediateRideAction = 'BookDidiImmediateRide';
 export const immediateRideApprovalCapability = 'ride.confirm_immediate_order';
+export const immediateApprovalLink = 'ImmediateDidiApproval';
 export const immediateOrderLink = 'ImmediateDidiOrder';
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const amount = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -29,27 +31,28 @@ export const immediateRideTerms = z.strictObject({
   pickup: location, destination: location, expiresAt: time, fares: z.array(immediateFare).min(1).max(50),
 });
 export const immediateRideRef = z.strictObject({ ride: objectRefSchema });
-const rideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
+export const immediateRideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
 const order = z.strictObject({
   ref: objectRefSchema, orderId: z.string().min(1).max(500), status: z.string(), independentRead: z.boolean(),
   evidence: z.enum(['live', 'provider_mock', 'synthetic']),
 });
 export const immediateRideRecord = z.strictObject({
-  id: digest, name: z.string(), sourceTaskId: z.uuid(), state: rideState,
+  id: digest, name: z.string(), sourceTaskId: z.uuid(), state: immediateRideState,
   pickup: location.nullable(), destination: location.nullable(), selectedFare: immediateFare.nullable(),
   updatedEstimateMinor: amount.nullable(), sourceAuthority: digest.nullable(),
+  locationClassification: classificationSchema.optional(),
 });
-export const immediateRideResult = immediateRideRecord.omit({ sourceAuthority: true }).extend({ order: order.nullable() });
+export const immediateRideResult = immediateRideRecord.omit({ sourceAuthority: true, locationClassification: true }).extend({ order: order.nullable() });
 
 export function didiImmediateRideDefinition(parameters: Record<string, unknown>) {
   const properties = Object.fromEntries(Object.entries(immediateRideRecord.shape).map(([name, shape]) =>
-    [name, { description: name, required: true, schema: json(shape) }]));
+    [name, { description: name, required: !shape.isOptional(), schema: json(shape) }]));
   const scope = { objectTypes: [immediateRideType, 'DidiRideOrder'], linkTypes: [immediateOrderLink] };
   const functionName = 'bookDidiImmediateRide';
   const description = 'Resolve pickup and destination, then book a DiDi ride now only after the authenticated PA confirms an exact available vehicle and fare estimate on this task.';
   return {
     objectTypes: [{
-      apiName: immediateRideType, displayName: '滴滴即时叫车', description, primaryKey: 'id', titleProperty: 'name', properties,
+      apiName: immediateRideType, displayName: '滴滴即时叫车', description, primaryKey: 'id', titleProperty: 'name', classificationProperty: 'locationClassification', properties,
       interfaces: { [immediateRideInterface]: { properties: { state: 'state' }, links: {}, actions: {
         book: { action: bookImmediateRideAction, parameters: Object.fromEntries(
           Object.keys(parameters.properties as Record<string, unknown>).map(name => [name, name])),

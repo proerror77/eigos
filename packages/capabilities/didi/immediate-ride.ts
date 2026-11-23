@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import {
-  bookImmediateRideAction, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
+  bookImmediateRideAction, immediateApprovalLink, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
   immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType,
 } from '../../ontology/didi-immediate-ride.js';
+import { bookWithEndpoints, bookWithEndpointsFunction, immediateRideRouteLink, resolvedRideEndpoints,
+  type ResolvedRideEndpoints } from '../../ontology/didi-ride-endpoints.js';
+import { assertSavedRideEndpoints, rideEndpointLinks, savedRideRevisions } from './endpoints.js';
+import { privateLocation } from '../../ontology/personal-places.js';
 import { json } from '../../ontology/service-contracts.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
+import { actionConfirmationRef } from '../../runtime/action-confirmation.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
 import type { Database } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
@@ -22,7 +27,7 @@ const coordinates = z.object({ lat: z.number().min(-90).max(90), lng: z.number()
 const dispatchReceipt = z.strictObject({
   bindingId: z.string(), sourceAuthority: immediateRideRecord.shape.sourceAuthority.unwrap(),
   pickup: immediateRideTerms.shape.pickup, destination: immediateRideTerms.shape.destination,
-  fare: immediateFare, order: rideOrderSchema,
+  fare: immediateFare, order: rideOrderSchema, endpoints: resolvedRideEndpoints.optional(),
 });
 type DispatchReceipt = z.infer<typeof dispatchReceipt>;
 type Fields = Pick<z.infer<typeof immediateRideRecord>, 'pickup' | 'destination' | 'state' | 'selectedFare' | 'updatedEstimateMinor' | 'sourceAuthority'>;
@@ -74,7 +79,9 @@ export function immediateDidiRideFunctions(
   db: Database, resolve: SourceResolver, sources: () => Sources, functions: () => Functions,
 ): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
-  const resolved = prepareRideInquiry(sources, functions, resolve, true, async (input, context, { origin, destination, quote }) => {
+  const resolveBooking = (actionName: string, linkedRoute: boolean) => prepareRideInquiry(
+    sources, functions, resolve, true, async (input, context, resolved) => {
+    const { origin, destination, quote, endpoints } = resolved;
     const { task } = interactiveTask(context);
     const source = await resolve(task.owner);
     const orders = source.orders;
@@ -87,6 +94,8 @@ export function immediateDidiRideFunctions(
     const ride = immediateRef(task.id);
     const pickup = presentLocation(origin), dropoff = presentLocation(destination);
     const fields = { pickup, destination: dropoff, sourceAuthority, selectedFare: null, updatedEstimateMinor: null };
+    const route = linkedRoute ? endpoints : undefined;
+    const record = (outcome: Fields) => save(context, ride, outcome, undefined, route);
     const from = point(origin), to = point(destination);
     const confirmedRoute = { from_lng: String(from.lng), from_lat: String(from.lat), from_name: pickup.name,
       to_lng: String(to.lng), to_lat: String(to.lat), to_name: dropoff.name };
@@ -99,20 +108,32 @@ export function immediateDidiRideFunctions(
       return [immediateFare.parse({ category: item.productCategory, vehicle: item.productName,
         amountMinor: item.estimatedMoney.minor, currency: item.estimatedMoney.currency })];
     });
-    if (!fares.length) return save(context, ride, { ...fields, state: 'quote_unavailable' });
+    if (!fares.length) return record({ ...fields, state: 'quote_unavailable' });
     const expiry = Date.parse(quote.receipt.startedAt) + offerLifetime;
     const assertFresh = () => {
       if (Date.now() >= expiry) throw new Conflict('The confirmed DiDi estimate expired before dispatch');
     };
-    if (Date.now() >= expiry) return save(context, ride, { ...fields, state: 'quote_expired' });
+    if (Date.now() >= expiry) return record({ ...fields, state: 'quote_expired' });
     await orders.assertAvailable();
     const terms = immediateRideTerms.parse({ pickup, destination: dropoff, expiresAt: new Date(expiry).toISOString(), fares });
     const fare = await requestApproval(context, terms, quote, sourceAuthority);
-    if (!fare) return save(context, ride, { ...fields, state: 'declined' });
-    if (Date.now() >= expiry) return save(context, ride, { ...fields, selectedFare: fare, state: 'quote_expired' });
+    if (!fare) return record({ ...fields, state: 'declined' });
+    if (Date.now() >= expiry) return record({ ...fields, selectedFare: fare, state: 'quote_expired' });
     const guard = async (objects: Reader) => {
       await source.assertCurrent();
       assertFresh();
+      await assertSavedRideEndpoints(objects, endpoints);
+      if (task.input.placeContinuation?.requestId === context.operationId && objects.model.links.has(immediateApprovalLink)) {
+        objects.access.definition(objects.model, 'link', immediateApprovalLink);
+        await objects.read(actionConfirmationRef(context.operationId!));
+      }
+      if (route) {
+        const { access, model } = objects;
+        access.read(model, 'Route');
+        access.definition(model, 'link', immediateRideRouteLink);
+        for (const link of rideEndpointLinks(immediateRouteRef(ride), route))
+          access.definition(model, 'link', link.type);
+      }
       for (const endpoint of [origin, destination]) {
         if (endpointDigest(await objects.read(endpoint.ref)) !== endpointDigest(endpoint))
           throw new Conflict('The confirmed pickup or destination changed');
@@ -121,7 +142,7 @@ export function immediateDidiRideFunctions(
     await guard(context.objects);
     const fresh = await orders.quote(confirmedRoute, fare.category, context.signal);
     if (fresh.category !== fare.category || fresh.amountMinor !== fare.amountMinor || fresh.currency !== fare.currency)
-      return save(context, ride, { ...fields, selectedFare: fare, updatedEstimateMinor: fresh.amountMinor, state: 'price_changed' });
+      return record({ ...fields, selectedFare: fare, updatedEstimateMinor: fresh.amountMinor, state: 'price_changed' });
     const key = immediateOperation(task.id);
     try {
       const receipt = await operations.run<DispatchReceipt>(task.owner, key, ride, async client => {
@@ -130,23 +151,24 @@ export function immediateDidiRideFunctions(
       }, async () => {
         const original = await orders.create(fresh, context.signal, async () => {
           await context.assertCurrent?.();
-          context.objects.access.action(context.objects.model, bookImmediateRideAction);
+          context.objects.access.action(context.objects.model, actionName);
           context.objects.access.source(context.objects.model, 'Didi');
           await guard(context.objects);
         });
         assertOrderEvidence(source, original);
         if (original.state !== 'created' || original.independentRead) throw new Conflict('DiDi did not acknowledge the original order');
-        return dispatchReceipt.parse({ bindingId, sourceAuthority, pickup, destination: dropoff, fare, order: original });
+        return dispatchReceipt.parse({ bindingId, sourceAuthority, pickup, destination: dropoff, fare, order: original, ...(route ? { endpoints: route } : {}) });
       }, context.objects, { requestId: context.operationId, taskId: task.id });
       return recordOrder(context, ride, receipt, source);
     } catch (error) {
       if (!(error instanceof UnknownExternalOperation)) throw error;
-      return save(context, ride, { ...fields, selectedFare: fare, state: 'unknown' });
+      return record({ ...fields, selectedFare: fare, state: 'unknown' });
     }
   });
 
-  return new Map<string, FunctionHandler>([
-    ['bookDidiImmediateRide', async (input, context) => {
+  const book = (actionName: string, linkedRoute: boolean): FunctionHandler => {
+    const resolved = resolveBooking(actionName, linkedRoute);
+    return async (input, context) => {
       const { task } = interactiveTask(context);
       const ride = immediateRef(task.id);
       if (await readRide(context.objects, ride).catch(error => {
@@ -163,10 +185,14 @@ export function immediateDidiRideFunctions(
       }
       if (receipt) return recordOrder(context, ride, dispatchReceipt.parse(receipt), await resolve(task.owner));
       return resolved(input, context);
-    }],
+    };
+  };
+  return new Map<string, FunctionHandler>([
+    ['bookDidiImmediateRide', book(bookImmediateRideAction, false)],
+    [bookWithEndpointsFunction, book(bookWithEndpoints, true)],
     ['readDidiImmediateRide', async (raw, context) => {
       const { ride } = immediateRideRef.parse(raw);
-      const { sourceAuthority: _authority, ...record } = await readRide(context.objects, ride);
+      const { sourceAuthority: _authority, locationClassification: _location, ...record } = await readRide(context.objects, ride);
       const [linked] = await context.objects.follow(ride, 'order');
       const order = linked ? {
         ref: linked.ref, orderId: linked.properties.orderId, status: linked.properties.status,
@@ -180,6 +206,7 @@ export function immediateDidiRideFunctions(
 function immediateRef(taskId: string) {
   return { type: immediateRideType, id: digest([immediateRideType, taskId]) };
 }
+const immediateRouteRef = (ride: ObjectRef) => ({ type: 'Route', id: digest([ride.id, immediateRideRouteLink]) });
 const immediateOperation = (taskId: string) => digest(['didi-immediate-dispatch', taskId]);
 
 function assertOrderEvidence(source: DidiSource, order: RideOrder) {
@@ -206,10 +233,11 @@ async function recordOrder(context: FunctionContext, ride: ObjectRef, receipt: D
   }
   return save(context, ride, { state: verified ? 'ordered' : 'submitted', pickup: receipt.pickup,
     destination: receipt.destination, selectedFare: receipt.fare, updatedEstimateMinor: null,
-    sourceAuthority: receipt.sourceAuthority }, { value: verified ?? original, bindingId: receipt.bindingId });
+    sourceAuthority: receipt.sourceAuthority }, { value: verified ?? original, bindingId: receipt.bindingId }, receipt.endpoints);
 }
 
-function save(context: FunctionContext, ride: ObjectRef, fields: Fields, order?: { value: RideOrder; bindingId: string }) {
+function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
+  order?: { value: RideOrder; bindingId: string }, endpoints?: ResolvedRideEndpoints) {
   const { task } = interactiveTask(context);
   return context.edit!(ride, async graph => {
     const existing = await readRide(graph, ride).catch(error => {
@@ -217,10 +245,22 @@ function save(context: FunctionContext, ride: ObjectRef, fields: Fields, order?:
       throw error;
     });
     if (existing) return;
-    await graph.create(ride, { ...fields, id: ride.id, name: '滴滴即时叫车', sourceTaskId: task.id });
+    const personalPlaceRevisions = endpoints && savedRideRevisions(endpoints);
+    const classified = personalPlaceRevisions ? { locationClassification: privateLocation } : {};
+    await graph.create(ride, { ...fields, ...classified, id: ride.id, name: '滴滴即时叫车', sourceTaskId: task.id });
+    if (task.input.placeContinuation?.requestId === context.operationId && graph.model.links.has(immediateApprovalLink))
+      await graph.link({ type: immediateApprovalLink, from: ride, to: actionConfirmationRef(context.operationId!) });
+    if (endpoints) {
+      const route = immediateRouteRef(ride);
+      await graph.create(route, { id: route.id, name: `${fields.pickup!.name} → ${fields.destination!.name}`,
+        ...(endpoints.pickup ? { pickup: endpoints.pickup } : {}),
+        ...(personalPlaceRevisions ? { personalPlaceRevisions, ...classified } : {}) });
+      await graph.linkBatch([...rideEndpointLinks(route, endpoints), { type: immediateRideRouteLink, from: ride, to: route }]);
+    }
     if (!order) return;
     const ref = { type: 'DidiRideOrder', id: digest([order.bindingId, order.value.orderId]) };
-    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId } }],
+    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId,
+      ...(graph.model.object(ref.type).properties.sourceAuthority ? { sourceAuthority: fields.sourceAuthority } : {}) } }],
       'DidiRideOrders', order.value.observedAt);
     await graph.link({ type: immediateOrderLink, from: ride, to: ref });
   });

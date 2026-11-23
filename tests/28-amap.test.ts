@@ -15,7 +15,10 @@ import { unresolvedMapPlace } from '../packages/runtime/clarification.js';
 import { amendMapPlace } from '../packages/capabilities/amap/task-correction.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { PARequests } from '../packages/runtime/pa.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
+import { internalClassification } from '../packages/ontology/classification.js';
 import { mapFunctions, pickupCoordinateEvidence } from '../packages/ontology/maps.js';
 import { document, fixture, principal, route } from './fixture.js';
 
@@ -103,6 +106,81 @@ test('the original ride Action obtains missing endpoints and uses GCJ-02 before 
   }
 });
 
+test('a quote from current phone pickup to a saved home links the exact provider POIs and personal endpoint', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-home-ride-'));
+  const config = await testConnection(directory);
+  const model = 'saved-home-ride-fixture';
+  let home: ObjectRef;
+  const f = await fixture({
+    model, provider: 'openai-codex',
+    async run(_prompt, tools) {
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimateWithEndpoints' },
+          input: { destinationPersonalPlace: { place: home, revision: 1 } } },
+        read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
+      });
+    },
+  }, undefined, undefined, undefined, { amap: config, amapFetch: fakeAmap([]) });
+  try {
+    await setModelClearance(f.db, { owner: principal.owner, provider: 'openai-codex', model,
+      clearance: { sensitivity: 'CONFIDENTIAL', compartments: [] }, active: true });
+    const address = '虚构区青禾示例路8号';
+    home = await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      address, city: '上海市', role: 'home', expectedRevision: 0, confirmed: true,
+    }, 'save-home-for-ride');
+    f.provider.flags.related = false;
+    f.provider.flags.placeName = name => name === address ? '青禾虚构园区北门' : name;
+    const task = await f.tasks.submit(principal, { requestId: 'quote-go-home', message: '从我这里回家，查滴滴车费' });
+    await f.worker.runOne();
+    const waiting = await f.tasks.get(principal, task.id);
+    assert.equal(waiting.state, 'input-required', waiting.error ?? JSON.stringify(waiting.result));
+    const pending = waiting.result as { capability: string; requestId: string };
+    assert.equal(pending.capability, 'location.resolve');
+    assert.equal(f.provider.calls.length, 0);
+    await new PARequests(f.tasks).respond(principal, task.id, { requestId: pending.requestId,
+      response: { status: 'available', location: { source: 'device', coordinateSystem: 'wgs84',
+        latitude: 31.201, longitude: 121.495, observedAt: new Date().toISOString(), accuracyMeters: 25 } },
+    });
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
+    const { request } = done.result as { request: ObjectRef };
+    const graph = new Objects(f.db, f.model, f.access);
+    const [linked] = await graph.follow(request, 'route');
+    assert(linked);
+    const pickup = pickupCoordinateEvidence.parse(linked.properties.pickup);
+    assert.equal(pickup.conversion, 'converted_by_amap');
+    assert.deepEqual(linked.properties.personalPlaceRevisions, { destination: 1 });
+    assert.deepEqual((await graph.follow(linked.ref, 'destination')).map(row => row.properties.name), ['青禾虚构园区北门']);
+    const [snapshot] = await graph.follow(linked.ref, 'destinationPersonalPlace');
+    assert.equal(snapshot?.properties.version, 1);
+    assert.equal(snapshot?.properties.address, address);
+    await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      address: '虚构区云端示例路4号', city: '上海市', role: 'home', expectedRevision: 1, confirmed: true,
+    }, 'move-ride-home');
+    assert.deepEqual((await graph.follow(snapshot!.ref, 'place')).map(row => row.ref), [home]);
+    assert.equal((await graph.follow(home, 'currentVersion'))[0]?.properties.version, 2);
+    assert.equal((await graph.follow(linked.ref, 'destinationPersonalPlace'))[0]?.properties.address, address);
+    const [poi] = await graph.follow(linked.ref, 'destination');
+    assert(poi);
+    const restricted = await Access.load(f.db, principal);
+    const internal = new Objects(f.db, f.model, restricted);
+    const query = (type: string, id: string) => restricted.measureEgress(() =>
+      internal.query({ type, where: { id } }), internalClassification);
+    assert.deepEqual((await query('Place', poi.ref.id)).result.items, []);
+    const interpreted = await restricted.measureEgress(() => internal.query({
+      type: 'Location', where: { name: String(poi.properties.name) },
+    }), internalClassification);
+    assert.deepEqual(interpreted.result.items, []);
+    assert.deepEqual((await query('Route', linked.ref.id)).result.items, []);
+    assert.deepEqual(await graph.follow(linked.ref, 'originPersonalPlace'), []);
+    assert.equal(f.provider.flags.orderCreates, 0);
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Ontology exposes read-only Amap and weather together and enforces owner and location authorization', async () => {
   const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-amap-'));
   try {
@@ -122,6 +200,15 @@ test('Ontology exposes read-only Amap and weather together and enforces owner an
     const results = await invoke('searchMapPlaces', { city: '上海', query: '咖啡' });
     assert(!JSON.stringify(results).includes('private-data'));
     await invoke('readMapPlace', { id: 'B0EXAMPLE' });
+    const home = await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      role: 'home', city: '上海市', address: '虚构区青禾示例路8号', confirmed: true, expectedRevision: 0,
+    }, 'save-map-home');
+    const homeNearby = await invoke('searchNearbyPersonalPlace', { place: home, query: '咖啡' });
+    assert.doesNotMatch(JSON.stringify(homeNearby), /青禾示例路/);
+    assert.deepEqual(calls.slice(-2), [
+      { name: 'maps_geo', input: { address: '虚构区青禾示例路8号', city: '上海市' } },
+      { name: 'maps_around_search', input: { keywords: '咖啡', radius: '1000', location: '121.5,31.2' } },
+    ]);
     await assert.rejects(invoke('estimateMapRoute', {
       mode: 'walking', origin: { address: '未知地点' }, destination: { latitude: 31.2, longitude: 121.5, coordinateSystem: 'gcj02' },
     }), /唯一匹配/);

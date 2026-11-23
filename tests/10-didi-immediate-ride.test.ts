@@ -7,25 +7,39 @@ import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { bookImmediateRideAction, immediateRideApprovalCapability, immediateRideResult } from '../packages/ontology/didi-immediate-ride.js';
+import { bookWithEndpoints } from '../packages/ontology/didi-ride-endpoints.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
+import { setModelClearance } from '../packages/runtime/model-egress.js';
+import { Objects } from '../packages/runtime/objects.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { fixture, principal, route } from './fixture.js';
 
-async function setup() {
+async function setup(linked = false) {
   let modelTurns = 0;
+  let saved: { place: ObjectRef; revision: number } | undefined;
+  const model = 'immediate-ride-test-driver';
   const f = await fixture({
-    model: 'immediate-ride-test-driver',
+    model, provider: 'openai-codex',
     async run(prompt, tools) {
       modelTurns++;
       const { ontology, userRequest } = JSON.parse(prompt.split('\n').at(-1)!);
-      assert(ontology.actions.some((action: { apiName: string }) => action.apiName === bookImmediateRideAction));
+      assert(ontology.actions.some((action: { apiName: string }) => action.apiName === (linked ? bookWithEndpoints : bookImmediateRideAction)));
       await tools.get('complete_with_action')!.invoke({
-        action: { interface: { type: 'ImmediateRideBooking', implementation: 'DidiImmediateRide', action: 'book' },
-          input: userRequest.message === '帮我叫辆车' ? {} : route },
+        action: { interface: { type: 'ImmediateRideBooking', implementation: 'DidiImmediateRide', action: linked ? 'bookWithEndpoints' : 'book' },
+          input: userRequest.message === '帮我叫辆车' ? {} : saved ? { origin: route.origin, destinationPersonalPlace: saved } : route },
         read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
       });
     },
   });
   f.provider.flags.related = false;
+  const saveHome = (address: string, revision: number) => f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+    role: 'home', city: '上海市', address, expectedRevision: revision, confirmed: true,
+  }, randomUUID());
+  if (linked) {
+    await setModelClearance(f.db, { owner: principal.owner, provider: 'openai-codex', model,
+      clearance: { sensitivity: 'CONFIDENTIAL', compartments: [] }, active: true });
+    saved = { place: await saveHome(route.destination, 0), revision: 1 };
+  }
   const versionedResult = (raw: Record<string, unknown>) => {
     const { elapsedMs: _elapsed, execution: _execution, ...result } = raw;
     return immediateRideResult.parse(result);
@@ -54,11 +68,11 @@ async function setup() {
       : { decision, quoteDigest: req.input.quoteDigest, category: fare.category,
           amountMinor: changed ?? fare.amountMinor, currency: fare.currency, acceptVariableFinalFare: true } });
   };
-  return { ...f, submit, next, paused, reply, versionedResult, turns: () => modelTurns };
+  return { ...f, saveHome, saved, submit, next, paused, reply, versionedResult, turns: () => modelTurns };
 }
 
 test('the PA confirms the exact vehicle and fare on the original MCP task before a single order and readback', async () => {
-  const f = await setup();
+  const f = await setup(true);
   const token = randomUUID() + randomUUID();
   const config = readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_PG_SCHEMA: f.schema,
     EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token });
@@ -81,7 +95,7 @@ test('the PA confirms the exact vehicle and fare on the original MCP task before
     assert.equal(f.provider.flags.orderCreates, 0);
     await f.tasks.cancel(principal, short.id);
 
-    const request = { requestId: 'immediate-ride-mcp', message: '从青禾虚构园区到前滩太古里，帮我叫辆车' };
+    const request = { requestId: 'immediate-ride-mcp', message: '从青禾虚构园区回家，帮我叫辆车' };
     const task = await tool('submit_task', request);
     const approval = await f.paused(task.id);
     assert.equal(approval.input.pickup.name, route.origin);
@@ -108,6 +122,21 @@ test('the PA confirms the exact vehicle and fare on the original MCP task before
     assert.equal(f.turns(), 2);
     assert.equal(f.provider.flags.orderCreates, 1);
     assert.equal(f.provider.flags.orderQueries, 1);
+    const graph = new Objects(f.db, f.model, f.access);
+    const ride = { type: 'DidiImmediateRide', id: result.id };
+    const [rideRoute] = await graph.follow(ride, 'route', 'ImmediateRideBooking');
+    assert(rideRoute);
+    assert.deepEqual(rideRoute.properties.personalPlaceRevisions, { destination: 1 });
+    const [version] = await graph.follow(rideRoute.ref, 'destinationPersonalPlace');
+    assert.equal(version?.properties.version, 1);
+    assert.deepEqual((await graph.follow(version!.ref, 'place')).map(row => row.ref), [f.saved!.place]);
+    assert.deepEqual((await graph.follow(rideRoute.ref, 'destination')).map(row => row.properties.name), [route.destination]);
+    assert.deepEqual((await graph.follow(result.order!.ref, 'immediateRides')).map(row => row.ref), [ride]);
+    const [approvalProcess] = await graph.follow(ride, 'approval');
+    assert.equal(approvalProcess?.properties.state, 'completed');
+    assert((await graph.follow(approvalProcess!.ref, 'stateLogs')).some(log => log.properties.newState === 'awaiting-input'));
+    assert.deepEqual((await graph.follow(ride, 'stateLogs')).map(log => log.properties.newState), ['ordered']);
+    assert.deepEqual((await graph.follow(result.order!.ref, 'stateLogs')).map(log => log.properties.newState), ['reported']);
     assert.equal((await tool('submit_task', request)).id, task.id);
 
     // The same order can be canceled through the existing RideOrder capability.
@@ -184,6 +213,23 @@ test('an unknown dispatch remains on the original task and is never automaticall
     assert.equal(await f.worker.runOne('interactive'), false);
     const attempts = (await f.db.query('SELECT state,task_id FROM ' + f.db.schema + '.external_operations')).rows;
     assert.deepEqual(attempts, [{ state: 'unknown', task_id: task.id }]);
+  } finally {
+    await f.close();
+  }
+});
+
+
+test('moving a saved endpoint after a fare is reviewed prevents dispatch of that original booking', async () => {
+  const f = await setup(true);
+  try {
+    const task = await f.submit('从青禾虚构园区回家，帮我叫辆车');
+    const offer = await f.paused(task.id);
+    await f.saveHome('虚构区风铃示例路96号', 1);
+    await f.reply(task.id, offer);
+    const result = await f.next(task.id);
+    assert.equal(result.state, 'failed');
+    assert.match(result.error ?? '', /saved ride endpoint changed/);
+    assert.equal(f.provider.flags.orderCreates, 0);
   } finally {
     await f.close();
   }

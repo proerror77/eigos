@@ -23,7 +23,12 @@ export function withDidiPAReads(fallback: SourceResolver): SourceResolver {
     const execution = currentTaskExecution.getStore();
     if (!execution?.task.input.memberAccess || execution.task.owner !== owner || execution.task.cognitive_context)
       return fallback(owner, order);
-    if (order) throw new Conflict('The PA DiDi pilot supports route and fare reads only');
+    if (order) {
+      // An existing provider order must use its verified owner-bound source.
+      // The PA quotation observation is scoped to a task and cannot authorize order operations.
+      if (order.readOnly) return fallback(owner, order);
+      throw new Conflict('The PA DiDi pilot does not authorize order mutations');
+    }
     const { task, tasks } = execution;
     const bindingId = digest(['didi-pa', owner, task.id]);
     const assertCurrent = () => tasks.current(task);

@@ -13,7 +13,7 @@ import type { DidiTool } from './contracts.js';
 import { didiAppLinkInput, didiMapRouteInput, didiNearbyInput, didiReverseInput } from '../../ontology/didi-reads.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
-export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
+export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string; readOnly?: true }) => Promise<DidiSource>;
 export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: didiEvidence });
 export type SourceResult = z.infer<typeof sourceResultSchema>;
 export const isCurrentDidiObservation = (time: unknown) => typeof time === 'string' && Number.isFinite(Date.parse(time)) && Date.now() - Date.parse(time) < 300000 && Date.parse(time) <= Date.now() + 5000;
@@ -82,9 +82,11 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
     if (!estimates.length) throw new Error('No estimate for the selected service class');
     await binding.assertCurrent();
     const { pickup, drivingEstimate } = includeRouteEvidence ? routes[0]!.properties : {};
+    const { locationClassification: _originClassification, ...originView } = origin.properties;
+    const { locationClassification: _destinationClassification, ...destinationView } = destination.properties;
     const currentDrive = drivingEstimate && Date.parse(String((drivingEstimate as Record<string, unknown>).expiresAt)) > Date.now();
     return { request, estimates, evidence: [...evidence], accepted: evidence.size === 1 && evidence.has('live_readonly'),
-      route: { origin: origin.properties, destination: destination.properties, ...(pickup ? { pickup } : {}),
+      route: { origin: originView, destination: destinationView, ...(pickup ? { pickup } : {}),
         ...(drivingEstimate !== undefined ? { drivingEstimate: currentDrive ? drivingEstimate : null } : {}) } };
   };
   const stamp = (result: SourceResult) => ({
