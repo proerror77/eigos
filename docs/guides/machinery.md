@@ -6,6 +6,8 @@
 
 Workbench 的「流程运行 → Machinery」和 Ontology MCP 使用同一份分析结果。选择已发布的具体 ProcessLog 类型和时间范围，可以查看流程图、实际路径、状态存量、停留时长分布和偏离实例，再打开原业务对象的时间线或有权限的原任务。选择节点、转换、路径、分布区间或一致性类别可以筛选实例。已连接的子流程可以通过发布的 Link 从父实例下钻。
 
+如果指定的现有运营者 MCP 连接只有任务 scope，可在 Gateway 设置 `EIGOS_MCP_OPERATOR_MACHINERY=<OAuth client ID>:<运营者 owner digest>`。用该连接的 `/identity` 验证两项标识，client ID 必须属于 `OAUTH_EXISTING_CLIENT_IDS`。匹配的连接凭 `tasks:read` 和 `Eigos/view_definition` 调用 Eigos 的 `ontology_machinery_processes`、`ontology_machinery_analysis`，按当前对象、日志和属性权限读取结果。配置独立于目录读取授权。通用本体、HTTP 和会员接入继续沿用原有校验。
+
 实现对应 [Palantir 的流程模型与 Action](https://www.palantir.com/docs/foundry/machinery/draw-a-graph)、[从历史挖掘流程](https://www.palantir.com/docs/foundry/machinery/process-mining)、[数据接入](https://www.palantir.com/docs/foundry/machinery/connect-data) 和 [路径、耗时及一致性监控](https://www.palantir.com/docs/foundry/machinery/analyze-and-monitor)。业务状态、Action 和数据来源继续由现有 Ontology、索引和 Action 引擎执行。分析根据提交后的 ProcessLog 计算，Scenario 中尚待合并的编辑不会成为实际路径。
 
 ## 建模与挖掘

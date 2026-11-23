@@ -289,10 +289,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/mcp', (_req, res) => res.set('Allow', 'POST').sendStatus(405));
   app.post('/mcp', async (req, res) => {
     const p = principal(req), member = memberRequests.has(req);
+    const matchesOperator = (binding?: string) => !member && !p.memberAudience && p.clientId &&
+      p.scopes.includes('tasks:read') && binding === `${p.clientId}:${p.owner}`;
+    const readScope = p.scopes.includes('ontology:read');
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
     const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
-    const canExecuteCode = !member && !p.memberAudience && p.scopes.includes('ontology:read');
+    const canExecuteCode = !member && !p.memberAudience && readScope;
     const canSubmitCode = canExecuteCode && ['ontology:write', ...accountTaskScopes].every(scope => p.scopes.includes(scope));
     const instructions = [
       quoteOnly ? rideQuoteInstructions : '',
@@ -319,10 +322,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       }
     };
     const describe = async ({ ontology, query, names }: z.infer<typeof discoverySchema>) => {
-      const readScope = p.scopes.includes('ontology:read');
       if (!member && !readScope) {
-        const operatorCatalog = !p.memberAudience && p.clientId && (ontology ?? 'Eigos') === 'Eigos' &&
-          config.EIGOS_MCP_OPERATOR_CATALOG === `${p.clientId}:${p.owner}` && p.scopes.includes('tasks:read');
+        const operatorCatalog = (ontology ?? 'Eigos') === 'Eigos' && matchesOperator(config.EIGOS_MCP_OPERATOR_CATALOG);
         if (!operatorCatalog) requireScope(p, 'ontology:read');
       }
       if (query && names) throw new InvalidInput('Provide either query or names');
@@ -441,6 +442,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
           capabilities.effects, capabilities.actions, z.string().parse(_ontology)) : services;
         const operation = selected.get(name);
         if (!operation) throw new NotFound('Ontology service is unavailable');
+        if (!readScope && operation.invokeForMcpOperator && matchesOperator(config.EIGOS_MCP_OPERATOR_MACHINERY))
+          return operation.invokeForMcpOperator(p, args);
         return operation.invoke(p, args);
       }));
     }
