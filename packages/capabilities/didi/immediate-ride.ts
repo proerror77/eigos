@@ -21,6 +21,8 @@ import type { Sources } from '../../runtime/sources.js';
 import type { DidiSource, SourceResolver, SourceResult } from './functions.js';
 import { prepareRideInquiry } from './inquiry.js';
 import { rideOrderSchema, type RideOrder } from './operations.js';
+import { authorizeDidiPA, didiPAConnection } from './pa-read.js';
+import { completeDidiPAOrder, didiPAOrderInput, didiPAOrderInstruction, didiPAOrderTools, savedDidiPAOrder, type DidiPAOrderInput } from './pa-order.js';
 
 const offerLifetime = 300_000;
 const coordinates = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
@@ -68,7 +70,7 @@ async function requestApproval(
     const fare = terms.fares.find(item => item.category === approval.category &&
       item.amountMinor === approval.amountMinor && item.currency === approval.currency);
     if (!fare) throw new Conflict('Confirm one exact vehicle and estimate from the original quote');
-    return fare;
+    return { fare, quoteDigest };
   } catch (error) {
     if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
     throw error;
@@ -79,17 +81,26 @@ export function immediateDidiRideFunctions(
   db: Database, resolve: SourceResolver, sources: () => Sources, functions: () => Functions,
 ): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
+  const finishPA = async (context: FunctionContext, ride: ObjectRef, input: DidiPAOrderInput,
+    guard?: Parameters<typeof completeDidiPAOrder>[3]) => {
+    const result = await completeDidiPAOrder(db, context, input, guard);
+    return save(context, ride, {
+      state: result.state, pickup: input.pickup, destination: input.destination, selectedFare: input.fare,
+      updatedEstimateMinor: result.amount ?? null, sourceAuthority: result.bindingId,
+    }, result.order, input.endpoints);
+  };
   const resolveBooking = (actionName: string, linkedRoute: boolean) => prepareRideInquiry(
     sources, functions, resolve, true, async (input, context, resolved) => {
     const { origin, destination, quote, endpoints } = resolved;
     const { task } = interactiveTask(context);
     const source = await resolve(task.owner);
     const orders = source.orders;
-    if (!orders) throw new Conflict('DiDi immediate ordering is unavailable for this account');
+    const paConnection = source.paOrdersEnabled ? didiPAConnection.getStore() : undefined;
+    if (!paConnection && !orders) throw new Conflict('DiDi immediate ordering is unavailable for this account');
     const bindingId = source.bindingId, sourceAuthority = authority(source);
     if (quote.data.kind !== 'estimate' || quote.receipt.bindingId !== bindingId ||
         [origin, destination].some(row => row.properties.sourceBinding !== bindingId) ||
-        (orders.environment === 'production' && quote.evidence !== 'live_readonly'))
+        (paConnection ? quote.evidence !== 'pa_reported' : orders?.environment === 'production' && quote.evidence !== 'live_readonly'))
       throw new Conflict('Ride quote does not match the current DiDi connection');
     const ride = immediateRef(task.id);
     const pickup = presentLocation(origin), dropoff = presentLocation(destination);
@@ -114,10 +125,11 @@ export function immediateDidiRideFunctions(
       if (Date.now() >= expiry) throw new Conflict('The confirmed DiDi estimate expired before dispatch');
     };
     if (Date.now() >= expiry) return record({ ...fields, state: 'quote_expired' });
-    await orders.assertAvailable();
+    await orders?.assertAvailable();
     const terms = immediateRideTerms.parse({ pickup, destination: dropoff, expiresAt: new Date(expiry).toISOString(), fares });
-    const fare = await requestApproval(context, terms, quote, sourceAuthority);
-    if (!fare) return record({ ...fields, state: 'declined' });
+    const approved = await requestApproval(context, terms, quote, sourceAuthority);
+    if (!approved) return record({ ...fields, state: 'declined' });
+    const { fare, quoteDigest } = approved;
     if (Date.now() >= expiry) return record({ ...fields, selectedFare: fare, state: 'quote_expired' });
     const guard = async (objects: Reader) => {
       await source.assertCurrent();
@@ -140,6 +152,16 @@ export function immediateDidiRideFunctions(
       }
     };
     await guard(context.objects);
+    if (paConnection) {
+      const dispatch = didiPAOrderInput.parse({
+        reference: immediateOperation(task.id), connectionRef: paConnection, quoteDigest, pickup, destination: dropoff,
+        fare, expiresAt: terms.expiresAt, arguments: confirmedRoute, ...(route ? { endpoints: route } : {}),
+        instruction: didiPAOrderInstruction,
+      });
+      return finishPA(context, ride, dispatch, client =>
+        guard(new Objects(db, context.objects.model, context.objects.access, client)));
+    }
+    if (!orders) throw new Conflict('DiDi immediate ordering is unavailable for this account');
     const fresh = await orders.quote(confirmedRoute, fare.category, context.signal);
     if (fresh.category !== fare.category || fresh.amountMinor !== fare.amountMinor || fresh.currency !== fare.currency)
       return record({ ...fields, selectedFare: fare, updatedEstimateMinor: fresh.amountMinor, state: 'price_changed' });
@@ -169,12 +191,24 @@ export function immediateDidiRideFunctions(
   const book = (actionName: string, linkedRoute: boolean): FunctionHandler => {
     const resolved = resolveBooking(actionName, linkedRoute);
     return async (input, context) => {
-      const { task } = interactiveTask(context);
+      const { task, tasks } = interactiveTask(context);
       const ride = immediateRef(task.id);
       if (await readRide(context.objects, ride).catch(error => {
         if (error instanceof NotFound) return undefined;
         throw error;
       })) return context.edit!(ride, async () => {});
+      if (task.input.memberAccess) {
+        context.objects.access.source(context.objects.model, 'Didi');
+        if (!(await resolve(task.owner)).paOrdersEnabled)
+          throw new Conflict('DiDi PA ordering is unavailable for this account');
+        const pending = await savedDidiPAOrder(db, task.owner, task.id);
+        if (pending) return finishPA(context, ride, pending);
+        const connected = await authorizeDidiPA(tasks, task, 'order', 'immediate-ride', didiPAOrderTools);
+        if (connected.status === 'declined') return save(context, ride, {
+          state: 'declined', pickup: null, destination: null, selectedFare: null, updatedEstimateMinor: null, sourceAuthority: null,
+        });
+        return didiPAConnection.run(connected.connectionRef, () => resolved(input, context));
+      }
       let receipt;
       try {
         receipt = await operations.recover<DispatchReceipt>(task.owner, immediateOperation(task.id), ride, context.objects);
@@ -210,7 +244,7 @@ const immediateRouteRef = (ride: ObjectRef) => ({ type: 'Route', id: digest([rid
 const immediateOperation = (taskId: string) => digest(['didi-immediate-dispatch', taskId]);
 
 function assertOrderEvidence(source: DidiSource, order: RideOrder) {
-  if (source.orders?.environment === 'production' ? order.evidence !== 'live' : order.evidence === 'live')
+  if (source.orders?.environment === 'production' ? order.evidence !== 'live' : !['provider_mock', 'synthetic'].includes(order.evidence))
     throw new Conflict('Original order evidence differs from the authorized environment');
 }
 

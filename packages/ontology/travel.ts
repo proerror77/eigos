@@ -13,6 +13,7 @@ export const tripInput = z.strictObject({
 });
 export const tripRef = z.strictObject({ trip: ref });
 export const didiOrderRef = z.strictObject({ order: ref });
+export const didiOrderEvidence = z.enum(['live', 'provider_mock', 'synthetic', 'pa_reported']);
 export const cancelRideInput = didiOrderRef.extend({
   confirmCancellation: z.literal(true),
   reason: z.string().trim().min(1).max(500).optional(),
@@ -27,7 +28,7 @@ export const didiOrderRead = z.strictObject({
   orderId: z.string().min(1).max(500),
   status: z.string(),
   independentRead: z.boolean(),
-  evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+  evidence: didiOrderEvidence,
   observedAt: time,
   cancellation: z.enum(['unrequested', 'unresolved', 'confirmed']),
   cancellationReceipt: rideCancellationReceipt.nullable(),
@@ -201,7 +202,7 @@ export const travelDefinition: OntologyDocument = {
         status: z.string(),
         state: z.enum(['created', 'reported', 'unknown']),
         independentRead: z.boolean(),
-        evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+        evidence: didiOrderEvidence,
         observedAt: time,
         contentDigest: z.string(),
         bindingId: z.string(),
@@ -272,7 +273,7 @@ export const travelDefinition: OntologyDocument = {
         state: z.string(),
         observedAt: time,
         independentRead: z.boolean(),
-        evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+        evidence: didiOrderEvidence,
       }),
       optionalProperties: [],
       links: {},

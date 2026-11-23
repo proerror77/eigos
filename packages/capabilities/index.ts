@@ -67,7 +67,9 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
   { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
   const eligible = (owner: string) => hasBetaReadAccess(db, owner);
   const trialUntil = config.EIGOS_BETA_FLYAI_TRIAL_UNTIL;
-  return createCapabilities(db, config.EIGOS_DIDI_PA_READS_ENABLED === 'true' ? withDidiPAReads(source) : source, extensions,
+  const didi = config.EIGOS_DIDI_PA_READS_ENABLED === 'true'
+    ? withDidiPAReads(source, config.EIGOS_DIDI_PA_ORDERS_ENABLED === 'true') : source;
+  return createCapabilities(db, didi, extensions,
     configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config,
       trialUntil ? { eligible, trialUntil } : undefined),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
