@@ -43,6 +43,24 @@ test('Code Mode enforces input and output limits and fails closed on a forbidden
   await assert.rejects(execute('async () => ({ count: 0 })'), /Await all queries/);
 });
 
+test('only a write execution can stage one published Action and the script must finish', async () => {
+  const mode = new CodeMode(), signal = new AbortController().signal;
+  const query = async () => ({ items: [] });
+  const action = { action: 'SetSomething', input: { id: 'one' } };
+  const call = `await applyAction(${JSON.stringify(action)});`;
+  const staged: unknown[] = [];
+  const stage = (value: unknown) => { staged.push(value); };
+
+  assert.deepEqual(await mode.execute('async ({ query, applyAction }) => { await query({type:"RideRequest"}); return typeof applyAction; }',
+    query, signal), 'undefined');
+  assert.deepEqual(await mode.execute(`async ({ applyAction }) => { ${call} return true; }`, query, signal, stage), true);
+  assert.deepEqual(staged, [action]);
+  await assert.rejects(mode.execute(`async ({ applyAction }) => { ${call} ${call} return true; }`, query, signal, stage),
+    /Only one Action/);
+  await assert.rejects(mode.execute(`async ({ applyAction }) => { ${call} throw new Error('script failed'); }`, query, signal, stage),
+    /script failed/);
+});
+
 test('Code Mode cancels running JavaScript when its caller disconnects and frees capacity', async () => {
   const mode = new CodeMode(), cancel = new AbortController();
   const reason = new Error('client disconnected');

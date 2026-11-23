@@ -38,8 +38,9 @@ export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation }: {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease }: {
     assignConversation?: boolean; authorize?: (client: Sql) => Promise<void>; actionInvocation?: z.infer<typeof taskActionSchema>;
+    expectedRelease?: string;
   } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = parseSubmission(raw);
@@ -61,6 +62,8 @@ export class Tasks {
         return prior as Task;
       }
       const model = await this.metadata.active('Eigos', client, true);
+      if (expectedRelease !== undefined && model.release !== expectedRelease)
+        throw new Conflict('The Eigos publication changed. Rediscover the Action before retrying.');
       const id = randomUUID();
       const conversation = input.conversationId ?? (assignConversation ? id : null);
       const scopes = [...principal.scopes];

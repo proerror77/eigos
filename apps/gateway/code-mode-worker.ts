@@ -2,7 +2,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { getQuickJS, type QuickJSDeferredPromise } from 'quickjs-emscripten';
 
 const port = parentPort!;
-const { code } = workerData as { code: string };
+const { code, writable } = workerData as { code: string; writable: boolean };
 const runtime = (await getQuickJS()).newRuntime();
 const deadline = Date.now() + 7_500;
 runtime.setInterruptHandler(() => Date.now() >= deadline);
@@ -13,12 +13,12 @@ let sequence = 0;
 const pending = new Map<number, QuickJSDeferredPromise>();
 
 try {
-  vm.newFunction('readQuery', input => {
+  vm.newFunction('sendRequest', (operation, input) => {
     const id = ++sequence, promise = vm.newPromise();
     pending.set(id, promise);
-    port.postMessage({ kind: 'query', id, input: vm.getString(input) });
+    port.postMessage({ kind: 'request', operation: vm.getString(operation), id, input: vm.getString(input) });
     return promise.handle;
-  }).consume(handle => vm.setProp(vm.global, 'readQuery', handle));
+  }).consume(handle => vm.setProp(vm.global, 'sendRequest', handle));
   port.on('message', ({ id, value }: { id: number; value: string }) => {
     const promise = pending.get(id);
     if (!promise) return;
@@ -28,10 +28,12 @@ try {
   });
 
   const result = vm.unwrapResult(vm.evalCode(`(async () => {
-    const query = async input => JSON.parse(await readQuery(JSON.stringify(input)));
+    const call = async (name, input) => JSON.parse(await sendRequest(name, JSON.stringify(input)));
+    const query = input => call('query', input);
+    const api = ${writable ? "{ query, applyAction: input => call('action', input) }" : "{ query }"};
     const program = (${code}
     );
-    return JSON.stringify(await program(Object.freeze({ query })));
+    return JSON.stringify(await program(Object.freeze(api)));
   })()`, 'ontology-query.js'));
   try {
     const completion = vm.resolvePromise(result);

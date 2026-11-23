@@ -93,6 +93,8 @@ async ({ query }) => {
 }
 ```
 
+具有 `ontology:read`、`ontology:write`、`tasks:read` 和 `tasks:write` 的调用者还可用 `execute_ontology_action({ requestId, code })`。脚本通过 `async ({ query, applyAction }) => { … }` 在读取后暂存一项已发布的 Action。调用 `await applyAction({ action, input })` 时也可用原 MCP 的 `interface` 对象来选 Action。脚本成功返回 JSON 后，Gateway 校验提交条件并返回 `{ value, task }`。重试沿用同一个 `requestId` 和 Action 参数。后续用 `get_task` 读取这个 `task.id`，需要 PA 响应或确认时，在沙箱外处理原任务。
+
 对于无需补充信息的请求，外部 Agent 可用 `complete_with_action` 在一次 MCP 工具调用中运行 Interface Action 并通过发布的 Function 返回结果。滴滴实时询价的本机入口为 `node scripts/ontology-agent.mjs 示例城市 '示例起点' '示例目的地'`。入口复用已授权的本机 Ontology 操作员 OAuth 配置，按需续期，并只调用询价组合。
 
 已有 OAuth 操作员可用 `node scripts/ontology-worker-client.mjs submit "从示例起点到示例目的地，只查实时价格"` 将原话提交给 Worker。`read TASK_ID` 读取原任务；只有任务返回地点候选时，用 `confirm TASK_ID PLACES_JSON` 提交原候选中的起终点 ObjectRef。如果地点不在原候选中，使用 MCP 的 `amend_task_place` 提交一个端点的地址或地标，仍沿原任务继续。遇到 Action 请求城市时，用 `supply_task_input` 提交 `{taskId,answer:{kind:"city",city}}`。客户端使用本机已有的操作员身份，快到期时续期。入口使用已认证的任务 HTTP 接口，Worker Agent 仍通过任务专用 MCP 选择已发布能力。
