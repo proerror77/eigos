@@ -196,10 +196,11 @@ export const businessAgentProfiles: AgentProfile[] = [
   {
     apiName: 'CoffeePickup',
     terms: ['瑞幸', '咖啡', 'luckin', 'coffee', '拿铁', '美式', '生椰', '卡布奇诺'],
-    actions: ['PreviewLuckinPickup', 'SubmitLuckinPickup'],
+    actions: ['PreviewLuckinPickup', 'SubmitLuckinPickup', 'RefreshLuckinPickupStatus'],
     functions: ['readLuckinPickup'],
     instructions: [
       { action: 'PreviewLuckinPickup', text: 'For explicitly requested pickup terms, have the original PA confirm the store, exact SKUs and quantities. Present the preview in the original task and preserve its confirmation and supplier receipt.' },
+      { action: 'RefreshLuckinPickupStatus', function: 'readLuckinPickup', text: 'For pickup follow-up, refresh and read the original pickup order under its authorized PA connection.' },
       { action: 'SubmitLuckinPickup', text: 'Recover an uncertain submission by reading the original order. Report payment only when the provider confirms it.' },
     ],
   },

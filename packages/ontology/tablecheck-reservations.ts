@@ -15,7 +15,7 @@ export const tableCheckVenueLink = 'TableCheckReservationVenue';
 export const prepareTableCheckInput = z.strictObject({ visit: objectRefSchema, startsAt: time });
 export const tableCheckRecord = tableReservationTerms.extend({
   id: termsDigest, name: restaurantName, state: commitmentState, termsDigest, expiresAt: time,
-  startsAt: time, shopId: nativeRestaurantId, binding: termsDigest,
+  startsAt: time, shopId: nativeRestaurantId, binding: termsDigest, holdExpiresAt: time.optional(),
   bookingId: nativeRestaurantId.optional(), confirmationCode: z.string().max(60).optional(),
   manageUrl: z.url({ protocol: /^https$/ }).max(2000).optional(),
   receipts: z.array(observedReceipt.extend({ evidence: z.enum(['connector_receipt', 'synthetic']) })).max(20),
@@ -31,6 +31,8 @@ const definitions = [
     'After user approval, cancel the original TableCheck reservation and independently verify cancellation.'],
   ['ReconcileTableCheckReservation', commitmentInput, { commitment: tableCheckReservationType },
     'Look up the original TableCheck reservation after a lost or pending response.'],
+  ['ExpireTableCheckReservation', commitmentInput, { commitment: tableCheckReservationType },
+    'Record a TableCheck offer or hold reaching its deadline when no reservation was dispatched.'],
 ] as const;
 const functionName = (action: string) => action[0]!.toLowerCase() + action.slice(1);
 const deps = { objectTypes: [tableCheckReservationType, restaurantVisitType, restaurantVenueType],
@@ -78,7 +80,7 @@ export const tableCheckReservations: Pick<OntologyDocument, 'objectTypes' | 'int
   functionTypes: [
     ...definitions.map(([name, schema, , description]) => ({
       apiName: functionName(name), description, parameters: json(schema), returns: json(objectRefSchema), edits: true,
-      source: 'TableCheck', dependencies: deps,
+      ...(name !== 'ExpireTableCheckReservation' ? { source: 'TableCheck' } : {}), dependencies: deps,
     })),
     { apiName: 'readTableCheckReservation', source: 'TableCheck', description: 'Read the exact offered terms and original TableCheck booking receipts.',
       parameters: json(tableCheckReadInput), returns: json(tableCheckReadResult), dependencies: deps },

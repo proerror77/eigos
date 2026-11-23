@@ -1,6 +1,6 @@
 import { Ontology } from './model.js';
-import { networkContract } from './network-contract.js';
-import { tableCheckReservations } from './tablecheck-reservations.js';
+import { commitmentState, networkContract } from './network-contract.js';
+import { tableCheckReservations, tableCheckReservationType } from './tablecheck-reservations.js';
 import { scheduleJourneyDefinition } from './schedule-journey.js';
 import { itineraryDefinition, itineraryType } from './itinerary-continuity.js';
 import { executeHotelDependentTrip, hotelDependencyCriterion, tripHotelDependencyDefinition } from './trip-hotel-dependency.js';
@@ -13,7 +13,7 @@ import { flightDefinition as flight, flightWatchType } from './flight.js';
 import { z } from 'zod';
 import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
-import { luckinDefinition as luckin } from './luckin.js';
+import { luckinDefinition as luckin, pickupOrderType, pickupState, pickupStatusTransitions } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
 import { currentPersonalPlaceVersionLink, personalPlaceDefinition, personalPlaceType, personalPlaceVersionType } from './personal-places.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink, prepareWithEndpoints,
@@ -55,10 +55,10 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '47',
+  id: ride.id, version: '48',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
-  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
+  linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...luckin.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
 businessDefinition.linkTypes.push(...scheduleJourneyDefinition.linkTypes);
@@ -364,12 +364,41 @@ addProcessLogs(businessDefinition, [
   { type: 'EventRegistration', property: 'state' }, { type: 'EventTrip', property: 'state' },
   { type: 'StripeLinkPaymentRequest', property: 'status' }, { type: 'SchedulePlan', property: 'state' }, { type: journeyType, property: 'state' }, { type: flightWatchType, property: 'state' },
   { type: diningReservationType, property: 'state' },
+  { type: tableCheckReservationType, property: 'state' },
+  { type: pickupOrderType, property: 'state' },
   ...localDeliveryProviders.flatMap(provider => {
     const service = deliveryTradeServices[provider];
     return [{ type: service.checkoutType, property: 'state' }, { type: service.checkoutType, property: 'observation' },
       { type: service.orderType, property: 'fulfillment' }];
   }),
 ]);
+
+businessDefinition.objectTypes.find(type => type.apiName === 'LuckinPickupOrderStateLog')!.machinery = {
+  states: pickupState.options.map(name => ({ name, terminal: name === 'completed' || name === 'canceled' })),
+  transitions: [
+    { from: null, to: 'previewed', action: 'PreviewLuckinPickup' },
+    ...['awaiting_payment', 'placed', 'price_changed'].map(to => ({ from: 'previewed', to, action: 'SubmitLuckinPickup' })),
+    ...pickupStatusTransitions.map(edge => ({ ...edge, action: 'RefreshLuckinPickupStatus' })),
+  ],
+};
+businessDefinition.objectTypes.find(type => type.apiName === 'TableCheckReservationStateLog')!.machinery = {
+  states: commitmentState.options.map(name => ({ name, terminal: name === 'canceled' || name === 'fulfilled' })),
+  transitions: [
+    { from: null, to: 'offered', action: 'PrepareTableCheckReservation' },
+    { from: 'expired', to: 'offered', action: 'PrepareTableCheckReservation' },
+    { from: 'offered', to: 'held' },
+    { from: 'held', to: 'confirmed', action: 'ConfirmTableCheckReservation' },
+    { from: 'held', to: 'unknown', action: 'ConfirmTableCheckReservation' },
+    // Before the hold was projected, existing reservations went directly from offer to result.
+    { from: 'offered', to: 'confirmed' },
+    { from: 'offered', to: 'unknown' },
+    { from: 'confirmed', to: 'canceled', action: 'CancelTableCheckReservation' },
+    { from: 'confirmed', to: 'unknown', action: 'CancelTableCheckReservation' },
+    { from: 'unknown', to: 'confirmed' },
+    { from: 'unknown', to: 'canceled' },
+    ...['offered', 'held'].map(from => ({ from, to: 'expired', action: 'ExpireTableCheckReservation' })),
+  ],
+};
 
 businessDefinition.objectTypes.find(type => type.apiName === 'ActionConfirmationStateLog')!.machinery = {
   states: [{ name: 'awaiting-input' }, { name: 'confirmed' },

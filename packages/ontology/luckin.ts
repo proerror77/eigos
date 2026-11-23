@@ -8,6 +8,8 @@ const text = z.string().trim().min(1).max(300);
 const minor = z.number().int().nonnegative().safe();
 export const luckinSource = 'Luckin';
 export const pickupOrderType = 'LuckinPickupOrder';
+export const luckinShopType = 'LuckinShop';
+export const luckinPickupShopLink = 'LuckinPickupShop';
 export const proofHash = z.string().regex(/^[a-f0-9]{64}$/);
 export const luckinOrderId = z.string().regex(/^[0-9]{1,30}$/);
 export const luckinShop = z.strictObject({
@@ -79,10 +81,19 @@ export const luckinReads = {
 export const luckinPreviewCapability = 'luckin.pickup.preview';
 export const luckinCreateCapability = 'luckin.pickup.create';
 
+export const pickupState = z.enum(['previewed', 'awaiting_payment', 'placed', 'price_changed',
+  'preparing', 'ready', 'completed', 'canceled']);
+const pickupProgress = ['awaiting_payment', 'placed', 'preparing', 'ready', 'completed'] as const;
+export const pickupStatusTransitions = [
+  ...pickupProgress.slice(0, -1).flatMap((from, index) =>
+    [...pickupProgress.slice(index + 1), 'canceled'].map(to => ({ from, to }))),
+  ...[...pickupProgress.slice(1), 'canceled'].map(to => ({ from: 'price_changed', to })),
+];
+
 const orderShape = {
   id: z.string(), name: text, quote: pickupQuote, quoteDigest: proofHash, connectionRef: proofHash,
   sourceTaskId: z.uuid(), observedAt: time, expiresAt: time,
-  state: z.enum(['previewed', 'awaiting_payment', 'placed', 'price_changed']),
+  state: pickupState,
   merchantAmountMinor: minor.nullable(),
   merchantOrderId: luckinOrderId.nullable(), evidence: z.literal('pa_reported'),
 };
@@ -94,12 +105,23 @@ const definitions = [
     description: 'After the PA confirms the Luckin pickup store and SKUs with quantities, record the official preview. To place an order, use apply_action to prepare the preview and then SubmitLuckinPickup on the same task.' },
   { action: 'SubmitLuckinPickup', fn: 'submitLuckinPickup', parameters: json(pickupRefInput), objectParameters: { order: pickupOrderType },
     description: 'On the original pickup task, request the authenticated PA’s explicit approval of this exact preview and record the original Luckin merchant order. The PA handles the manual payment link.' },
+  { action: 'RefreshLuckinPickupStatus', fn: 'refreshLuckinPickupStatus', parameters: json(pickupRefInput), objectParameters: { order: pickupOrderType },
+    description: 'Read the same merchant order through the authorized PA and record the observed pickup state.' },
 ];
 
-export const luckinDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionTypes' | 'actionTypes'> = {
+export const luckinDefinition: Pick<OntologyDocument, 'objectTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'> = {
   objectTypes: [{ apiName: pickupOrderType, displayName: '瑞幸到店自取订单',
     description: 'Supplier-backed Luckin preview, precise approved terms and, after PA confirmation, the original merchant order ID.',
-    primaryKey: 'id', titleProperty: 'name', properties, interfaces: {} }],
+    primaryKey: 'id', titleProperty: 'name', properties, interfaces: {} },
+  { apiName: luckinShopType, displayName: '瑞幸门店', description: 'A Luckin store observed in a verified pickup quote.',
+    primaryKey: 'id', titleProperty: 'name', interfaces: {},
+    properties: Object.fromEntries(Object.entries({ id: proofHash, ...luckinShop.shape, observedAt: time }).map(([name, schema]) =>
+      [name, { description: name, schema: json(schema), required: !schema.isOptional() }])) }],
+  linkTypes: [{
+    apiName: luckinPickupShopLink, description: 'The store that issued this pickup quote.',
+    from: { type: pickupOrderType, name: 'shop', cardinality: 'one' },
+    to: { type: luckinShopType, name: 'pickupOrders', cardinality: 'many' },
+  }],
   functionTypes: [
     ...Object.entries(luckinReads).map(([apiName, operation]) => ({
       apiName, source: luckinSource, parameters: json(operation.input),
@@ -107,7 +129,8 @@ export const luckinDefinition: Pick<OntologyDocument, 'objectTypes' | 'functionT
       dependencies: apiName === 'findLuckinShops' ? { functions: ['resolveTaskLocation'] } : {}, description: operation.description,
     })),
     ...definitions.map(operation => ({ apiName: operation.fn, source: luckinSource, edits: true,
-      parameters: operation.parameters, returns: json(objectRefSchema), dependencies: { objectTypes: [pickupOrderType] },
+      parameters: operation.parameters, returns: json(objectRefSchema),
+      dependencies: { objectTypes: [pickupOrderType, luckinShopType], linkTypes: [luckinPickupShopLink] },
       description: operation.description })),
     { apiName: 'readLuckinPickup', source: luckinSource, parameters: json(pickupRefInput),
       returns: json(z.strictObject({ order: objectRefSchema, details: pickupOrder.omit({ connectionRef: true, sourceTaskId: true }) })),
