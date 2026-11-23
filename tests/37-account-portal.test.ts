@@ -374,12 +374,13 @@ test('the account page shows where each account stands', async () => {
 
     const inviteLanding = await fetch(invite.url + '/account');
     const landing = await inviteLanding.text();
-    assert.match(landing, /href="\/account\/login">登录<\/a>/);
-    assert.match(landing, /href="\/account\/login\?signup=1">注册<\/a>/);
-    assert.match(landing, /收到邀请码后，回到本页开通/);
+    assert.match(landing, /class="button primary" href="\/account\/login\?signup=1">注册并申请/);
+    assert.match(landing, /href="\/account\/login">已有账号，登录<\/a>/);
+    assert.match(landing, /验证邮箱后，回到本页提交申请/);
+    assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>注册并验证邮箱/);
     assert.match(landing, /id="install-prompt"[^>]+readonly>[^<]+https:\/\/127\.0\.0\.1\/mcp/);
     assert.match(landing, /id="query-prompt"[^>]+readonly>[^<]+上海市今天的天气/);
-    assert.doesNotMatch(landing, /action="\/account\/(agent-token|approve)"/);
+    assert.doesNotMatch(landing, /action="\/account\/(apply|agent-token|approve)"/);
     const copyScript = landing.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     assert.ok(copyScript);
     const copyScriptHash = createHash('sha256').update(copyScript).digest('base64');
@@ -388,9 +389,12 @@ test('the account page shows where each account stands', async () => {
 
     // The same session can be read by gateways with another sign-up mode: it is a login without an account.
     const carol = await invite.login('carol', 'carol@example.test');
-    const pending = await invite.page(carol.cookie);
-    assert.match(pending, /<button>开通账号<\/button>/);
-    assert.match(pending, /复制安装提示词/);
+    const applicationPage = await invite.page(carol.cookie);
+    assert.match(applicationPage, /id="account-heading">提交 Beta 申请<\/h1>/);
+    assert.match(applicationPage, /aria-current="step">\s*<span[^>]+>02<\/span><span[^>]+>填写用途并提交申请/);
+    assert.match(applicationPage, /action="\/account\/apply"[\s\S]+<button class="primary">提交申请<\/button>/);
+    assert.match(applicationPage, /<summary>我已有邀请码<\/summary>/);
+    assert.match(applicationPage, /复制安装提示词/);
     assert.match(await open.page(carol.cookie), /账号还没有开通，请重新登录。/);
     assert.match(await closed.page(carol.cookie), /目前暂停注册新账号。/);
     await setGrants(f.db, open.owner('olivia'), [{ resource: 'Eigos', permission: 'view_definition' }]);
@@ -439,7 +443,11 @@ test('form posts need the portal origin and a session, and activation reports op
     assert.equal((await invite.form('apply', carol.cookie, application)).headers.get('location'), '/account');
     assert.equal((await invite.accounts.applications()).length, 1);
     const accountPage = () => fetch(invite.url + '/account', { headers: { Cookie: carol.cookie } }).then(res => res.text());
-    assert.match(await accountPage(), /等待运营审核/);
+    const pending = await accountPage();
+    assert.match(pending, /申请已提交/);
+    assert.match(pending, /等待运营审核/);
+    assert.match(pending, /aria-current="step">\s*<span[^>]+>03<\/span>/);
+    assert.doesNotMatch(pending, /action="\/account\/apply"/);
     const mine = await invite.accounts.invite('carol@example.test', 1);
     assert.match(await accountPage(), /申请已通过/);
     assert.equal((await invite.form('activate', carol.cookie, new URLSearchParams({ code: mine }))).headers.get('location'), '/account');
