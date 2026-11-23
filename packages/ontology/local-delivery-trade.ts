@@ -75,11 +75,11 @@ const identity = { id: digest, name: text, channel: tradeChannel, bindingId: dig
   evidence: z.enum(['provider', 'provider_mock']) };
 
 export const deliveryCartChangeRecord = z.strictObject({
-  ...identity, operationRef: z.uuid(),
+  ...identity, operationRef: z.uuid(), deliveryAddressKey: digest.optional(),
   state: z.enum(['changed', 'declined', 'unknown']),
   cart: deliveryCartReport.nullable(),
 });
-const cartChangeRead = deliveryCartChangeRecord.omit({ bindingId: true, operationRef: true }).extend({ change: objectRefSchema });
+const cartChangeRead = deliveryCartChangeRecord.omit({ bindingId: true, operationRef: true, deliveryAddressKey: true }).extend({ change: objectRefSchema });
 const readCartChange = z.strictObject({ change: objectRefSchema });
 
 export const deliveryFulfillment = z.enum(['unknown', 'in_progress', 'completed', 'canceled']);
@@ -97,6 +97,7 @@ export const deliveryCheckoutRecord = z.strictObject({
   sourceTaskId: z.uuid().nullable(),
   scope: deliveryScope,
   addressDigest: digest,
+  deliveryAddressKey: digest.optional(),
   version: digest,
   quoteRef: z.uuid(),
   expiresAt: time,
@@ -115,7 +116,7 @@ export const deliveryCheckoutRecord = z.strictObject({
   supplierObservedAt: time.nullable().optional(),
   observation: z.enum(['idle', 'watching', 'finished', 'timed_out', 'source_unavailable', 'stopped']).optional(),
 });
-const checkoutRead = deliveryCheckoutRecord.omit({ bindingId: true, sourceTaskId: true, addressDigest: true, version: true,
+const checkoutRead = deliveryCheckoutRecord.omit({ bindingId: true, sourceTaskId: true, addressDigest: true, deliveryAddressKey: true, version: true,
   quoteRef: true, windows: true }).extend({
   checkout: objectRefSchema,
   windows: z.array(z.strictObject({ index: z.number().int().nonnegative(), label: text, feeMinor: cents, selected: z.boolean() })).max(50),

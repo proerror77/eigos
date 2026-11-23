@@ -122,6 +122,15 @@ test('Ontology exposes read-only Amap and weather together and enforces owner an
     const results = await invoke('searchMapPlaces', { city: '上海', query: '咖啡' });
     assert(!JSON.stringify(results).includes('private-data'));
     await invoke('readMapPlace', { id: 'B0EXAMPLE' });
+    const home = await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      role: 'home', city: '上海市', address: '虚构区青禾示例路8号', confirmed: true, expectedRevision: 0,
+    }, 'save-map-home');
+    const homeNearby = await invoke('searchNearbyPersonalPlace', { place: home, query: '咖啡' });
+    assert.doesNotMatch(JSON.stringify(homeNearby), /青禾示例路/);
+    assert.deepEqual(calls.slice(-2), [
+      { name: 'maps_geo', input: { address: '虚构区青禾示例路8号', city: '上海市' } },
+      { name: 'maps_around_search', input: { keywords: '咖啡', radius: '1000', location: '121.5,31.2' } },
+    ]);
     await assert.rejects(invoke('estimateMapRoute', {
       mode: 'walking', origin: { address: '未知地点' }, destination: { latitude: 31.2, longitude: 121.5, coordinateSystem: 'gcj02' },
     }), /唯一匹配/);

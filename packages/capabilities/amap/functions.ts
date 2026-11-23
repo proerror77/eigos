@@ -1,9 +1,10 @@
+import { personalPlaceRecord } from '../../ontology/personal-places.js';
 import { z } from 'zod';
 import { Conflict, SourceReadFailure } from '../../core/identity.js';
 import { locationPlace, type locationSelection, type locationUse } from '../../ontology/location.js';
 import {
   adcode, gcjPoint, geocodeResult, mapAddress, mapPlaceResult, mapPoint, mapRouteInput, mapRouteResult,
-  mapSearch, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, ridePickupResult, weatherInput, weatherResult,
+  mapSearch, nearbyPersonalPlace, nearbySearch, placeDetailInput, placeDetailResult, reverseGeocodeResult, ridePickupResult, weatherInput, weatherResult,
 } from '../../ontology/maps.js';
 import { Clarification, unresolvedMapPlace } from '../../runtime/clarification.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
@@ -204,6 +205,15 @@ async function weather(client: AmapClient, input: z.infer<typeof weatherInput>, 
     reportedAt: reportTime(location.reporttime), days });
 }
 
+async function nearbyPlaces(client: AmapClient, point: z.infer<typeof gcjPoint>,
+  input: { query: string; radiusMeters?: number }, signal: AbortSignal) {
+  const result = source.parse(await client.mcp('maps_around_search', {
+    keywords: input.query, radius: String(input.radiusMeters ?? 1000), location: pointText(point),
+  }, signal));
+  const places = z.array(z.unknown()).max(100).parse(result.pois).slice(0, 20).map(mapPlace);
+  return mapPlaceResult.parse({ ...fetchTime(), places });
+}
+
 export function amapFunctions(resolve: AmapResolver, publicReads = resolve): ReadonlyMap<string, FunctionHandler> {
   const handlers = new Map<string, FunctionHandler>([
     ['resolveRidePickup', async (_raw, ctx) => {
@@ -249,11 +259,14 @@ export function amapFunctions(resolve: AmapResolver, publicReads = resolve): Rea
     ['searchNearbyPlaces', async (raw, ctx) => {
       const client = await publicReads(ctx), input = nearbySearch.parse(raw);
       const point = await pointFor(client, input, ctx, 'nearby_search');
-      const result = source.parse(await client.mcp('maps_around_search', {
-        keywords: input.query, radius: String(input.radiusMeters ?? 1000), location: pointText(point),
-      }, ctx.signal));
-      const places = z.array(z.unknown()).max(100).parse(result.pois).slice(0, 20).map(mapPlace);
-      return mapPlaceResult.parse({ ...fetchTime(), places });
+      return nearbyPlaces(client, point, input, ctx.signal);
+    }],
+    ['searchNearbyPersonalPlace', async (raw, ctx) => {
+      const input = nearbyPersonalPlace.parse(raw);
+      const { address, city } = personalPlaceRecord.parse((await ctx.objects.read(input.place)).properties);
+      const client = await resolve(ctx);
+      const point = await namedPoint(client, { address, city }, ctx, 'nearby_search', 'specified');
+      return nearbyPlaces(client, point, input, ctx.signal);
     }],
     ['estimateMapRoute', async (raw, ctx) => {
       const client = await resolve(ctx), input = mapRouteInput.parse(raw);

@@ -42,6 +42,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
   const cart = (platformId: 'taobao' | 'hema') => ({
     ...bound(platformId), items: platformId === 'hema' ? (hemaCartChanged ? [milk] : []) : cartChanged ? [hamburger] : [],
   });
+  let addressText = '上海市虚构区青禾示例路8号';
   const fetcher: typeof fetch = async (url, init) => {
     assert.match(String(url), /^http:\/\/127\.0\.0\.1:4381[56]\/host$/);
     const sourcePlatform = String(url).includes(':43816/') ? 'hema' : 'taobao';
@@ -72,7 +73,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
       });
     }
     if (name === 'account_addresses') return data({ platformId, selectedRef: addressRef,
-      addresses: [{ address: 'PRIVATE_TEST_ADDRESS', phone: 'PRIVATE_TEST_PHONE' }] });
+      addresses: [{ ref: addressRef, address: addressText, label: '家', usable: true, phone: 'PRIVATE_TEST_PHONE' }] });
     if (name === 'account_cart') return data(cart(platformId));
     if (name === 'account_retail_cart')
       return data({ ...bound('taobao'), revision: retailVersion, items: retailCartChanged ? [milk] : [] });
@@ -226,7 +227,7 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
   try {
     const graph = new Objects(f.db, f.model, f.access);
     const scope = { channel: 'taobao_meal', merchantId: shopId };
-    const search = await execute('SearchTaobaoInstantDelivery', { query: '汉堡' });
+    const search = await execute('SearchTaobaoInstantDeliveryAtAddress', { query: '汉堡', destination: { source: 'selected' } });
     const cartChange = { ...scope, itemId: 'meal1', variantRef: variants.meal, quantity: 1, cartRevision: cartVersion.taobao, search };
     await assert.rejects(execute('ChangeTaobaoInstantDeliveryCart', cartChange), /interactive PA task/);
     const declined = await interactive({ alias: 'change', input: cartChange }, 'taobao_instant_delivery.cart_approval', 'decline');
@@ -237,9 +238,14 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
 
     const change = changed.change as ObjectRef;
     assert((await graph.follow(search, 'cartChanges')).some(row => row.ref.id === change.id));
-    const order = await execute('PreviewTaobaoInstantDeliveryCheckout', {
+    const preview = () => execute('PreviewTaobaoInstantDeliveryCheckout', {
       ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900, cartChange: change,
     });
+    const originalAddress = addressText;
+    addressText = '上海市虚构区云端示例路4号';
+    await assert.rejects(preview(), /selected delivery address changed/);
+    addressText = originalAddress;
+    const order = await preview();
     assert.deepEqual((await graph.follow(order, 'cartChange')).map(row => row.ref), [change]);
     assert.equal((await checkoutView(order)).totalMinor, 1500);
     const submitted = await interactive({ alias: 'submit', target: order, input: { checkout: order } }, 'taobao_instant_delivery.order_approval');

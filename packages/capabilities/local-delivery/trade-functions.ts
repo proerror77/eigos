@@ -1,3 +1,4 @@
+import { resolveDeliveryDestination } from './addresses.js';
 import { z } from 'zod';
 import { Conflict, InvalidInput, NotFound, digest } from '../../core/identity.js';
 import {
@@ -168,6 +169,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
     if (search.bindingId !== conn.id || search.provider !== provider || input.query && search.query !== input.query ||
         !search.items.some(item => item.itemId === input.itemId && item.merchantId === input.merchantId))
       throw new Conflict('The original delivery search does not contain the selected item for this account');
+    return search.deliveryAddressKey;
   }
   async function assertCartChange(cartChange: ObjectRef | undefined, scope: z.infer<typeof deliveryScope>, cartRevision: string,
     conn: Connection, graph: Pick<Objects, 'read'>) {
@@ -177,11 +179,19 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
     if (prior.state !== 'changed' || prior.bindingId !== conn.id || prior.channel !== scope.channel ||
         prior.cart?.revision !== cartRevision || scope.merchantId && prior.cart.merchantId !== scope.merchantId)
       throw new Conflict('The original cart change does not match this checkout revision');
+    return prior.deliveryAddressKey;
+  }
+  async function addressForTrade(rpc: Parameters<typeof selectedDeliveryAddress>[0], ctx: FunctionContext,
+    conn: Connection, addressKey?: string) {
+    if (!addressKey) return selectedDeliveryAddress(rpc, conn.owner);
+    const chosen = await resolveDeliveryDestination(rpc, ctx, provider, conn.owner, { source: 'selected' });
+    if (chosen.address.id !== addressKey) throw new Conflict('The selected delivery address changed; start with a new address-bound search');
+    return chosen.nativeRef;
   }
   const quoteTerms = (ref: ObjectRef, quote: Checkout) => ({
     checkout: ref, merchant: quote.name, channel: quote.channel, amountMinor: quote.totalMinor, currency: 'CNY',
     maxAmountMinor: quote.maxAmountMinor, items: quote.items, fees: quote.fees, discountMinor: quote.discountMinor,
-    deliveryTime: quote.deliveryTime, deliverySelection: quote.addressDigest,
+    deliveryTime: quote.deliveryTime, deliverySelection: quote.deliveryAddressKey ?? quote.addressDigest,
     deliveryAddress: '请核对 dsh-waimai 当前已选收货地址', expiresAt: quote.expiresAt,
   });
   const addressFingerprint = (conn: Binding, addressRef: string) => digest([conn.id, addressRef]);
@@ -292,7 +302,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
     }],
     [read.cartChange, async (raw, ctx) => {
       const { change } = z.strictObject({ change: z.object({ type: z.literal(cartChangeType), id: z.string() }) }).parse(raw);
-      const { bindingId, operationRef: _op, ...row } = deliveryCartChangeRecord.parse((await ctx.objects.read(change)).properties);
+      const { bindingId, operationRef: _op, deliveryAddressKey: _address, ...row } = deliveryCartChangeRecord.parse((await ctx.objects.read(change)).properties);
       const conn = await connection(row.channel, ctx);
       if (conn.id !== bindingId) throw new Conflict('Cart change belongs to a previous account binding');
       await conn.check();
@@ -303,7 +313,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
       interactive(ctx);
       const input = deliveryCartChange.parse(normalizeInput(service.input.change.parse(raw))), conn = await connection(input.channel, ctx);
       if (!conn.allowOrders) throw new Conflict('Cart changes are disabled for this delivery account');
-      await assertSearch(input, conn, ctx.objects);
+      const searchAddressKey = await assertSearch(input, conn, ctx.objects);
       const ref = { type: cartChangeType, id: digest([ctx.principal.owner, provider, ctx.operationId, 'cart-change']) };
       const operationRef = stableOperationRef(ref.id), key = 'dsh-cart:' + ref.id, scope = { input, bindingId: conn.id };
       type Cart = z.infer<typeof deliveryCartReport>;
@@ -311,7 +321,8 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
         stage(ref, async graph => {
           await conn.assertBinding();
           await graph.create(ref, deliveryCartChangeRecord.parse({ id: ref.id, name: '配送购物车变更', channel: input.channel,
-            bindingId: conn.id, observedAt: now(), evidence, operationRef, state, cart }));
+            bindingId: conn.id, observedAt: now(), evidence, operationRef, state, cart,
+            ...(searchAddressKey ? { deliveryAddressKey: searchAddressKey } : {}) }));
           if (input.search) {
             await assertSearch(input, conn, graph);
             await graph.link({ type: searchCartLink, from: input.search, to: ref });
@@ -325,17 +336,17 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
         return save('unknown');
       }
       const prepared = await call(conn, ctx, async rpc => {
-        const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
+        const addressRef = await addressForTrade(rpc, ctx, conn, searchAddressKey);
         return { addressRef, change: await resolveCartChange(rpc, conn, input, addressRef) };
       });
       const approvedTerms = { channel: input.channel, merchantId: input.merchantId ?? null, cartRevision: input.cartRevision,
-        deliverySelection: addressFingerprint(conn, prepared.addressRef), ...prepared.change.terms };
+        deliverySelection: searchAddressKey ?? addressFingerprint(conn, prepared.addressRef), ...prepared.change.terms };
       const approved = await approve(ctx, approvals.cart, approvedTerms);
       let state: 'changed' | 'declined' | 'unknown' = approved ? 'changed' : 'declined';
       let cart: z.infer<typeof deliveryCartReport> | null = null;
       if (approved) {
         const fresh = await call(conn, ctx, async rpc => {
-          const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
+          const addressRef = await addressForTrade(rpc, ctx, conn, searchAddressKey);
           if (addressRef !== prepared.addressRef) throw new Conflict('Delivery address changed after approval');
           const cart = await readCart(rpc, conn.owner, input, addressRef);
           if (cart.revision !== input.cartRevision) throw new Conflict('Cart changed after approval');
@@ -368,9 +379,9 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
         throw new InvalidInput('Choose this checkout channel’s valid lines and delivery preference');
       const scope = deliveryScope.parse({ channel: input.channel, merchantId: input.merchantId });
       const conn = await connection(input.channel, ctx);
-      await assertCartChange(input.cartChange, scope, input.cartRevision, conn, ctx.objects);
+      const addressKey = await assertCartChange(input.cartChange, scope, input.cartRevision, conn, ctx.objects);
       const receipt = await call(conn, ctx, async rpc => {
-        const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
+        const addressRef = await addressForTrade(rpc, ctx, conn, addressKey);
         const cart = await readCart(rpc, conn.owner, scope, addressRef);
         if (cart.revision !== input.cartRevision) throw new Conflict('The cart changed; review its current contents');
         const args = { ...conn.owner, ...ownerScope(scope), addressRef, revision: input.cartRevision };
@@ -387,6 +398,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
         ...quoteFields(receipt.quote), id: ref.id, channel: input.channel, bindingId: conn.id,
         sourceTaskId: ctx.taskId ?? null, scope: { ...scope, merchantId: receipt.quote.shopId },
         addressDigest: addressFingerprint(conn, receipt.addressRef), version: input.cartRevision,
+        ...(addressKey ? { deliveryAddressKey: addressKey } : {}),
         maxAmountMinor: Math.min(input.maxAmountMinor, receipt.quote.maxOrderCents), currency: 'CNY',
         state: 'quoted', orderIds: [], supplierOrders: [], observation: 'idle', supplierObservedAt: null, observedAt: now(), evidence,
       });
@@ -406,7 +418,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
       if (quote.channel !== 'hema' || quote.state !== 'quoted' || !window || Date.parse(quote.expiresAt) <= Date.now())
         throw new Conflict('Select an available window from the current Hema quote');
       const updated = await call(conn, ctx, async rpc => {
-        const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
+        const addressRef = await addressForTrade(rpc, ctx, conn, quote.deliveryAddressKey);
         if (addressFingerprint(conn, addressRef) !== quote.addressDigest) throw new Conflict('Hema delivery address changed');
         const source = sourceQuote.parse(await rpc('account_select_delivery', { ...conn.owner, quoteRef: quote.quoteRef, deliveryRef: window.source }));
         verifyQuote(source, conn, quote.scope, addressRef, quote.version, quote.maxAmountMinor);
@@ -435,7 +447,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
           return editQuote(ctx, checkout, row.revision, conn, { state: 'declined' });
         if (Date.parse(quote.expiresAt) <= Date.now()) throw new Conflict('The approved checkout quote expired');
         await call(conn, ctx, async rpc => {
-          const addressRef = await selectedDeliveryAddress(rpc, conn.owner);
+          const addressRef = await addressForTrade(rpc, ctx, conn, quote.deliveryAddressKey);
           if (addressFingerprint(conn, addressRef) !== quote.addressDigest) throw new Conflict('Delivery address changed after approval');
           const cart = await readCart(rpc, conn.owner, quote.scope, addressRef);
           if (cart.revision !== quote.version) throw new Conflict('Cart changed after approval');
@@ -605,7 +617,7 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
     }],
     [read.checkout, async (raw, ctx) => {
       const { checkout } = deliveryCheckoutInput.parse(raw), { quote, conn } = await checkoutFor(ctx, checkout);
-      const { bindingId: _binding, sourceTaskId: _task, addressDigest: _address, version: _version, quoteRef: _ref, windows, ...view } = quote;
+      const { bindingId: _binding, sourceTaskId: _task, addressDigest: _address, deliveryAddressKey: _addressKey, version: _version, quoteRef: _ref, windows, ...view } = quote;
       await conn.check();
       const paymentEntry = ['awaiting_payment', 'payment_handoff', 'payment_verification'].includes(view.state)
         ? view.channel === 'hema' ? 'hema_official_app' : 'taobao_private_checkout' : null;

@@ -26,6 +26,9 @@ import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workf
 import { resolveTaskLocation } from './location.js';
 import { luckinFunctions } from './luckin/functions.js';
 import type { DeliveryConnectionPaths } from './local-delivery/mcp.js';
+import { deliveryAddressFunctions } from './local-delivery/addresses.js';
+import { savePersonalPlace } from './personal-places.js';
+import { personalPlaceEdit } from '../ontology/personal-places.js';
 import { localDeliveryFunctions } from './local-delivery/functions.js';
 import { localDeliveryTradeFunctions } from './local-delivery/trade-functions.js';
 import { marketplaceFunctions } from './marketplace/functions.js';
@@ -125,6 +128,8 @@ export function createCapabilities(
     [registerDocumentFunction, registerSchedulePlanDocument],
     ...serviceFunctions(db, services, () => sources),
     ...marketplaceFunctions(services),
+    [personalPlaceEdit, savePersonalPlace],
+    ...deliveryAddressFunctions(connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...localDeliveryFunctions(connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...localDeliveryTradeFunctions(db, connections.localDelivery ?? {}, connections.localDeliveryFetch),
     ...fliggyHandoffFunctions(services),

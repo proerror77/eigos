@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import { deliveryAddressNames } from '../packages/ontology/delivery-addresses.js';
+import { Objects } from '../packages/runtime/objects.js';
 import { localDeliveryServices, type LocalDeliveryProvider } from '../packages/ontology/local-delivery.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { fixture, principal } from './fixture.js';
@@ -27,7 +29,8 @@ test('local delivery Actions retain only owner-bound search results and report l
     return binding;
   }));
 
-  let hemaBlocked = false;
+  const otherAddressRef = 'e'.repeat(64), homeAddress = '上海市虚构区青禾示例路8号', otherAddress = '上海市虚构区云端示例路4号';
+  let hemaBlocked = false, taobaoSelection = addressRef, changeSelectionOnCatalog = false;
   const calls: string[] = [];
   const listed = { id: 'sku1', name: '鲜牛奶 950ml', price: '7.90', availability: 'unknown' };
   const provider = async (url: URL | RequestInfo, init?: RequestInit) => {
@@ -47,14 +50,23 @@ test('local delivery Actions retain only owner-bound search results and report l
     const platformId = name === 'account_cross_search' ? args.accounts[0].platformId : args.platformId;
     assert.equal(platformId, localDeliveryServices[source].platformId);
     const data = (value: unknown) => reply({ content: [{ type: 'text', text: JSON.stringify({ success: true, data: value }) }] });
+    if (name === 'account_addresses') return data({ platformId,
+      selectedRef: platformId === 'taobao' ? taobaoSelection : addressRef,
+      addresses: [
+        { ref: addressRef, label: '家', address: homeAddress, usable: true, contact: 'PRIVATE_TEST_NAME', maskedPhone: 'PRIVATE_TEST_PHONE' },
+        { ref: otherAddressRef, label: '其他', address: otherAddress, usable: true },
+        { ref: 'd'.repeat(64), label: '', address: '', usable: false },
+      ],
+    });
     if (name === 'account_cross_search') {
       const { keyword, accounts: [owner] } = args;
-      const hema = owner.platformId === 'hema';
+      const hema = owner.platformId === 'hema', searchedAddress = hema ? addressRef : taobaoSelection;
+      if (changeSelectionOnCatalog && !hema) taobaoSelection = otherAddressRef;
       assert.deepEqual(args.accounts, [{ platformId: hema ? 'hema' : 'taobao', accountRef: accounts[hema ? 'hema' : 'taobao'] }]);
       if (hema && hemaBlocked) return data({ keyword, platforms: [{ ...owner, scope: 'unavailable', state: 'error', groups: [],
         error: { code: 'login-failed', message: '盒马要求人工验证，请在官方客户端完成后重试' } }] });
       return data({ keyword, platforms: [{ ...owner, scope: hema ? 'delivery-stores' : 'platform', state: hema ? 'ready' : 'partial', groups: [
-        { shopId: hema ? 'store1' : 'platform', shopName: hema ? '盒马测试店' : '', addressRef, state: 'ready', hasMore: !hema,
+        { shopId: hema ? 'store1' : 'platform', shopName: hema ? '盒马测试店' : '', addressRef: searchedAddress, state: 'ready', hasMore: !hema,
           items: [hema ? { ...listed, priceUnit: '瓶', productRef, availability: 'available' }
             : { ...listed, shopId: 'store1', shopName: '盒马鲜生（闪购店铺）', shopIsRetail: true }],
         },
@@ -79,7 +91,24 @@ test('local delivery Actions retain only owner-bound search results and report l
     return data({ platformId: 'taobao', shopId: 'store1', categories: [{ items: [listed] }] });
   };
 
-  const f = await fixture();
+  const f = await fixture({
+    model: 'addressed-search-fixture',
+    async run(prompt, tools) {
+      assert.doesNotMatch(prompt, /青禾示例路|云端示例路/);
+      assert.match(prompt, /searchAt/);
+      const [places] = await tools.get('query_ontology')!.invoke({
+        queries: [{ type: 'PersonalPlace', where: { role: 'home' }, select: ['id', 'name', 'role'] }],
+      }) as [{ items: { ref: ObjectRef; properties: Record<string, unknown> }[] }];
+      const [home] = places.items;
+      assert(home);
+      assert.deepEqual(Object.keys(home.properties).sort(), ['id', 'name', 'role']);
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'InstantDeliveryInquiry', implementation: 'TaobaoInstantDeliverySearch', action: 'searchAt' },
+          input: { query: '牛奶', destination: { source: 'personal', place: home.ref } } },
+        read: { function: 'readTaobaoInstantDeliveryAddressedSearch', resultParameter: 'search' },
+      });
+    },
+  }, undefined, undefined, undefined, { localDelivery: paths, localDeliveryFetch: provider });
   const config = readConfig({
     DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development',
     EIGOS_DEV_TOKEN: bearer, EIGOS_TAOBAO_INSTANT_DELIVERY_CONNECTION_FILE: paths.TaobaoInstantDelivery,
@@ -100,16 +129,18 @@ test('local delivery Actions retain only owner-bound search results and report l
       assert.equal(response.status, 200);
       return (await response.json()).result;
     };
-    const complete = async (providerName: LocalDeliveryProvider, input: unknown, id: string) => {
-      const service = localDeliveryServices[providerName];
+    const payload = (result: { structuredContent?: unknown; content: { text: string }[] }) =>
+      result.structuredContent ?? JSON.parse(result.content[0]!.text);
+    const complete = async (providerName: LocalDeliveryProvider, input: unknown, id: string, addressed = false) => {
+      const service = localDeliveryServices[providerName], names = deliveryAddressNames(providerName);
       const result = await invoke('complete_with_action', {
-        requestId: id, action: { interface: { type: service.inquiry, implementation: service.object, action: 'search' }, input },
-        read: { function: service.read, resultParameter: 'search' },
+        requestId: id, action: { interface: { type: service.inquiry, implementation: service.object, action: addressed ? 'searchAt' : 'search' }, input },
+        read: { function: addressed ? names.readSearch : service.read, resultParameter: 'search' },
       });
       assert.notEqual(result.isError, true, result.content?.[0]?.text);
-      const value = result.structuredContent ?? JSON.parse(result.content[0].text);
+      const value = payload(result);
       const serialized = JSON.stringify(value);
-      for (const secret of [...Object.values(tokens), addressRef, productRef, accounts.hema, accounts.taobao])
+      for (const secret of [...Object.values(tokens), addressRef, productRef, accounts.hema, accounts.taobao, homeAddress, otherAddress])
         assert.equal(serialized.includes(secret), false);
       return value;
     };
@@ -139,6 +170,65 @@ test('local delivery Actions retain only owner-bound search results and report l
     const menu = await complete('TaobaoInstantDelivery', { mode: 'menu', merchantId: 'store1' }, 'menu');
     assert.equal(menu.items[0].listedPriceMinor, 790);
     assert.equal(menu.items[0].stockQuantity, null);
+
+    const names = deliveryAddressNames('TaobaoInstantDelivery');
+    const list = await invoke('evaluate_ontology', { function: names.list, input: {} });
+    assert.notEqual(list.isError, true, list.content?.[0]?.text);
+    const { addresses } = payload(list);
+    assert.deepEqual(addresses.map(({ address, selected }: { address: string; selected: boolean }) => [address, selected]),
+      [[homeAddress, true], [otherAddress, false]]);
+    assert.doesNotMatch(JSON.stringify(addresses), /PRIVATE_TEST|f{64}|e{64}/);
+    const save = (address: string, expectedRevision: number, requestId: string) => invoke('apply_ontology_action', {
+      action: 'SavePersonalPlace', requestId, input: { role: 'home', address, city: '上海市', confirmed: true, expectedRevision },
+    });
+    const saved = await save(homeAddress, 0, 'save-home');
+    assert.notEqual(saved.isError, true, saved.content?.[0]?.text);
+    const place: ObjectRef = payload(saved);
+    const bindInput = { place, addressKey: addresses[0].addressKey, expectedRevision: 1, confirmed: true };
+    const bound = await invoke('apply_ontology_action', { action: names.bind, requestId: 'bind-home', input: bindInput });
+    assert.notEqual(bound.isError, true, bound.content?.[0]?.text);
+    const deliveryAddress: ObjectRef = payload(bound);
+    const destination = { source: 'personal', place };
+    const home = await complete('TaobaoInstantDelivery', { query: '牛奶', destination }, 'home-search', true);
+    assert.deepEqual(home.deliveryAddress, deliveryAddress);
+    const graph = new Objects(f.db, f.model, f.access);
+    assert.deepEqual((await graph.follow(place, names.personalNavigation)).map(row => row.ref), [deliveryAddress]);
+    assert.deepEqual((await graph.follow(home.search, 'deliveryAddress', 'InstantDeliveryInquiry')).map(row => row.ref), [deliveryAddress]);
+
+    const task = await f.tasks.submit(principal, { requestId: 'deliver-home', message: '淘宝闪购送到我家，帮我查牛奶库存' });
+    await f.worker.runOne();
+    const taskResult = await f.tasks.get(principal, task.id);
+    assert.equal(taskResult.state, 'completed', taskResult.error ?? JSON.stringify(taskResult.result));
+    assert.deepEqual((taskResult.result as { deliveryAddress: ObjectRef }).deliveryAddress, deliveryAddress);
+
+    // An unrelated supplier address cannot substitute for the address the user linked.
+    taobaoSelection = otherAddressRef;
+    const requireHome = (requestId: string) => invoke('complete_with_action', {
+      requestId, action: { interface: { type: 'InstantDeliveryInquiry', implementation: 'TaobaoInstantDeliverySearch', action: 'searchAt' },
+        input: { query: '牛奶', destination } }, read: { function: names.readSearch, resultParameter: 'search' },
+    });
+    const beforeMismatch = calls.length;
+    const mismatch = await requireHome('wrong-address');
+    assert.equal(mismatch.isError, true);
+    assert.match(mismatch.content[0].text, /not linked to this personal place/);
+    assert.deepEqual(calls.slice(beforeMismatch), ['account_addresses']);
+
+    taobaoSelection = addressRef;
+    changeSelectionOnCatalog = true;
+    const changed = await complete('TaobaoInstantDelivery', { query: '牛奶', destination }, 'changed-address', true);
+    assert.equal(changed.status, 'address_required');
+    assert.equal(changed.deliveryAddress, null);
+    assert.deepEqual(changed.items, []);
+    changeSelectionOnCatalog = false;
+    taobaoSelection = addressRef;
+
+    const moved = await save(otherAddress, 1, 'move-home');
+    assert.notEqual(moved.isError, true, moved.content?.[0]?.text);
+    assert.deepEqual(await graph.follow(place, names.personalNavigation), []);
+    assert.deepEqual((await graph.follow(home.search, 'deliveryAddress')).map(row => row.ref), [deliveryAddress]);
+    const staleBind = await invoke('apply_ontology_action', { action: names.bind, requestId: 'stale-bind', input: bindInput });
+    assert.equal(staleBind.isError, true);
+    assert.match(staleBind.content[0].text, /changed after review/);
 
     const action = instant.search as ObjectRef;
     // An inactive or misconfigured Taobao file cannot switch the request to the Hema account.

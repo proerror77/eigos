@@ -1,3 +1,5 @@
+import { deliveryAddressNames, deliveryAddressType } from './delivery-addresses.js';
+import { personalPlaceType, savePersonalPlace } from './personal-places.js';
 import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
@@ -124,25 +126,40 @@ export const businessAgentProfiles: AgentProfile[] = [
       { action: 'PrepareFliggyFlightBooking', text: 'For a booking proposal use the installed partner fare and a private profile reference supplied by the owner. Present the preview terms and digest. Report payment and ticket issuance only with independent evidence.' },
     ],
   },
+  {
+    apiName: 'PersonalPlaces',
+    terms: ['家里', '我家', '到家', '回家', '家附近', '家地址', '家的地址', '公司附近', '常用地址', '记住地址', 'home address'],
+    objects: [personalPlaceType],
+    actions: [savePersonalPlace],
+    functions: ['searchNearbyPersonalPlace'],
+    instructions: [
+      { action: savePersonalPlace, text: 'Save or replace a PersonalPlace only when the user has explicitly requested and confirmed the address and its role. Query PersonalPlace by role first and use the current revision when replacing it. Preserve device location for the original task only.' },
+      { function: 'searchNearbyPersonalPlace', text: 'For nearby map results around home or work, query PersonalPlace by role with select [id, name, role] and pass that object reference to searchNearbyPersonalPlace. For nearby maps around the user now, omit location in searchNearbyPlaces so the original PA can provide a fresh device position.' },
+    ],
+  },
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider], { search, names, read } = service;
-    const taobao = provider === 'TaobaoInstantDelivery';
+    const taobao = provider === 'TaobaoInstantDelivery', address = deliveryAddressNames(provider);
     return {
       apiName: provider,
       terms: taobao ? ['淘宝闪购', '闪购', '淘宝外卖', 'taobao instant delivery'] : ['盒马', '盒马鲜生', 'hema', 'freshippo'],
-      objects: [search.object, service.cartChangeType, service.checkoutType, service.orderType],
+      objects: [search.object, service.cartChangeType, service.checkoutType, service.orderType, deliveryAddressType, personalPlaceType],
       interfaces: [search.inquiry, service.cartContract, service.orderContract],
-      actions: [search.action, names.change, names.preview, names.submit, names.preparePayment, names.refresh,
+      actions: [search.action, address.search, address.bind, names.change, names.preview, names.submit, names.preparePayment, names.refresh,
         names.stopObservation, taobao ? names.pay : names.selectWindow],
-      links: [service.searchCartLink, service.cartCheckoutLink, service.checkoutOrderLink],
-      functions: [search.read, ...Object.values(read)],
+      links: [service.searchCartLink, service.cartCheckoutLink, service.checkoutOrderLink, address.searchLink, address.personalLink],
+      functions: [search.read, address.readSearch, address.list, ...Object.values(read)],
       instructions: [
+        { action: address.search, function: address.readSearch, text:
+          'Use complete_with_action with ' + search.inquiry + '.searchAt and ' + address.readSearch + ' (resultParameter: search). For delivery to home or work, query PersonalPlace by role with select [id, name, role] and supply destination source personal with its reference. Use source selected only when the account’s selected address is appropriate for the request. For a request to deliver to the user here, ask them to confirm the actual delivery address in the supplier account before using the selected address. An unlinked or changed address requires review. Preserve the resulting deliveryAddress reference and original search for later operations.' },
+        { action: address.bind, function: address.list, text:
+          'Read this supplier account’s delivery addresses. Bind an address to a PersonalPlace only after the user reviews and confirms that exact address and role. Use its addressKey and the current PersonalPlace revision.' },
         { action: search.action, function: search.read, text: taobao
-          ? 'Use the Taobao Instant Delivery account and chosen delivery address for dishes, nearby stores or menus. A Hema merchant returned by this source is a Taobao Instant Delivery observation.'
-          : 'Use the direct Hema account and its selected delivery groups. Report listed prices, checked SKU stock, unknown quantities and verification requirements.' },
+          ? 'For an account-selected legacy search, use the Taobao Instant Delivery account for dishes, nearby stores or menus. A Hema merchant returned by this source is a Taobao Instant Delivery observation.'
+          : 'For an account-selected legacy search, use the direct Hema account and its selected delivery groups. Report listed prices, checked SKU stock, unknown quantities and verification requirements.' },
         { action: names.submit, function: read.checkout,
           text: 'Use ' + service.cartContract + '.change and ' + service.orderContract +
-            '.submit with complete_with_action. Preserve the original search, checkout and PA approval from this service.' },
+            '.submit with complete_with_action. Pass the original search reference when changing the cart. Preserve the original checkout and PA approval from this service.' },
         taobao
           ? { action: names.pay, text: 'Obtain separate approval for the original Taobao Instant Delivery amount, then refresh its independent payment state.' }
           : { action: names.preparePayment, text: 'Hand off only the original Hema order to the Hema official app for payment.' },

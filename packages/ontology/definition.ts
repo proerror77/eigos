@@ -15,6 +15,7 @@ import { mapFunctions, pickupCoordinateEvidence } from './maps.js';
 import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
+import { personalPlaceDefinition, personalPlaceType } from './personal-places.js';
 import { localDeliveryDefinition, localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices, hemaCheckoutStates, localDeliveryTradeDefinition, taobaoCheckoutStates } from './local-delivery-trade.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
@@ -51,7 +52,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '46',
+  id: ride.id, version: '47',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
@@ -84,11 +85,11 @@ businessDefinition.linkTypes.push(...marketplace.linkTypes);
 businessDefinition.functionTypes.push(...marketplace.functionTypes);
 businessDefinition.actionTypes.push(...marketplace.actionTypes);
 businessDefinition.dataSources.push(...marketplace.dataSources);
-businessDefinition.objectTypes.push(...localDeliveryDefinition.objectTypes, ...localDeliveryTradeDefinition.objectTypes);
-businessDefinition.linkTypes.push(...localDeliveryTradeDefinition.linkTypes);
+businessDefinition.objectTypes.push(...personalPlaceDefinition.objectTypes, ...localDeliveryDefinition.objectTypes, ...localDeliveryTradeDefinition.objectTypes);
+businessDefinition.linkTypes.push(...localDeliveryDefinition.linkTypes, ...localDeliveryTradeDefinition.linkTypes);
 businessDefinition.interfaceTypes.push(...localDeliveryDefinition.interfaceTypes, ...localDeliveryTradeDefinition.interfaceTypes);
-businessDefinition.functionTypes.push(...localDeliveryDefinition.functionTypes, ...localDeliveryTradeDefinition.functionTypes);
-businessDefinition.actionTypes.push(...localDeliveryDefinition.actionTypes, ...localDeliveryTradeDefinition.actionTypes);
+businessDefinition.functionTypes.push(...personalPlaceDefinition.functionTypes, ...localDeliveryDefinition.functionTypes, ...localDeliveryTradeDefinition.functionTypes);
+businessDefinition.actionTypes.push(...personalPlaceDefinition.actionTypes, ...localDeliveryDefinition.actionTypes, ...localDeliveryTradeDefinition.actionTypes);
 businessDefinition.objectTypes.push(...travelHandoffDefinition.objectTypes);
 businessDefinition.interfaceTypes.push(...travelHandoffDefinition.interfaceTypes);
 businessDefinition.linkTypes.push(...travelHandoffDefinition.linkTypes);
@@ -163,6 +164,7 @@ businessDefinition.typeGroups=[
   {apiName:'Travel',displayName:'出行',description:'Places, routes and source-backed price estimates',objectTypes:[...ride.objectTypes.map(type=>type.apiName),petRideType]},
   {apiName:'Scheduling',displayName:'排程',description:'Resources, calendar availability and schedule plans',objectTypes:scheduling.objectTypes.map(type=>type.apiName)},
   {apiName:'Services',displayName:'服务',description:'Provider-neutral service offerings',objectTypes:[...services.objectTypes,...luckin.objectTypes,...fliggy.objectTypes,...marketplace.objectTypes,...travelHandoffDefinition.objectTypes,...fliggyHotelDefinition.objectTypes,...fliggyFlightBookingDefinition.objectTypes,...diningReservations.objectTypes,...restaurantServices.objectTypes,...tableCheckReservations.objectTypes].map(type=>type.apiName)},
+  { apiName: 'PersonalPlaces', displayName: '个人地点', description: 'Owner-confirmed locations', objectTypes: [personalPlaceType, 'ProviderDeliveryAddress'] },
   ...localDeliveryProviders.map(provider => {
     const service = deliveryTradeServices[provider];
     return { apiName: provider, displayName: service.search.displayName, description: 'Account-scoped supplier transactions',
@@ -180,7 +182,7 @@ for(const fn of businessDefinition.functionTypes){
   if(fn.apiName==='embedTextLocal' || fn.apiName===geometryUploadCriterion){fn.dependencies={};continue;}
   if(travelHandoffDefinition.functionTypes.includes(fn) || restaurantServices.functionTypes.includes(fn) ||
     tableCheckReservations.functionTypes.includes(fn))continue;
-  if(documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||localDeliveryDefinition.functionTypes.includes(fn)||localDeliveryTradeDefinition.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
+  if(personalPlaceDefinition.functionTypes.includes(fn)||documents.functionTypes.includes(fn)||fliggy.functionTypes.includes(fn)||marketplace.functionTypes.includes(fn)||localDeliveryDefinition.functionTypes.includes(fn)||localDeliveryTradeDefinition.functionTypes.includes(fn)||fliggyHotelDefinition.functionTypes.includes(fn)||fliggyFlightBookingDefinition.functionTypes.includes(fn)||diningResearchFunctions.includes(fn)||dianpingResearchFunctions.includes(fn)||diningReservations.functionTypes.includes(fn)||petRideDefinition.functionTypes.includes(fn)||fn===diningActivityFunction)continue;
   if(fn === flightPositionFunction || journey.functionTypes.includes(fn) || flight.functionTypes.includes(fn) || payments.functionTypes.includes(fn) || deliveryFunctions.includes(fn) || locationFunctions.includes(fn) || mapFunctions.includes(fn) || luckin.functionTypes.includes(fn))continue;
   if(ride.functionTypes.some(item=>item.apiName===fn.apiName)){
     fn.dependencies={objectTypes:ride.objectTypes.map(type=>type.apiName),interfaceTypes:ride.interfaceTypes.map(type=>type.apiName),linkTypes:ride.linkTypes.map(link=>link.apiName),dataSources:ride.dataSources.map(source=>source.apiName),functions:ride.functionTypes.filter(item=>item.apiName!==fn.apiName).map(item=>item.apiName)};
