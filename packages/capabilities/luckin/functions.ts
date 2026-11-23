@@ -1,9 +1,11 @@
 import type { z } from 'zod';
 import { Conflict, digest } from '../../core/identity.js';
 import {
-  luckinCreateCapability, luckinPreviewCapability, luckinReads, luckinReply, luckinShopSearch, pickupConfirmation, pickupCreated, pickupInput,
-  pickupOrder, pickupOrderType, pickupQuote, pickupRefInput,
+  luckinCreateCapability, luckinPickupShopLink, luckinPreviewCapability, luckinShopType, luckinReads, luckinReply, luckinShopSearch, pickupConfirmation, pickupCreated, pickupInput,
+  pickupOrder, pickupOrderType, pickupQuote, pickupRefInput, pickupStatusTransitions,
 } from '../../ontology/luckin.js';
+import type { ObjectRef } from '../../ontology/schema.js';
+import type { Objects } from '../../runtime/objects.js';
 import { json } from '../../ontology/service-contracts.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { PARequests } from '../../runtime/pa.js';
@@ -29,6 +31,18 @@ const terms = (items: (z.infer<typeof pickupInput>['items'][number])[]) =>
 function requireEdit(ctx: FunctionContext) {
   if (!ctx.edit || !ctx.execution || ctx.objects.model.scenario) throw new Conflict('Use a live Luckin pickup Action on the original authenticated PA task');
   return { stage: ctx.edit, taskId: ctx.execution.task.id };
+}
+
+type Pickup = z.infer<typeof pickupOrder>;
+async function linkShop(graph: Objects, order: ObjectRef, quote: z.infer<typeof pickupQuote>, observedAt: string) {
+  const shop = { type: luckinShopType, id: digest([luckinShopType, quote.shop.shopId]) };
+  await graph.ingestBatch([{ ref: shop, properties: { ...quote.shop, id: shop.id, observedAt } }], 'Luckin', observedAt);
+  await graph.link({ type: luckinPickupShopLink, from: order, to: shop });
+}
+
+async function ensureShop(graph: Objects, order: ObjectRef, pickup: Pickup) {
+  if (!(await graph.follow(order, 'shop')).length)
+    await linkShop(graph, order, pickup.quote, new Date(Date.parse(pickup.expiresAt) - 300000).toISOString());
 }
 
 export function luckinFunctions(): ReadonlyMap<string, FunctionHandler> {
@@ -69,6 +83,7 @@ export function luckinFunctions(): ReadonlyMap<string, FunctionHandler> {
         expiresAt: new Date(Date.parse(answer.observedAt) + 300000).toISOString(),
         state: 'previewed', merchantOrderId: null, merchantAmountMinor: null, evidence: answer.evidence,
       });
+      await linkShop(graph, order, quote, answer.observedAt);
     });
   });
   handlers.set('submitLuckinPickup', async (raw, ctx) => {
@@ -90,8 +105,29 @@ export function luckinFunctions(): ReadonlyMap<string, FunctionHandler> {
       if (latest.revision !== current.revision) throw new Conflict('The original Luckin preview has changed');
       const priceChanged = receipt.totalMinor !== p.quote.totalMinor;
       const state = priceChanged ? 'price_changed' : receipt.paymentRequired ? 'awaiting_payment' : 'placed';
+      await ensureShop(graph, order, p);
       await graph.edit(order, latest.revision, { state, merchantOrderId: receipt.orderId,
         merchantAmountMinor: receipt.totalMinor, observedAt: answer.observedAt });
+    });
+  });
+  handlers.set('refreshLuckinPickupStatus', async (raw, ctx) => {
+    const { stage } = requireEdit(ctx), { order } = pickupRefInput.parse(raw);
+    if (order.type !== pickupOrderType) throw new Conflict('Reference the original Luckin pickup order');
+    const previous = pickupOrder.parse((await ctx.objects.read(order)).properties);
+    if (!previous.merchantOrderId) throw new Conflict('Use a Luckin order with an original merchant ID');
+    const operation = luckinReads.readLuckinPickupStatus;
+    const observed = await request(ctx, operation.capability, { orderId: previous.merchantOrderId }, operation.result);
+    const status = operation.result.parse(observed.data);
+    if (status.orderId !== previous.merchantOrderId || observed.connectionRef !== previous.connectionRef)
+      throw new Conflict('Luckin pickup status belongs to a different order or PA connection');
+    return stage(order, async graph => {
+      const row = await graph.read(order), current = pickupOrder.parse(row.properties);
+      if (current.merchantOrderId !== status.orderId || current.connectionRef !== observed.connectionRef)
+        throw new Conflict('The original Luckin merchant authority changed');
+      await ensureShop(graph, order, current);
+      if (Date.parse(observed.observedAt) < Date.parse(current.observedAt) ||
+          !pickupStatusTransitions.some(({ from, to }) => from === current.state && to === status.providerStatus)) return;
+      await graph.edit(order, row.revision, { state: status.providerStatus, observedAt: observed.observedAt });
     });
   });
   handlers.set('readLuckinPickup', async (raw, ctx) => {

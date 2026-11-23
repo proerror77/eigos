@@ -38,6 +38,8 @@
 
 准备 Action 使用 `readRestaurantVisit` 中的绝对时间 `availableInstants`，把其中一个值原样传给 `startsAt`。展示门店、当地日期、时间、人数和条款摘要，然后让用户确认。确认 Action 接受同一订座对象引用、`approval`（`termsDigest`、`approvedAt`）和 `contact`（姓名及 E.164 电话）。通过任务执行会在同一任务再向原 PA 核对批准。取消请求需要原订座引用与用户确认过的原因。联系人传给供应商，订座对象及供应商回执只保留业务条款、确认号和证据。
 
-确认过程中重新核对同一时段，记录外部操作再请求供应商锁位和创建。取消同样记录外部操作。只有独立读取原预订状态才写入回执。结果为 `unknown` 时，执行原对象的 `reconcile`。如需改期或更改人数，使用原单回执中供应商返回的 `manageUrl` 交接。开发验收使用合成供应商。
+确认过程中重新核对同一时段，分别记录供应商留位和创建。收到同一时段的有效留位回执后，先提交 `held` 和供应商给出的 `holdExpiresAt`，再用原留位创建。确认和取消由原单独立回查后入账。结果为 `unknown` 时，执行原对象的 `reconcile`。
+
+开通 `ExpireTableCheckReservation` 的 Action 和 Function 权限后，Worker 会在报价或留位到期后执行状态转换。到期检查只更新尚未发起创建的原单，已发起创建且结果不明的记录继续等待原单回查。从预订的 `stateLogs` 可以按发生顺序查到报价、留位、确认、取消和到期。如需改期或更改人数，使用原单回执中供应商返回的 `manageUrl` 交接。开发验收使用合成供应商。
 
 Interface 与具体 Action 的映射、门店 Link 和原单回查通过现有 Ontology 执行。 [Palantir Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [Palantir Link Types](https://www.palantir.com/docs/foundry/object-link-types/link-types-overview)

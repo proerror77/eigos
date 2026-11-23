@@ -15,6 +15,7 @@ const partner = z.strictObject({
   noDepositShopIds: z.array(tableCheckShopId).max(200).optional(),
 });
 const base = 'https://api.tablecheck.com/api/';
+export const tableCheckHoldSeconds = 300;
 const validZone = restaurantName.refine(value => {
   try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; }
   catch { return false; }
@@ -163,7 +164,7 @@ export async function configuredTableCheck(path: string | undefined, ctx: Functi
     },
     async hold(slot: TableCheckSlot) {
       const row = (await request('distribution', 'blockages', blockageResult, { method: 'POST',
-        body: { shop_id: slot.nativeId, start_at: slot.startsAt, pax: slot.partySize, expiry_ttl: 300 } }))!.blockage;
+        body: { shop_id: slot.nativeId, start_at: slot.startsAt, pax: slot.partySize, expiry_ttl: tableCheckHoldSeconds } }))!.blockage;
       if (row.shop_id !== slot.nativeId || Date.parse(row.start_at) !== Date.parse(slot.startsAt) ||
           row.pax !== slot.partySize || Date.parse(row.expires_at) < Date.now())
         throw new TableCheckUnavailable('TableCheck hold mismatched the offered slot');

@@ -6,16 +6,19 @@ import type { ObjectRef } from '../../ontology/schema.js';
 import {
   prepareTableCheckInput, tableCheckReadInput, tableCheckRecord, tableCheckReservationType, tableCheckVenueLink, tableCheckVisitLink,
 } from '../../ontology/tablecheck-reservations.js';
+import { resource } from '../../runtime/access.js';
+import { ScheduledActions } from '../../runtime/scheduled-actions.js';
 import type { Database, Sql } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import { Objects } from '../../runtime/objects.js';
 import { askDiningPA } from './mini-program.js';
-import { configuredTableCheck, tableCheckLocal, type TableCheckReservationResult } from './tablecheck.js';
+import { configuredTableCheck, tableCheckHoldSeconds, tableCheckLocal, type TableCheckReservationResult } from './tablecheck.js';
 
 type Booking = z.infer<typeof tableCheckRecord>;
 type TableCheck = Awaited<ReturnType<typeof configuredTableCheck>>;
 type Step = 'confirm' | 'cancel';
+type Hold = { id: string; expiresAt: string };
 type Receipt = { bookingId: string; confirmationCode?: string; manageUrl?: string; observedAt: string };
 const phone = z.string().regex(/^\+[1-9][0-9]{6,14}$/);
 const approval = z.discriminatedUnion('approved', [
@@ -40,8 +43,8 @@ function verified(row: TableCheckReservationResult | undefined, booking: Booking
     ...(approvedUrl ? { manageUrl: manageUrl.data } : {}), observedAt: new Date().toISOString() };
 }
 function ref(id: string): ObjectRef { return { type: tableCheckReservationType, id }; }
-function key(booking: Booking, step: Step) { return digest([tableCheckReservationType, booking.id, step]); }
-function scope(booking: Booking, step: Step) { return { step, termsDigest: booking.termsDigest, binding: booking.binding, id: booking.id }; }
+function key(booking: Booking, step: Step | 'hold') { return digest([tableCheckReservationType, booking.id, step]); }
+function scope(booking: Booking, step: Step | 'hold') { return { step, termsDigest: booking.termsDigest, binding: booking.binding, id: booking.id }; }
 function exactTerms(booking: Booking) { return digest([terms(booking), booking.shopId, booking.startsAt, booking.binding]); }
 function assertOffered(booking: Booking) {
   if (booking.state !== 'offered' || Date.parse(booking.expiresAt) <= Date.now() || Date.parse(booking.startsAt) <= Date.now())
@@ -60,6 +63,7 @@ async function explicitApproval(ctx: FunctionContext, booking: Booking, step: St
 
 export function tableCheckReservationFunctions(db: Database, filepath?: string, mockFetch?: typeof fetch): ReadonlyMap<string, FunctionHandler> {
   const effects = new ExternalOperations(db);
+  const schedules = new ScheduledActions(db);
   const supplier = (ctx: FunctionContext) => configuredTableCheck(filepath, ctx, mockFetch);
   async function read(ctx: Pick<FunctionContext, 'objects'>, booking: ObjectRef) {
     if (booking.type !== tableCheckReservationType) throw new Conflict('Select the original TableCheck reservation');
@@ -140,6 +144,43 @@ export function tableCheckReservationFunctions(db: Database, filepath?: string, 
       return update(ctx, booking, step, result, source);
     }
   }
+  const expireAction = 'ExpireTableCheckReservation';
+  async function scheduleExpiry(graph: Objects, booking: ObjectRef, due: string) {
+    const when = Date.parse(due), ontology = graph.model.document.id;
+    if (when <= Date.now() || !graph.access.allows({ ontology, permission: 'apply_action',
+      resource: resource(ontology, 'action', expireAction) }) ||
+      !graph.access.allows({ ontology, permission: 'execute_function',
+        resource: resource(ontology, 'function', 'expireTableCheckReservation') })) return;
+    await schedules.enqueue(graph, { id: digest([expireAction, booking.id, due]), action: expireAction,
+      arguments: { commitment: booking }, runAt: due, deadline: new Date(when + 86400000).toISOString() });
+  }
+  async function recordedHold(ctx: Pick<FunctionContext, 'objects' | 'principal'>, booking: Booking, client?: Sql) {
+    const attempt = await effects.inspect(ctx.principal.owner, key(booking, 'hold'), client);
+    if (!attempt) return;
+    try {
+      return { receipt: await effects.recover<Hold>(ctx.principal.owner, key(booking, 'hold'), scope(booking, 'hold'), ctx.objects) };
+    } catch (error) {
+      if (!(error instanceof UnknownExternalOperation)) throw error;
+      return { uncertainUntil: new Date(attempt.updatedAt.getTime() + tableCheckHoldSeconds * 1000).toISOString() };
+    }
+  }
+  async function persistHold(ctx: FunctionContext, booking: Booking, receipt: Hold, source: TableCheck) {
+    await db.transaction(async client => {
+      await guard(ctx, booking, source)(client);
+      const graph = new Objects(db, ctx.objects.model, ctx.objects.access, client, {
+        action: 'ConfirmTableCheckReservation', requestId: ctx.operationId, taskId: ctx.taskId, executor: ctx.execution?.executor ??
+          { kind: 'client', id: ctx.principal.clientId ?? ctx.principal.owner },
+      });
+      const object = ref(booking.id), current = await read({ objects: graph }, object);
+      if (current.record.state === 'held' && current.record.holdExpiresAt === receipt.expiresAt) return;
+      if (current.record.state !== 'offered' ||
+          await effects.inspect(ctx.principal.owner, key(booking, 'confirm'), client))
+        throw new Conflict('The original TableCheck hold cannot be projected over a dispatched reservation');
+      await graph.edit(object, current.revision, { state: 'held', holdExpiresAt: receipt.expiresAt });
+      await scheduleExpiry(graph, object, receipt.expiresAt);
+    });
+  }
+
   return new Map<string, FunctionHandler>([
     ['prepareTableCheckReservation', async (raw, ctx) => {
       const edit = requireAction(ctx);
@@ -169,14 +210,19 @@ export function tableCheckReservationFunctions(db: Database, filepath?: string, 
         catch (error) { if (!(error instanceof NotFound)) throw error; }
         if (current) {
           if (current.record.termsDigest !== termsDigest) throw new Conflict('This original offer is bound to different terms');
-          if (current.record.state === 'offered' && !await effects.inspect(ctx.principal.owner, key(current.record, 'confirm')))
-            await graph.edit(booking, current.revision, { expiresAt });
+          if (['offered', 'expired'].includes(current.record.state) &&
+              !await effects.inspect(ctx.principal.owner, key(current.record, 'hold'), graph.client) &&
+              !await effects.inspect(ctx.principal.owner, key(current.record, 'confirm'), graph.client)) {
+            await graph.edit(booking, current.revision, { state: 'offered', expiresAt });
+            await scheduleExpiry(graph, booking, expiresAt);
+          }
           return;
         }
         await graph.create(booking, tableCheckRecord.parse({ id: booking.id, name: exact.restaurant, ...exact, termsDigest, startsAt: requested,
           shopId: venue.nativeId, binding, state: 'offered', expiresAt, receipts: [] }));
         await graph.linkBatch([{ type: tableCheckVisitLink, from: booking, to: visit },
           { type: tableCheckVenueLink, from: booking, to: venueLink.ref }]);
+        await scheduleExpiry(graph, booking, expiresAt);
       });
     }],
     ['confirmTableCheckReservation', async (raw, ctx) => {
@@ -190,24 +236,60 @@ export function tableCheckReservationFunctions(db: Database, filepath?: string, 
         return update(ctx, record, 'confirm', await reconcile(ctx, record, 'confirm', source), source);
       }
       ensureWritable(source, record);
-      assertOffered(record);
+      const existing = await recordedHold(ctx, record);
+      if (!existing) assertOffered(record);
+      if (existing?.uncertainUntil) throw new Conflict('The original TableCheck hold is uncertain; wait for expiry');
+      if (existing?.receipt && (record.state === 'expired' || Date.parse(existing.receipt.expiresAt) <= Date.now()))
+        throw new Conflict('The original TableCheck hold expired');
       const approvedAt = Date.parse(input.approval.approvedAt);
       if (input.approval.termsDigest !== record.termsDigest || approvedAt > Date.now() + 5000 || Date.now() - approvedAt > 5 * 60 * 1000)
         throw new Conflict('Confirm the current exact TableCheck terms');
       const contact = { name: input.contact.name, phone: phone.parse(input.contact.phone) };
       await explicitApproval(ctx, record, 'confirm', { contact });
-      const venue = await source.venue(record.shopId, record.city);
-      const local = venue.timeZone && tableCheckLocal(record.startsAt, venue.timeZone);
-      if (venue.name !== record.restaurant || venue.city !== record.city || !venue.timeZone ||
-          !local || local.date !== record.date || local.time !== record.time)
-        throw new Conflict('The original TableCheck venue terms changed');
-      const available = await source.times(record.shopId, record.date, record.partySize, venue.timeZone);
-      if (!available.availableInstants.includes(record.startsAt)) throw new Conflict('The exact TableCheck time is no longer available');
-      return dispatch(ctx, record, 'confirm', source, assertOffered, async () => {
-        const held = await source.hold(slot(record));
-        await ctx.assertCurrent?.();
-        if (Date.parse(held.expiresAt) <= Date.now()) throw new Conflict('The TableCheck hold expired');
-        return source.create(slot(record), record.id, held.id, contact);
+      let held = existing?.receipt;
+      if (!held) {
+        const venue = await source.venue(record.shopId, record.city);
+        const local = venue.timeZone && tableCheckLocal(record.startsAt, venue.timeZone);
+        if (venue.name !== record.restaurant || venue.city !== record.city || !venue.timeZone ||
+            !local || local.date !== record.date || local.time !== record.time)
+          throw new Conflict('The original TableCheck venue terms changed');
+        const available = await source.times(record.shopId, record.date, record.partySize, venue.timeZone);
+        if (!available.availableInstants.includes(record.startsAt)) throw new Conflict('The exact TableCheck time is no longer available');
+        held = await effects.run<Hold>(ctx.principal.owner, key(record, 'hold'), scope(record, 'hold'),
+          guard(ctx, record, source, assertOffered), async () => {
+            await ctx.assertCurrent?.();
+            return source.hold(slot(record));
+          }, ctx.objects, { taskId: ctx.taskId, requestId: ctx.operationId });
+      }
+      const receipt = held;
+      await persistHold(ctx, record, receipt, source);
+      const assertHeld = (current: Booking) => {
+        if (current.state !== 'held' || current.holdExpiresAt !== receipt.expiresAt || Date.parse(receipt.expiresAt) <= Date.now())
+          throw new Conflict('The original TableCheck hold expired or changed');
+      };
+      assertHeld((await read(ctx, ref(record.id))).record);
+      return dispatch(ctx, record, 'confirm', source, assertHeld, () => {
+        if (Date.parse(receipt.expiresAt) <= Date.now()) throw new Conflict('The original TableCheck hold expired');
+        return source.create(slot(record), record.id, receipt.id, contact);
+      });
+    }],
+    ['expireTableCheckReservation', async (raw, ctx) => {
+      const edit = requireAction(ctx), object = commitmentInput.parse(raw).commitment;
+      return edit(object, async graph => {
+        const current = await read({ objects: graph }, object);
+        if (!['offered', 'held'].includes(current.record.state) ||
+            await effects.inspect(ctx.principal.owner, key(current.record, 'confirm'), graph.client)) return;
+        const held = current.record.state === 'offered'
+          ? await recordedHold({ objects: graph, principal: ctx.principal }, current.record, graph.client) : undefined;
+        const due = current.record.holdExpiresAt ?? held?.receipt?.expiresAt ?? held?.uncertainUntil ?? current.record.expiresAt;
+        if (Date.parse(due) > Date.now()) {
+          await scheduleExpiry(graph, object, due);
+          return;
+        }
+        if (held?.receipt && current.record.state === 'offered') {
+          await graph.edit(object, current.revision, { state: 'held', holdExpiresAt: held.receipt.expiresAt });
+          await graph.edit(object, (await graph.read(object)).revision, { state: 'expired' });
+        } else await graph.edit(object, current.revision, { state: 'expired' });
       });
     }],
     ['cancelTableCheckReservation', async (raw, ctx) => {

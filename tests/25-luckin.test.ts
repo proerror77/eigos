@@ -11,7 +11,8 @@ import { Objects } from '../packages/runtime/objects.js';
 import { OntologyClient } from '../packages/sdk/client.js';
 import { LuckinMcp, luckinMcpEndpoint } from '../packages/sdk/luckin-mcp.js';
 import { LuckinPA } from '../packages/sdk/luckin-pa.js';
-import { pickupOrderType } from '../packages/ontology/luckin.js';
+import { luckinShopType, pickupOrderType } from '../packages/ontology/luckin.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
 import { digest } from '../packages/core/identity.js';
 
 const shopData = { deptId: 19, deptName: '瑞幸测试店', address: '测试大厦', latitude: 31.2, longitude: 121.5 };
@@ -33,7 +34,7 @@ const availableTools = {
 } as const;
 
 function provider() {
-  let failCreate = false, raisePrice = false, reportPaid = false, changePreview = false;
+  let failCreate = false, raisePrice = false, changePreview = false, orderStatus = 10;
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const transport: typeof fetch = async (input, init) => {
     assert.equal(String(input), luckinMcpEndpoint);
@@ -61,7 +62,7 @@ function provider() {
         data = { orderIdStr: originalOrder, needPay: true, discountPrice: raisePrice ? 14 : 13.1,
           payOrderQrCodeUrl: qr, payOrderUrl: 'weixin://private' };
       }
-      if (name === 'queryOrderDetailInfo') data = { orderId: originalOrder, orderStatus: reportPaid ? 60 : 10,
+      if (name === 'queryOrderDetailInfo') data = { orderId: originalOrder, orderStatus,
         takeMealCodeInfo: { code: 'A083' } };
       assert(data, 'Unexpected tool ' + name);
       result = { content: [{ type: 'text', text: JSON.stringify({ code: 0, success: true, data }) }] };
@@ -70,13 +71,21 @@ function provider() {
   };
   const client = new LuckinMcp('luckin-test-token-without-access', transport);
   return { client, calls, loseCreate: () => failCreate = true, raisePrice: () => raisePrice = true,
-    markPaid: () => reportPaid = true, changePreview: () => changePreview = true };
+    setStatus: (status: number) => orderStatus = status, changePreview: () => changePreview = true };
 }
 
 class PickupAgent implements AgentDriver {
   readonly model = 'synthetic';
+  followUp?: ObjectRef;
   async run(_prompt: string, tools: ReadonlyMap<string, AgentTool>) {
     const call = (name: string, input: Record<string, unknown>) => tools.get(name)!.invoke(input);
+    if (this.followUp) {
+      const input = { order: this.followUp };
+      const result = await call('apply_action', { action: 'RefreshLuckinPickupStatus', input });
+      if ('waitingForPA' in (result as object)) return;
+      await call('complete_with_function', { function: 'readLuckinPickup', input });
+      return;
+    }
     const preview = await call('apply_action', { action: 'PreviewLuckinPickup', input: { shopId: 19, items: [line], currency: 'CNY' } });
     if ('waitingForPA' in (preview as object)) return;
     await call('apply_action', { action: 'SubmitLuckinPickup', input: { order: preview } });
@@ -85,7 +94,7 @@ class PickupAgent implements AgentDriver {
 }
 
 test('Luckin pickup confirms and resumes the original PA task, pins the merchant receipt and keeps payment on the PA', async () => {
-  const f = await fixture(new PickupAgent());
+  const driver = new PickupAgent(), f = await fixture(driver);
   const local = await mkdtemp(join(tmpdir(), 'eigos-test-luckin-'));
   const supply = provider();
   const token = 'fixture-luckin-eigos-token-'.repeat(3);
@@ -129,7 +138,8 @@ test('Luckin pickup confirms and resumes the original PA task, pins the merchant
     assert(await f.worker.runOne());
     const terminal = await f.tasks.get(principal, task.id);
     assert.equal(terminal.state, 'completed');
-    const rows = (await new Objects(f.db, f.model, f.access).query({ type: pickupOrderType })).items;
+    const graph = new Objects(f.db, f.model, f.access);
+    const rows = (await graph.query({ type: pickupOrderType })).items;
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.properties.merchantOrderId, originalOrder);
     assert.equal(rows[0]?.properties.state, 'awaiting_payment');
@@ -138,8 +148,41 @@ test('Luckin pickup confirms and resumes the original PA task, pins the merchant
     assert.deepEqual((await f.db.query(`SELECT (SELECT count(*)::int FROM ${f.db.schema}.scenarios) scenarios,
       (SELECT count(*)::int FROM ${f.db.schema}.scheduled_actions) scheduled`)).rows[0], { scenarios: 0, scheduled: 0 });
     assert.equal((await supply.client.status(originalOrder, AbortSignal.timeout(5000))).pickupCode, null);
-    supply.markPaid();
+    const order = rows[0]!.ref;
+    const [shop] = await graph.follow(order, 'shop');
+    assert.equal(shop?.ref.type, luckinShopType);
+    assert.equal(shop?.properties.shopId, shopData.deptId);
+    assert.equal(shop?.properties.address, shopData.address);
+    assert.deepEqual((await graph.follow(shop!.ref, 'pickupOrders')).map(row => row.ref), [order]);
+
+    driver.followUp = order;
+    const refresh = async (status: number) => {
+      supply.setStatus(status);
+      const followUp = await f.tasks.submit(principal, { requestId: `luckin-status-${status}`, message: '回查原瑞幸订单的取餐状态' });
+      assert(await f.worker.runOne());
+      const pending = (await f.tasks.get(principal, followUp.id)).result as { capability: string; input: unknown };
+      assert.equal(pending.capability, 'luckin.pickup.status');
+      assert.deepEqual(pending.input, { orderId: originalOrder });
+      await pa.answer(followUp.id);
+      assert(await f.worker.runOne());
+      assert.equal((await f.tasks.get(principal, followUp.id)).state, 'completed');
+      return followUp.id;
+    };
+    const preparing = await refresh(30), ready = await refresh(60);
     assert.equal((await supply.client.status(originalOrder, AbortSignal.timeout(5000))).pickupCode, 'A083');
+    await refresh(20); // A late supplier response must not move a ready order backwards.
+    assert.equal((await graph.read(order)).properties.state, 'ready');
+    const completed = await refresh(80);
+    assert.equal((await graph.read(order)).properties.state, 'completed');
+    const logs = await graph.follow(order, 'stateLogs');
+    assert.deepEqual(logs.map(({ properties: { newState, action, taskId } }) => [newState, action, taskId]), [
+      ['previewed', 'PreviewLuckinPickup', task.id], ['awaiting_payment', 'SubmitLuckinPickup', task.id],
+      ['preparing', 'RefreshLuckinPickupStatus', preparing], ['ready', 'RefreshLuckinPickupStatus', ready],
+      ['completed', 'RefreshLuckinPickupStatus', completed],
+    ]);
+    assert.deepEqual((await graph.follow(order, 'shop')).map(row => row.ref), [shop!.ref]);
+    assert.equal(supply.calls.filter(call => call.name === 'createOrder').length, 1);
+    assert.doesNotMatch(JSON.stringify([logs, await graph.read(order)]), /A083|keep-on-pa|payOrder/);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

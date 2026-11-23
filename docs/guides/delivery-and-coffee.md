@@ -32,9 +32,12 @@ Gateway 和 Worker 的 `EIGOS_PAOTUI_CONNECTION_FILE` 可以指向一个专用�
 | `searchLuckinProducts`、`readLuckinProduct`、`selectLuckinProductOption` | 查选定门店的商品、规格和参考价格 |
 | `PreviewLuckinPickup` | 取得官方预览，核对店铺、SKU、数量以后保存预览 |
 | `SubmitLuckinPickup` | 原 PA 展示预览并获取本人确认。PA 复核原条款，提交一次，回传原订单 ID 和金额 |
-| `readLuckinPickup`、`readLuckinPickupStatus` | 读取原预览和订单 ID。付款后通过瑞幸回查当次订单状态和可用取餐码 |
+| `readLuckinPickup`、`readLuckinPickupStatus` | 读取原预览和订单 ID，或通过瑞幸读取原单状态和可用取餐码 |
+| `RefreshLuckinPickupStatus` | 用原订单对象和已授权的原 PA 连接回查商家订单，可在后续任务使用 |
 
-PA 使用 `LuckinPA` 加入现有待办消费流程。它从 EIGOS 读取等待中的 task，用原 request ID 回传；其本地 `LuckinMcp` 连接瑞幸，供应商凭据不进入 EIGOS。已有 PA 客户端也可使用相同 `pa-request` 和 `respond_to_task`，按返回的 schema 答复。发布端需要授予 `Luckin` 的来源、相关 Function 和 Action 以及 `LuckinPickupOrder` 读取权限。
+自取单的 `shop` Link 来自 PA 核对过的报价，可从门店的 `pickupOrders` 反查。原报价仍保留当时门店信息。通过 `stateLogs` 可读回自取单的预览、下单和后续确认的状态变化。重复或倒序的回报不会新增状态日志，取餐码留在回查结果中。
+
+PA 使用 `LuckinPA` 加入现有待办消费流程。它从 EIGOS 读取等待中的 task，用原 request ID 回传；其本地 `LuckinMcp` 连接瑞幸，供应商凭据不进入 EIGOS。已有 PA 客户端也可使用相同 `pa-request` 和 `respond_to_task`，按返回的 schema 答复。发布端需要授予 `Luckin` 的来源、相关 Function 和 Action 以及订单、门店和状态日志所需的对象与 Link 权限。
 
 在 PA 的终端上，构建后可用 `node dist/scripts/luckin-pa.js TASK_ID` 处理一次当前读取或预览待办，下一次待办出现后继续处理同一个 task。环境由 PA 本地安全加载：
 

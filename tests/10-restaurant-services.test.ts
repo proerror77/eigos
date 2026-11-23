@@ -17,12 +17,13 @@ const venue = { restaurant: '合成验收餐厅', city: '上海' };
 const startsAt = new Date(Date.now() + 2 * 86400000);
 startsAt.setUTCHours(11, 0, 0, 0);
 const date = startsAt.toISOString().slice(0, 10);
+const alternate = new Date(startsAt.getTime() + 30 * 60000).toISOString();
 const bookingPage = 'https://www.tablecheck.com/shops/synthetic-venue/reserve';
 const management = 'https://tblc.hk/rTEST01';
 const shopId = 'a'.repeat(24), heldId = 'b'.repeat(24), bookingId = 'c'.repeat(24);
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
-test('restaurant Interface actions link source venues, preserve partial results and reconcile a single TableCheck booking', async () => {
+test('restaurant Interface actions link source venues and record TableCheck holds, expiry, reconciliation and cancellation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eigos-restaurants-'));
   const keyFile = join(directory, 'tablecheck-availability.key'), distributionKeyFile = join(directory, 'tablecheck-distribution.key');
   const key = 'fixture-availability-key', distributionKey = 'fixture-distribution-key';
@@ -48,11 +49,12 @@ test('restaurant Interface actions link source venues, preserve partial results 
         assert.equal(url.searchParams.get('pax'), '2');
         assert.equal(url.searchParams.get('date_min'), date);
         return Response.json({ timetable: { id: shopId, availability_cached_at: iso(),
-          availability: [startsAt.toISOString(), new Date(startsAt.getTime() + 24 * 3600000).toISOString()] } });
+          availability: [startsAt.toISOString(), alternate, new Date(startsAt.getTime() + 24 * 3600000).toISOString()] } });
       case 'blockages':
         assert.equal(init?.method, 'POST');
         holdCount++;
-        assert.deepEqual(payload, { shop_id: shopId, start_at: startsAt.toISOString(), pax: 2, expiry_ttl: 300 });
+        assert([startsAt.toISOString(), alternate].includes(payload.start_at));
+        assert.deepEqual(payload, { shop_id: shopId, start_at: payload.start_at, pax: 2, expiry_ttl: 300 });
         return Response.json({ blockage: { ...payload, id: heldId, expires_at: later() } });
       case 'reservations':
         assert.equal(init?.method, 'POST');
@@ -113,8 +115,8 @@ test('restaurant Interface actions link source venues, preserve partial results 
     const visit = await apply(review.action, review.input, 'review');
     const availability = await read('readRestaurantVisit', { visit });
     assert.equal(availability.bookingUrl, bookingPage);
-    assert.deepEqual(availability.availableTimes, ['19:00']);
-    assert.deepEqual(availability.availableInstants, [startsAt.toISOString()]);
+    assert.deepEqual(availability.availableTimes, ['19:00', '19:30']);
+    assert.deepEqual(availability.availableInstants, [startsAt.toISOString(), alternate]);
     const prepare = d.capabilities.actions.resolve(d.access, d.model, { interface: {
       type: 'RestaurantReservationOffer', action: 'prepare', implementation: tableCheckReservationType },
       input: { visit, startsAt: startsAt.toISOString() },
@@ -125,6 +127,21 @@ test('restaurant Interface actions link source venues, preserve partial results 
     assert.equal((await booking()).state, 'offered');
     assert.deepEqual((await objects.follow(reservation, 'visit'))[0]!.ref, visit);
     assert.deepEqual((await objects.follow(reservation, 'venue'))[0]!.ref, selected.ref);
+    const logs = async () => (await objects.follow(reservation, 'stateLogs'))
+      .map(({ properties: { newState, action } }) => [newState, action]);
+    const offerDeadline = (await booking()).expiresAt;
+    const past = new Date(Date.now() - 1000).toISOString();
+    // Advance the fixture's offer deadline and due jobs without changing its business state.
+    await d.db.query(`UPDATE ${d.db.schema}.objects
+      SET properties=jsonb_set(properties,'{expiresAt}',to_jsonb($2::text)) WHERE type='TableCheckReservation' AND id=$1`,
+      [reservation.id, past]);
+    await d.db.query(`UPDATE ${d.db.schema}.scheduled_actions SET run_at=$1
+      WHERE body->'arguments'->'commitment'->>'id'=$2 AND run_at=$3`, [past, reservation.id, offerDeadline]);
+    assert(await d.worker.runOne('scheduled'));
+    assert.equal((await booking()).state, 'expired');
+    assert.deepEqual(await logs(), [['offered', 'PrepareTableCheckReservation'], ['expired', 'ExpireTableCheckReservation']]);
+    assert.deepEqual([holdCount, createCount, cancelCount], [0, 0, 0]);
+    assert.deepEqual(await apply(prepare.action, prepare.input, 'prepare-after-expiry'), reservation);
     const resolve = (action: string, fields: Record<string, unknown> = {}) => d.capabilities.actions.resolve(d.access, d.model, {
       interface: { type: 'NetTableReservation', action, object: reservation }, input: { commitment: reservation, ...fields },
     });
@@ -134,6 +151,9 @@ test('restaurant Interface actions link source venues, preserve partial results 
     assert.equal(holdCount, 0);
     const confirm = resolve('confirm', { approval: { termsDigest: (await booking()).termsDigest, approvedAt: iso() }, contact });
     await apply(confirm.action, confirm.input, 'approved-once');
+    assert.equal((await booking()).state, 'unknown');
+    assert((await booking()).holdExpiresAt);
+    await apply('ExpireTableCheckReservation', { commitment: reservation }, 'expiry-after-dispatch');
     assert.equal((await booking()).state, 'unknown');
     assert.equal(holdCount, 1);
     assert.equal(createCount, 1);
@@ -158,6 +178,44 @@ test('restaurant Interface actions link source venues, preserve partial results 
     assert.equal(canceled.state, 'canceled');
     assert.equal(cancelCount, 1);
     assert(!JSON.stringify(canceled).includes(contact.phone));
+    assert(!JSON.stringify(canceled).includes(heldId));
+    assert.deepEqual(await logs(), [
+      ['offered', 'PrepareTableCheckReservation'], ['expired', 'ExpireTableCheckReservation'],
+      ['offered', 'PrepareTableCheckReservation'], ['held', 'ConfirmTableCheckReservation'],
+      ['unknown', 'ConfirmTableCheckReservation'], ['confirmed', 'ReconcileTableCheckReservation'],
+      ['canceled', 'CancelTableCheckReservation'],
+    ]);
+
+    // Leave a verified provider hold with no create dispatch. The database trigger simulates
+    // an interrupted reservation claim after the hold transaction committed.
+    const second = await apply(prepare.action, { visit, startsAt: alternate }, 'prepare-second-slot');
+    const secondBooking = () => objects.read(second).then(row => tableCheckRecord.parse(row.properties));
+    await d.db.query(`CREATE FUNCTION ${d.db.schema}.interrupt_second_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.request_id='interrupt-confirm'
+          AND EXISTS (SELECT 1 FROM ${d.db.schema}.external_operations
+            WHERE owner=NEW.owner AND request_id=NEW.request_id)
+        THEN RAISE EXCEPTION 'synthetic interruption before create'; END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER interrupt_second_dispatch BEFORE INSERT ON ${d.db.schema}.external_operations
+      FOR EACH ROW EXECUTE FUNCTION ${d.db.schema}.interrupt_second_dispatch()`);
+    await assert.rejects(apply(confirm.action, { commitment: second, contact,
+      approval: { termsDigest: (await secondBooking()).termsDigest, approvedAt: iso() } }, 'interrupt-confirm'),
+    /synthetic interruption before create/);
+    const held = await secondBooking();
+    assert.equal(held.state, 'held');
+    assert(held.holdExpiresAt && held.holdExpiresAt > held.expiresAt);
+    assert.deepEqual([holdCount, createCount, cancelCount], [2, 1, 1]);
+
+    await d.db.query(`UPDATE ${d.db.schema}.objects SET properties=jsonb_set(properties,'{holdExpiresAt}',to_jsonb($2::text))
+      WHERE type='TableCheckReservation' AND id=$1`, [second.id, past]);
+    await d.db.query(`UPDATE ${d.db.schema}.scheduled_actions SET run_at=$1
+      WHERE body->'arguments'->'commitment'->>'id'=$2 AND run_at=$3`, [past, second.id, held.holdExpiresAt]);
+    assert(await d.worker.runOne('scheduled'));
+    assert.equal((await secondBooking()).state, 'expired');
+    assert.deepEqual((await objects.follow(second, 'stateLogs')).map(log => log.properties.newState), ['offered', 'held', 'expired']);
+    assert.deepEqual([holdCount, createCount, cancelCount], [2, 1, 1]);
   } finally {
     await f?.close();
     await rm(directory, { recursive: true, force: true });

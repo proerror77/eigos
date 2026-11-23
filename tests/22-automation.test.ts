@@ -789,7 +789,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !scheduleJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !fliggyServicesDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !marketplaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
-    ![...restaurantServices.linkTypes, ...tableCheckReservations.linkTypes].some(item => item.apiName === type.apiName) &&
+    ![...restaurantServices.linkTypes, ...tableCheckReservations.linkTypes, ...luckinDefinition.linkTypes].some(item => item.apiName === type.apiName) &&
     !personalPlaceDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !localDeliveryDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !localDeliveryTradeDefinition.linkTypes.some(link => link.apiName === type.apiName));
