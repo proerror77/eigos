@@ -22,7 +22,7 @@ import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenario
 import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
 import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
-import { Tasks, submitSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
+import { Tasks, submitSchema, routeInputSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
 import { configuredCapabilities } from '../../packages/capabilities/index.js';
 import type { SourceResolver } from '../../packages/capabilities/didi/functions.js';
 import { verifier, type VerifyToken } from './auth.js';
@@ -36,6 +36,15 @@ import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
+const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
+  ontology: z.literal('Eigos').optional(),
+  action: z.strictObject({
+    interface: z.strictObject({ type: z.literal('RideInquiry'), action: z.literal('estimate'), implementation: z.literal('RideRequest') }),
+    input: routeInputSchema,
+  }),
+  read: z.strictObject({ function: z.literal('readRideEstimates'), resultParameter: z.literal('request') }),
+});
+const rideQuoteInstructions = 'For fare-only queries with a known city and confirmed pickup and destination, call complete_with_action directly in the current conversation and deliver the quote as soon as it returns. Pass the confirmed venue names. If the Action needs a more specific place, ask for it before retrying. Use submit_task for general or incomplete travel requests.';
 
 const paTravelInstructions = [
   'For user-authorized travel reminders, keep the object reference from StartCalendarJourney or StartFlightWatch.',
@@ -195,14 +204,21 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const selected = capabilities.actions.resolve(access, model, input);
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
-  const completeWithAction = async (p: Principal, input: z.infer<typeof completeWithActionRequestSchema>) => {
-    requireScope(p, 'ontology:read');
-    requireScope(p, 'ontology:write');
+  const completeWithAction = async (req: Request, input: z.infer<typeof completeWithActionRequestSchema>, quoteOnly = false) => {
+    const p = principal(req);
+    for (const scope of quoteOnly ? accountTaskScopes : ['ontology:read', 'ontology:write']) requireScope(p, scope);
     const access = await Access.load(db, p), model = await modelFor(p, undefined, input.action.scenarioId, access, input.ontology);
     const selected = capabilities.actions.resolve(access, model, input.action);
-    const result = await capabilities.actions.complete(
+    if (quoteOnly) {
+      const action = model.action(selected.action);
+      if (selected.action !== 'EstimateRide' || action.function !== 'prepareRideInquiry' || action.rules?.length || action.effects?.length)
+        throw new PermissionDenied('The published quote-only Action is unavailable');
+    }
+    const complete = () => capabilities.actions.complete(
       access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
+      quoteOnly && memberRequests.has(req) ? { authorize: authorizeMemberSubmission(req) } : {},
     );
+    const result = await (quoteOnly ? withoutExternalDispatch(complete) : complete());
     if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
     return result;
   };
@@ -266,7 +282,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/mcp', (_req, res) => res.set('Allow', 'POST').sendStatus(405));
   app.post('/mcp', async (req, res) => {
     const p = principal(req), member = memberRequests.has(req);
-    const instructions = member ? 'Submit the user’s read-only travel query once. Poll get_task with the original returned ID and deliver the result in the same conversation.' : paTravelInstructions;
+    const quoteOnly = member || (accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
+      !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write')));
+    const taskInstructions = member ? 'Submit other read-only travel queries once and poll get_task with the original returned ID.' : paTravelInstructions;
+    const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);
     const response = async (operation: () => Promise<unknown>) => {
@@ -337,6 +356,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         throw new InvalidInput('Use the venue ID returned from a TableCheck search');
       return completeRestaurantRead(access, model, requestId, 'availability', { ...input, venue, channel: 'provider' });
     }));
+    if (quoteOnly) server.registerTool('complete_with_action', {
+      description: 'Return a DiDi fare estimate in one call when both venues and the city are known. This call uses RideInquiry.estimate and reads its verified result.',
+      inputSchema: rideQuoteRequestSchema,
+    }, input => response(() => completeWithAction(req, input, true)));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
       server.registerTool('submit_task', {
@@ -386,10 +409,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
-    server.registerTool('complete_with_action', {
+    if (!quoteOnly) server.registerTool('complete_with_action', {
       description: 'Execute a published Interface Action and return its result through a published read Function. Bind the committed reference to read.resultParameter. Retry with the same requestId to read the result afresh. Use submit_task for requests that require clarification.',
       inputSchema: completeWithActionRequestSchema,
-    }, input => response(() => completeWithAction(p, input)));
+    }, input => response(() => completeWithAction(req, input)));
     server.registerTool('describe_ontology', {
       description: 'Read published types, properties, interfaces, links, functions and actions.',
       inputSchema: z.strictObject({ ontology: z.string().optional() }),
