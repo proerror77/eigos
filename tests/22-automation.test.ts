@@ -1,4 +1,5 @@
 import { restaurantServices } from '../packages/ontology/restaurant-services.js';
+import { amapObservationDefinition } from '../packages/ontology/amap-observations.js';
 import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink,
   prepareWithEndpoints, ridePersonalPlaceLinks } from '../packages/ontology/didi-ride-endpoints.js';
@@ -689,7 +690,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, restaurantServices, tableCheckReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, personalPlaceDefinition, localDeliveryDefinition, localDeliveryTradeDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, personalPlaceDefinition, localDeliveryDefinition, localDeliveryTradeDefinition, amapObservationDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -745,6 +746,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.submissionCriteria = [];
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' && type.apiName !== immediateRideInterface &&
+    !amapObservationDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !travelHandoffDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
@@ -777,6 +779,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
+    !amapObservationDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     type.apiName !== 'ImmediateDidiApproval' && type.apiName !== immediateOrderLink && type.apiName !== immediateRideRouteLink &&
     !ridePersonalPlaceLinks.some(link => link.apiName === type.apiName) && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&

@@ -4,6 +4,7 @@ import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookWithEndpoints, estimateWithEndpoints, immediateRideRouteLink } from './didi-ride-endpoints.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { amapObservations } from './amap-observations.js';
 import type { OntologyDocument } from './schema.js';
 
 export const sandboxAgentCapability = { kind: 'agent-capability', name: 'sandbox' } as const;
@@ -19,6 +20,25 @@ export type AgentProfile = NonNullable<OntologyDocument['agentProfiles']>[number
 
 /** Tool discovery profiles shipped in the EIGOS definition. Terms only preload definitions. */
 export const businessAgentProfiles: AgentProfile[] = [
+  {
+    apiName: 'AmapTransport',
+    terms: ['高德路线', '公交', '地铁', '骑行', '测距', '距离测量', '路况', '地理编码', '地址转坐标',
+      'cycling route', 'transit route', 'traffic conditions', 'measure distance', 'geocode'],
+    objects: Object.values(amapObservations).map(item => item.type),
+    interfaces: Object.values(amapObservations).map(item => item.iface),
+    actions: Object.values(amapObservations).map(item => item.action),
+    functions: ['readAmapObservation'],
+    instructions: [
+      { action: 'ResolveAmapAddress', function: 'readAmapObservation',
+        text: 'Resolve named endpoints with MapAddressResolution.geocode. When ambiguous, show the candidates and use only the user’s chosen AmapQueryPoint.' },
+      { action: 'PlanAmapRoute', function: 'readAmapObservation',
+        text: 'Use MapRoutePlanning.plan for a known mode and the confirmed AmapQueryPoint references or explicit GCJ-02 coordinates. Transit requires origin and destination administrative codes. Read the same result with resultParameter observation.' },
+      { action: 'MeasureAmapDistances', function: 'readAmapObservation',
+        text: 'Use MapDistanceMeasurement.measure for multiple origin points and one chosen destination. Report the requested distance mode.' },
+      { action: 'InspectAmapTraffic', function: 'readAmapObservation',
+        text: 'Use MapTrafficInspection.inspect for a known geographic rectangle. Preserve the observation time and unknown traffic status.' },
+    ],
+  },
   {
     apiName: 'RideQuote',
     terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate', '打车链接', '滴滴跳转', '滴滴小程序', 'ride link',

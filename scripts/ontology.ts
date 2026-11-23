@@ -22,6 +22,7 @@ import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-p
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { ontologyName } from '../packages/ontology/schema.js';
 import { accountCommand } from './account-command.js';
+import { amapObservationAccountResources } from '../packages/ontology/amap-observations.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
@@ -53,6 +54,14 @@ else {
         const active = await metadata.active('Eigos');
         await syncAccountGrants(db, active);
         console.log(JSON.stringify({ release: active.release }));
+      } else if (args[0] === 'grant-amap-observations') {
+        const active = await metadata.active('Eigos');
+        const grants = businessGrants(active).filter(grant => amapObservationAccountResources.has(grant.resource));
+        if (grants.length !== amapObservationAccountResources.size) throw new Error('The published Amap Action contract is incomplete');
+        await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
+          SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
+          ON CONFLICT DO NOTHING`, ['group:' + accountActionsGroup, JSON.stringify(grants)]);
+        console.log(JSON.stringify({ release: active.release, grants: grants.length }));
       } else if (args[0] === 'grant-didi-pa') {
         const active = await metadata.active('Eigos');
         const grants = businessGrants(active).filter(grant => didiPAAccountResources.has(grant.resource));

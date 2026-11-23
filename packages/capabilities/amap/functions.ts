@@ -35,7 +35,7 @@ function parsePoint(value: unknown) {
   const [longitude, latitude] = providerPoint.parse(value).split(',').map(Number);
   return gcjPoint.parse({ latitude, longitude, coordinateSystem: 'gcj02' });
 }
-const pointText = ({ longitude, latitude }: Pick<z.infer<typeof gcjPoint>, 'latitude' | 'longitude'>) =>
+export const pointText = ({ longitude, latitude }: Pick<z.infer<typeof gcjPoint>, 'latitude' | 'longitude'>) =>
   `${Number(longitude.toFixed(6))},${Number(latitude.toFixed(6))}`;
 function reportTime(value: unknown) {
   if (value === undefined) return;
@@ -92,6 +92,11 @@ function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
     ...administrativeArea(record), level: asText(record.level), address: asText(record.formatted_address),
     point: parsePoint(record.location),
   };
+}
+
+export async function geocodeAmapAddress(client: AmapClient, input: Address, signal: AbortSignal) {
+  const items = await geocodeRows(client, input, signal);
+  return geocodeResult.parse({ ...fetchTime(), candidates: items.map(geocodeCandidate) });
 }
 
 async function uniquePlace(client: AmapClient, input: Address, signal: AbortSignal, needsPoint: boolean) {
@@ -233,10 +238,7 @@ export function amapFunctions(resolve: AmapResolver, publicReads = resolve): Rea
         conversion: inputCoordinateSystem === 'wgs84' ? 'converted_by_amap' : 'already_gcj02',
       });
     }],
-    ['geocodeAddress', async (raw, ctx) => {
-      const items = await geocodeRows(await resolve(ctx), mapAddress.parse(raw), ctx.signal);
-      return geocodeResult.parse({ ...fetchTime(), candidates: items.map(geocodeCandidate) });
-    }],
+    ['geocodeAddress', async (raw, ctx) => geocodeAmapAddress(await resolve(ctx), mapAddress.parse(raw), ctx.signal)],
     ['reverseGeocode', async (raw, ctx) => {
       const client = await resolve(ctx);
       const point = await toAmapPoint(client, mapPoint.parse(raw), ctx.signal);

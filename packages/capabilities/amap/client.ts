@@ -7,7 +7,8 @@ import type { FunctionContext } from '../../runtime/functions.js';
 
 const toolNames = ['maps_geo', 'maps_regeocode', 'maps_text_search', 'maps_search_detail',
   'maps_around_search', 'maps_direction_walking', 'maps_direction_driving', 'maps_weather'] as const;
-const webRoutes = ['/v3/assistant/coordinate/convert', '/v3/geocode/regeo', '/v3/weather/weatherInfo'] as const;
+const webRoutes = ['/v3/assistant/coordinate/convert', '/v3/geocode/regeo', '/v3/weather/weatherInfo',
+  '/v5/direction/bicycling', '/v5/direction/transit/integrated', '/v3/distance', '/v3/traffic/status/rectangle'] as const;
 type Tool = typeof toolNames[number];
 type WebService = typeof webRoutes[number];
 
