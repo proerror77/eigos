@@ -65,7 +65,7 @@ export function fakeAmap(calls: Recorded[], state: {
       ] } : state.remoteShape && name === 'maps_direction_driving'
       ? { paths: [{ distance: '3000', duration: String(state.durationSeconds ?? 1500) }] }
       : {
-      maps_geo: { return: matches.map(level => ({ location: '121.5,31.2', level, adcode: '310115', citycode: '021', city: '上海市' })) },
+      maps_geo: { return: matches.map(level => ({ location: '121.5,31.2', level, adcode: '310115', city: '上海市' })) },
       maps_regeocode: { provice: '上海市', city: [], district: '浦东新区' },
       maps_text_search: { pois: [{ id: 'B0EXAMPLE', name: '咖啡店', address: [], photos: { url: 'private-data' } }] },
       maps_search_detail: { id: input.id, name: '咖啡店', city: '上海市', location: '121.5,31.2' },

@@ -8,23 +8,26 @@ import { Access, businessGrants, syncAccountGrants } from '../packages/runtime/a
 import { Objects } from '../packages/runtime/objects.js';
 import { Accounts } from '../packages/runtime/accounts.js';
 import { fixture, principal } from './fixture.js';
-import { fakeAmap, testConnection, type Recorded } from './amap-fixture.js';
+import { testConnection } from './amap-fixture.js';
 
 test('Amap Actions record verifiable observations and reuse the linked geocoded origin', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'eigos-amap-observations-'));
-  const mcpCalls: Recorded[] = [], webCalls: string[] = [];
+  const webCalls: string[] = [];
   try {
-    const config = await testConnection(dir), mcp = fakeAmap(mcpCalls);
+    const config = await testConnection(dir);
     const fetcher: typeof fetch = async (target, options) => {
       const url = new URL(String(target));
-      if (url.origin === 'https://mcp.amap.com') return mcp(target, options);
       assert.equal(url.origin, 'https://restapi.amap.com');
       assert.equal(options?.method, 'GET');
       assert.equal(options?.redirect, 'error');
       webCalls.push(url.pathname);
       const answer = (value: object) => Response.json({ status: '1', ...value });
+      if (url.pathname === '/v3/geocode/geo')
+        return answer({ geocodes: [{ location: '121.5,31.2', level: '兴趣点', adcode: '310115', citycode: '021', city: '上海市' }] });
       if (url.pathname === '/v5/direction/bicycling')
         return answer({ route: { paths: [{ distance: '900', duration: '220' }] } });
+      if (['/v5/direction/walking', '/v5/direction/driving'].includes(url.pathname))
+        return answer({ route: { paths: [{ distance: '1100', cost: { duration: '300' } }] } });
       if (url.pathname === '/v5/direction/transit/integrated') {
         assert.equal(url.searchParams.get('city1'), '021');
         assert.equal(url.searchParams.get('city2'), '021');
@@ -63,7 +66,7 @@ test('Amap Actions record verifiable observations and reuse the linked geocoded 
       assert.deepEqual(transit.options[0]?.lines, ['地铁 8 号线']);
       assert.equal(transit.options[0]?.durationSeconds, 1050);
       assert.deepEqual((await call('PlanAmapRoute', input, 'bus')).observation, transit.observation);
-      assert.equal(webCalls.length, 1);
+      assert.equal(webCalls.filter(path => path === '/v5/direction/transit/integrated').length, 1);
       for (const mode of ['bicycling', 'walking', 'driving']) {
         const route = await call('PlanAmapRoute', { origin, destination, mode }, mode);
         assert.equal(route.kind, 'route');
@@ -85,7 +88,7 @@ test('Amap Actions record verifiable observations and reuse the linked geocoded 
       await syncAccountGrants(f.db, f.model);
       const limited = await Access.load(f.db, { owner, scopes: [], memberAccess: true });
       assert(!limited.allows({ ontology: 'Eigos', permission: 'apply_action', resource: 'Eigos/action/' + amapObservations.route.action }));
-      assert.equal(mcpCalls[0]?.name, 'maps_geo');
+      assert.equal(webCalls[0], '/v3/geocode/geo');
     } finally { await f.close(); }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

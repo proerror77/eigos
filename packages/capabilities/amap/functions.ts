@@ -87,17 +87,11 @@ async function geocodeRows(client: AmapClient, input: Address, signal: AbortSign
   return z.array(geocodeRow).max(20).parse(payload.results ?? payload.return ?? payload.geocodes);
 }
 
-function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
+export function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
   return {
     ...administrativeArea(record), level: asText(record.level), address: asText(record.formatted_address),
     point: parsePoint(record.location),
   };
-}
-
-export async function geocodeAmapPoints(client: AmapClient, input: Address, signal: AbortSignal) {
-  return (await geocodeRows(client, input, signal)).map(row => ({
-    point: geocodeCandidate(row), cityCode: asText(row.citycode),
-  }));
 }
 
 async function uniquePlace(client: AmapClient, input: Address, signal: AbortSignal, needsPoint: boolean) {
@@ -240,8 +234,8 @@ export function amapFunctions(resolve: AmapResolver, publicReads = resolve): Rea
       });
     }],
     ['geocodeAddress', async (raw, ctx) => {
-      const candidates = await geocodeAmapPoints(await resolve(ctx), mapAddress.parse(raw), ctx.signal);
-      return geocodeResult.parse({ ...fetchTime(), candidates: candidates.map(candidate => candidate.point) });
+      const items = await geocodeRows(await resolve(ctx), mapAddress.parse(raw), ctx.signal);
+      return geocodeResult.parse({ ...fetchTime(), candidates: items.map(geocodeCandidate) });
     }],
     ['reverseGeocode', async (raw, ctx) => {
       const client = await resolve(ctx);

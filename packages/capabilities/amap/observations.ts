@@ -10,7 +10,7 @@ import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 import type { AmapResolver } from './client.js';
-import { geocodeAmapPoints, pointText } from './functions.js';
+import { geocodeCandidate, pointText } from './functions.js';
 
 type Graph = FunctionContext['objects'];
 type Point = z.infer<typeof amapPointRecord>;
@@ -69,13 +69,10 @@ export function amapObservationFunctions(source: AmapResolver): ReadonlyMap<stri
         rawOptions = z.object({ route: z.object({ transits: z.array(z.unknown()) }) }).parse(
           await client.web('/v5/direction/transit/integrated', { ...args, city1, city2, show_fields: 'cost',
             ...(ad1 ? { ad1 } : {}), ...(ad2 ? { ad2 } : {}) }, ctx.signal)).route.transits;
-      } else if (input.mode === 'bicycling') {
-        rawOptions = z.object({ route: z.object({ paths: z.array(z.unknown()) }) }).parse(
-          await client.web('/v5/direction/bicycling', args, ctx.signal)).route.paths;
       } else {
-        const reply = z.object({ route: z.object({ paths: z.array(z.unknown()) }).optional(), paths: z.array(z.unknown()).optional() })
-          .parse(await client.mcp(input.mode === 'walking' ? 'maps_direction_walking' : 'maps_direction_driving', args, ctx.signal));
-        rawOptions = reply.route?.paths ?? reply.paths;
+        const path = { walking: '/v5/direction/walking', driving: '/v5/direction/driving', bicycling: '/v5/direction/bicycling' } as const;
+        rawOptions = z.object({ route: z.object({ paths: z.array(z.unknown()) }) }).parse(
+          await client.web(path[input.mode], { ...args, show_fields: 'cost' }, ctx.signal)).route.paths;
       }
       const options = z.array(routeFields).max(100).parse(rawOptions).slice(0, 5).map(({ distance, duration, cost, segments }, index) => ({
         rank: index + 1, distanceMeters: distance, durationSeconds: z.number().parse(cost?.duration ?? duration),
@@ -141,12 +138,15 @@ export function amapObservationFunctions(source: AmapResolver): ReadonlyMap<stri
     }],
     [types.geocode.fn, async (raw, ctx) => {
       const input = amapGeocodeInput.parse(raw), { stage, ref } = edit(ctx, types.geocode.type);
-      const candidates = await geocodeAmapPoints(await source(ctx), input, ctx.signal);
+      const client = await source(ctx);
+      const { geocodes } = z.object({ geocodes: z.array(z.record(z.string(), z.unknown())).max(20) })
+        .parse(await client.web('/v3/geocode/geo', { address: input.address, ...(input.city ? { city: input.city } : {}) }, ctx.signal));
+      const candidates = geocodes.map(row => ({ point: geocodeCandidate(row), cityCode: amapCityCode.safeParse(row.citycode).data }));
       return stage(ref, async graph => {
         await graph.create(ref, receipt(ref, '高德地址解析', input, candidates));
         for (const [index, { point: candidate, cityCode }] of candidates.entries()) {
           const point = await savePoint(graph, ref, index, { point: { name: candidate.address ?? input.address,
-            point: candidate.point, cityCode: amapCityCode.safeParse(cityCode).data, adcode: candidate.adcode,
+            point: candidate.point, cityCode, adcode: candidate.adcode,
             address: candidate.address, evidence: 'amap_geocode' } });
           await graph.link(relation(links.geocodeCandidates, ref, point));
         }
