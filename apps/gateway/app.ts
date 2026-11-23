@@ -283,7 +283,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p = principal(req), member = memberRequests.has(req);
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
-    const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. ${paTravelInstructions}` : paTravelInstructions;
+    const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.read, call only the requested read tool through your own authorized DiDi MCP connection and return the normalized observation with its receipt. Present pa_reported quotes as DiDi estimates obtained by the PA. ${paTravelInstructions}` : paTravelInstructions;
     const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);

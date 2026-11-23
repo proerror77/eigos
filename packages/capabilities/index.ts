@@ -20,7 +20,7 @@ import { calendarJourneyFunctions } from './journey/functions.js';
 import { configuredJourneyCalendar } from './journey/calendar-source.js';
 import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
-import { withDidiPAConnection } from './didi/pa-connection.js';
+import { withDidiPAReads } from './didi/pa-read.js';
 import { amapFunctions } from './amap/functions.js';
 import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
 import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
@@ -63,11 +63,7 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
   { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
   const eligible = (owner: string) => hasBetaReadAccess(db, owner);
   const trialUntil = config.EIGOS_BETA_FLYAI_TRIAL_UNTIL;
-  const relay = config.EIGOS_DIDI_PA_RELAY_URL && config.EIGOS_DIDI_PA_RELAY_TOKEN_FILE ? {
-    url: config.EIGOS_DIDI_PA_RELAY_URL, tokenFile: config.EIGOS_DIDI_PA_RELAY_TOKEN_FILE,
-    ordersEnabled: config.EIGOS_DIDI_PA_ORDERS_ENABLED === 'true',
-  } : undefined;
-  return createCapabilities(db, relay ? withDidiPAConnection(source, relay) : source, extensions,
+  return createCapabilities(db, config.EIGOS_DIDI_PA_READS_ENABLED === 'true' ? withDidiPAReads(source) : source, extensions,
     configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config,
       trialUntil ? { eligible, trialUntil } : undefined),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {

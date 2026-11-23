@@ -41,10 +41,10 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 
 ## 原 PA 的滴滴连接
 
-受邀账号可以通过通用 `apply_ontology_action` 或 `complete_with_action` 发起已授权的滴滴 Action。调用先返回任务 ID。Worker 发现缺少授权时在同一任务返回 `didi.authorize`，包含请求 ID 和响应结构。原 PA 引导用户在[滴滴开发者控制台](https://mcp.didichuxing.com/)开通官方 MCP，将 Key 保存在 PA 的私有凭据存储。滴滴 MCP 的交易可用性取决于 Key 的供应商权限。 [滴滴 MCP API](https://mcp.didichuxing.com/api)
+受邀账号用原对话提交询价。PA 可通过通用 Action 选择发布的 RideInquiry.estimate 与 readRideEstimates，随后用同一个任务 ID 轮询。需要来源数据时，Worker 返回 didi.read 请求，包含明确的只读方法、参数、参数摘要及响应结构。
 
-PA 主机将 `createDidiPARelay` 挂到固定的 HTTPS 入口。经过 EIGOS 身份验证的原 PA 为这次请求登记一个随机 UUID，把它绑定到已验证的 owner、任务 ID、PA 请求 ID、PA 用户批准的访问范围和过期时间。登记的最大期限为 30 分钟。PA 通过 `respond_to_task` 回传 `{status:"authorized",connectionRef,expiresAt,access:"read"}` 或 `{status:"unavailable"}`。支持叫车的连接经用户批准后可以回传 `access:"ride"`。OAuth 凭据和滴滴 Key 留在原 PA，业务任务只保存绑定引用。中转逐次验证身份、任务、请求和有效期，再把限定的 MCP 操作送到滴滴。
+原 PA 用自己的授权向滴滴官方 MCP 发起该次读取。PA 在原会话调用 respond_to_task，回传请求 ID、标准化数据和本次调用的来源回执。如果没有授权就回传 authorization_required，完成供应商配置后再重新询价。滴滴 Key 和发单所需的原始 traceId 留在 PA。PA 可以使用本机只读辅助命令构建回执。先运行 npm run build，再设置 EIGOS_PA_DIDI_KEY_FILE 指向只在 PA 可读的密钥文件，运行 node scripts/didi-pa-observe.mjs TOOL ARGUMENTS_JSON INPUT_DIGEST。命令使用 PA 官方连接，只输出 EIGOS 要求的安全响应。 [滴滴 MCP API](https://mcp.didichuxing.com/api)
 
-Gateway 和 Worker 设置 `EIGOS_DIDI_PA_RELAY_URL` 与 `EIGOS_DIDI_PA_RELAY_TOKEN_FILE`。文件保存 EIGOS 与受信任 PA 主机之间的中转凭据，至少 32 字符，权限为 `0600`。用管理角色运行 `npm run account -- grant-didi-pa` 明确加入询价与即时叫车的试点授权。未启用 `EIGOS_DIDI_PA_ORDERS_ENABLED=true` 时，中转接入只用于真实查询。开启实际叫车还需要 PA 的 `ride` 连接权限和用户在同一任务内对确切车型、起终点和报价的单独确认。订单发送后沿用现有原单回查和防重复发单机制。
+Worker 校验调用者、原任务、方法、输入摘要、结果摘要、类型和时间窗口，复用地点解析、报价 Action 和 SourceReceipt 投影。结果标为 pa_reported，完整 PA 回执留在原任务的 PA 请求记录。直接由 EIGOS 验证的 live_readonly 报价仍保留原有 accepted 标志。 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
-验收先检查新账号提交 Action 后出现授权请求，再用原 PA 的短期引用在同一任务读到真实报价。叫车流程使用合成供应商验证第二次批准、单次发送和原单回查。
+部署时保持 EIGOS_SIGNUP=invite。Gateway 和 Worker 设置 EIGOS_DIDI_PA_READS_ENABLED=true，再用管理角色运行 npm run account -- grant-didi-pa 开通邀约账号的询价权限。验收在同一原 PA 对话留存任务 ID、PA 请求、真实报价及来源读回。试点授权仅覆盖只读询价。
