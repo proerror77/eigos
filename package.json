@@ -29,6 +29,7 @@
     "ontology:activate": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts activate",
     "account": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts account",
     "account:invite": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts invite",
+    "account:feishu-review": "node --env-file-if-exists=.env --import tsx scripts/beta-feishu-review.ts",
     "access:grant-business": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts grant-business",
     "access:configure": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts permissions",
     "start:indexer": "node --env-file-if-exists=.env dist/apps/indexer/main.js",

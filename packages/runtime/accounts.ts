@@ -53,7 +53,12 @@ export async function initializeAccounts(db: Database) {
     CREATE TABLE IF NOT EXISTS ${s}.account_applications (
       owner text PRIMARY KEY, email_hash text NOT NULL, email text NOT NULL, purpose text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now());
+    ALTER TABLE ${s}.account_applications ADD COLUMN IF NOT EXISTS application_id uuid NOT NULL DEFAULT gen_random_uuid();
+    CREATE UNIQUE INDEX IF NOT EXISTS applications_id ON ${s}.account_applications(application_id);
     CREATE INDEX IF NOT EXISTS applications_email ON ${s}.account_applications(email_hash);
+    CREATE TABLE IF NOT EXISTS ${s}.beta_reviews (
+      application_id uuid PRIMARY KEY, record_id text UNIQUE, checked_at timestamptz NOT NULL DEFAULT now(),
+      approved_at timestamptz, draft_id text, finished_at timestamptz);
     CREATE TABLE IF NOT EXISTS ${s}.member_sessions (
       token_hash text PRIMARY KEY, owner text NOT NULL, email_hash text NOT NULL,
       expires_at timestamptz NOT NULL);
@@ -86,7 +91,7 @@ export class Accounts {
       if (await this.account(session.owner, client) || await this.isOperator(session.owner, client)) return false;
       await this.db.query(`INSERT INTO ${s}.account_applications(owner,email_hash,email,purpose)
         VALUES($1,$2,$3,$4) ON CONFLICT(owner) DO UPDATE SET
-        email_hash=excluded.email_hash,email=excluded.email,purpose=excluded.purpose,applied_at=now()
+        email_hash=excluded.email_hash,email=excluded.email,purpose=excluded.purpose,applied_at=now(),application_id=excluded.application_id
         WHERE account_applications.email_hash<>excluded.email_hash`,
       [session.owner, emailHash, email, purpose], client);
       return true;
@@ -113,20 +118,27 @@ export class Accounts {
   }
 
   /** The deployment operator approves the verified owner from the waiting list. */
-  async approveApplication(owner: string) {
+  async approveApplication(owner: string, review?: { applicationId: string; recordId: string }) {
     if (this.signup !== 'invite') throw new InvalidInput('Waitlist approval requires invite sign-up mode');
     if (!/^[a-f0-9]{64}$/.test(owner)) throw new InvalidInput('Use the applicant owner from account applications');
     const s = this.db.schema;
     return this.db.transaction(async client => {
       await this.lockApplication(owner, client);
       if (await this.isOperator(owner, client)) throw new InvalidInput('Operators do not enter the waitlist');
+      const applicant = review && (await this.db.query<{ email_hash: string }>(`SELECT a.email_hash
+        FROM ${s}.account_applications a JOIN ${s}.beta_reviews r USING (application_id)
+        WHERE a.owner=$1 AND a.application_id=$2 AND r.record_id=$3`, [owner, review.applicationId, review.recordId], client)).rows[0];
+      if (review && !applicant) throw new InvalidInput('The original verified application changed');
       const existing = await this.account(owner, client);
-      if (existing?.waitlist_approved_at) return existing;
-      if (existing) throw new InvalidInput('This applicant already has an account');
-      const { rows: [approved] } = await this.db.query<Account>(`INSERT INTO ${s}.accounts(owner,email_hash,waitlist_approved_at)
+      if (existing && (!existing.waitlist_approved_at || applicant &&
+          (existing.status !== 'active' || existing.email_hash !== applicant.email_hash)))
+        throw new InvalidInput('This applicant already has an account');
+      const approved = existing ?? (await this.db.query<Account>(`INSERT INTO ${s}.accounts(owner,email_hash,waitlist_approved_at)
         SELECT owner,email_hash,now() FROM ${s}.account_applications WHERE owner=$1
-        ON CONFLICT(owner) DO NOTHING RETURNING ${accountColumns}`, [owner], client);
+        ON CONFLICT(owner) DO NOTHING RETURNING ${accountColumns}`, [owner], client)).rows[0];
       if (!approved) throw new InvalidInput('No pending application for this owner');
+      if (review) await this.db.query(`UPDATE ${s}.beta_reviews SET approved_at=COALESCE(approved_at,now())
+        WHERE application_id=$1 AND record_id=$2`, [review.applicationId, review.recordId], client);
       return approved;
     });
   }

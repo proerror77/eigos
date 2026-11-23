@@ -1,6 +1,30 @@
 # Beta 账号申请与 Agent 接入
 
-用户用 Google 或邮箱密码在 Auth0 注册。账号页只接受带 `email_verified: true` 的签名 ID Token。用户在 `https://<gateway>/account` 提交申请，加入 Beta 候补名单。运营从名单审核指定申请。通过后，用户刷新账号页即可接入自己的 Agent。开通后的普通账号共用五项 Beta 查询权限。
+用户从 `https://<gateway>/beta` 注册或登录。账号页只接受带 `email_verified: true` 的签名 ID Token。验证后提交测试用途，加入 Beta 候补名单。启用飞书同步后，用户可在账号页查看结果，审核通过会收到开通邮件。开通后的普通账号共用五项 Beta 查询权限。
+
+## 飞书候补审核
+
+申请先保存在 EIGOS。同步进程每轮处理最多 20 个申请，每轮结束后等待 15 秒。它把邮箱验证通过的申请写入私有飞书多维表格。审核人在原行勾选「批准使用」，EIGOS 核对申请编号、原记录和最后修改人的 Open ID，再开通对应账号。开通信件只发往 EIGOS 中验证过的邮箱。表格可读回「开通状态」和「邮件状态」。
+
+| 字段 | 类型 |
+| --- | --- |
+| 申请编号、已验证邮箱、测试用途 | 文本 |
+| 申请时间 | 日期 |
+| 批准使用 | 复选框 |
+| 开通状态、邮件状态 | 文本 |
+
+飞书表仅开放给审批人。使用独立的飞书应用，为审批及发信邮箱的用户取得飞书 OAuth 授权。应用需要 Base 查询、新增和更新记录权限，以及 `mail:user_mailbox.message:modify`、`mail:user_mailbox.message:send` 和 `offline_access`。发信账户须允许邮箱自动化发信。参见 [飞书 Base 记录](https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table-record/search)、[发送邮件草稿](https://open.feishu.cn/api-explorer?project=mail&resource=user_mailbox.draft&apiName=send&version=v1)和[刷新飞书用户凭证](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/refresh-user-access-token-v3)。
+
+运行 `npm run db:upgrade` 后，为独立的审核进程设置 `EIGOS_BETA_FEISHU_FILE`。文件必须是进程账号持有的私有绝对路径，包含以下字段。
+
+- `baseToken` 和 `tableId` 指向审核表。表格字段使用上面的名称。
+- `approverOpenId` 是该应用下的审核人 Open ID。使用同一飞书应用取得的身份验证值。
+- `mailbox` 是发送开通信件的飞书企业邮箱。 `publicUrl` 是 EIGOS 的 HTTPS origin，用于生成账号页链接。
+- `appId`、`appSecretFile`、`userTokenFile` 是这个应用的私有配置。用户凭证文件保存 `accessToken`、`refreshToken` 和 ISO 格式的 `expiresAt`。刷新会替换凭证文件，因此运行账号需可写其目录。每个 OAuth 授权只交给一个部署位置维护。
+
+在 `EIGOS_SIGNUP=invite` 下以常驻服务运行 `npm run account:feishu-review`。需要一次性诊断时使用 `npm run account:feishu-review -- --once`。两种入口均可能处理已批准的申请。进程使用独立的 PostgreSQL 运行角色，读取申请和帐号，负责建立候补账号、写入 `beta_reviews` 和原发信操作记录。Gateway 只需新增对 `account_applications.application_id` 的 UPDATE 权限。应用、邮箱授权和表格入口验收之后再对外发布网页。
+
+创建表格记录丢失回执时按申请编号查回。邮件发出但结果不明确时，表格标记「待核对」，运营可按原草稿和发件箱核对。批准开通是一次性决定。撤销服务访问使用账号停用命令。
 
 ## 连接 MCP 或 A2A
 
@@ -303,7 +327,7 @@ Gateway、Worker 和 Indexer 设置 `EIGOS_ENFORCE_OWNER_RLS=true` 后，启动�
 | `accounts` | SELECT；INSERT(`owner`, `email_hash`)；UPDATE(`approved_at`, `revoked_at`, `email_hash`, `agent_token_hash`) | SELECT |
 | `member_invitations` | SELECT；UPDATE(`redeemed_by`) | 无 |
 | `member_sessions` | SELECT、INSERT、DELETE | 无 |
-| `account_applications` | SELECT、INSERT、UPDATE（邮箱、用途和申请时间） | 无 |
+| `account_applications` | SELECT、INSERT、UPDATE（邮箱、用途、申请编号和申请时间） | 无 |
 
 对应的语句如下，`<schema>` 是 `EIGOS_PG_SCHEMA`：
 
@@ -315,7 +339,7 @@ GRANT SELECT ON <schema>.member_invitations TO <gateway_role>;
 GRANT UPDATE (redeemed_by) ON <schema>.member_invitations TO <gateway_role>;
 GRANT SELECT, INSERT, DELETE ON <schema>.member_sessions TO <gateway_role>;
 GRANT SELECT, INSERT ON <schema>.account_applications TO <gateway_role>;
-GRANT UPDATE (email_hash, email, purpose, applied_at) ON <schema>.account_applications TO <gateway_role>;
+GRANT UPDATE (email_hash, email, purpose, applied_at, application_id) ON <schema>.account_applications TO <gateway_role>;
 ```
 
 升级已有部署时，`member_invitations` 和 `member_sessions` 的权限和以前一样。`accounts` 沿用 `member_accounts` 原有的权限，新增的只有 `email_hash` 的 INSERT 和 UPDATE。重复授予无害。

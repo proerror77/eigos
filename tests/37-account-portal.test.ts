@@ -438,7 +438,7 @@ test('a verified applicant can use Beta after operator approval and separate Age
     const approve = (mode: 'invite' | 'closed' = 'invite') =>
       accountCommand(f.db, mode, ['approve-application', owner]);
     await assert.rejects(approve(), /No pending application/);
-    assert.match(await portal.page(applicant.cookie), /加入 Beta 候补名单/);
+    assert.match(await portal.page(applicant.cookie), /加入候补名单/);
     await portal.form('apply', applicant.cookie,
       new URLSearchParams({ email: 'waitlisted@example.test', purpose: 'Search travel options' }));
     assert.deepEqual((await portal.accounts.applications()).map(row => row.owner), [owner]);
