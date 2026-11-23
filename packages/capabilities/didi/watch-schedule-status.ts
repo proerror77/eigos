@@ -1,13 +1,13 @@
-import { rideWatchClosed, rideWatchFields, rideWatchRef, rideWatchType } from '../ontology/ride-watch.js';
-import { Access } from './access.js';
-import type { Database, Sql } from './database.js';
-import { recordObjectEdit } from './edit-history.js';
-import type { PublishedOntology } from './metadata.js';
-import { Objects } from './objects.js';
+import { rideWatchClosed, rideWatchFields, rideWatchRef, rideWatchType } from '../../ontology/ride-watch.js';
+import { Access } from '../../runtime/access.js';
+import type { Database, Sql } from '../../runtime/database.js';
+import { recordObjectEdit } from '../../runtime/edit-history.js';
+import type { PublishedOntology } from '../../runtime/metadata.js';
+import { Objects } from '../../runtime/objects.js';
 
 /** Record a scheduler decision on its own watch, even when provider access was revoked. */
 export async function closeRideWatchSchedule(db: Database, model: PublishedOntology, client: Sql, owner: string,
-  scheduleId: string, call: { action: string; arguments: unknown }, state: 'expired' | 'unavailable', taskId?: string) {
+  scheduleId: string, call: { action: string; arguments: unknown }, state: 'expired' | 'failed', taskId?: string) {
   if (call.action !== 'CheckDidiRideWatch' || !model.objects.has(rideWatchType)) return;
   const input = rideWatchRef.safeParse(call.arguments);
   if (!input.success || input.data.watch.type !== rideWatchType) return;
@@ -23,7 +23,7 @@ export async function closeRideWatchSchedule(db: Database, model: PublishedOntol
     if (!row) return;
     const prior = rideWatchFields.parse(row.properties);
     if (prior.scheduleId !== scheduleId || rideWatchClosed.has(prior.state)) return;
-    const changes = { state, reason: state === 'expired' ? 'expired' : 'source_unavailable',
+    const changes = { state: state === 'expired' ? 'expired' : 'unavailable', reason: state === 'expired' ? 'expired' : 'source_unavailable',
       nextCheckAt: null, driver: null, distanceKm: null, etaMinutes: null, arrival: null,
       arrivalVersion: prior.arrivalVersion + (prior.arrival ? 1 : 0) };
     const properties = model.parseObject(ref, { ...prior, ...changes });

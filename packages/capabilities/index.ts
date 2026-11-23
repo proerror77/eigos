@@ -43,6 +43,7 @@ import type { Database } from '../runtime/database.js';
 import { hasBetaReadAccess } from '../runtime/accounts.js';
 import { businessDefinition } from '../ontology/definition.js';
 import type { SourceResolver } from './didi/functions.js';
+import { closeRideWatchSchedule } from './didi/watch-schedule-status.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
 import { rideCapabilities } from './didi/pipeline.js';
@@ -158,7 +159,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
     new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
   sources = capabilities.sources;
-  return { ...capabilities, evaluateRelease: evaluateCalendarJourneyRelease,
+  return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
     scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
     taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
     projectTaskResult: publicHotelTaskResult };

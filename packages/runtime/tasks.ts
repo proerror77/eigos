@@ -9,7 +9,6 @@ import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
 import type { CognitiveContext } from './cognitive-workflow.js';
 import { Clarification, taskInputAnswerSchema, placeAmendmentSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
-import { closeRideWatchSchedule } from './ride-watch-schedule-status.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
 import { parseSubmission, storedInputSchema, taskActionSchema, taskOptions } from './task-input.js';
@@ -259,10 +258,6 @@ export class Tasks {
     await this.db.transaction(async client => {
       await this.current(task, client, true);
       const continuation = pending ?? task.input.placeContinuation;
-      const scheduled = task.input.scheduledAction;
-      if (state === 'failed' && scheduled?.action === 'CheckDidiRideWatch')
-        await closeRideWatchSchedule(this.db, await this.metadata.active('Eigos', client, true),
-          client, task.owner, scheduled.scheduleId, scheduled, 'unavailable', task.id);
       const access = result !== null || continuation
         ? await Access.load(this.db, taskPrincipal(task), client) : undefined;
       if (result !== null && !await access!.canReturn(permissions, client)) throw new Conflict('Result permissions changed');

@@ -10,7 +10,6 @@ import { Access, TaskResult } from './access.js';
 import { Actions } from './actions.js';
 import { Objects } from './objects.js';
 import { taskPrincipal, Tasks, type Task } from './tasks.js';
-import { closeRideWatchSchedule } from './ride-watch-schedule-status.js';
 import { Clarification } from './clarification.js';
 
 export type ScheduledCall = {
@@ -21,6 +20,9 @@ export type ScheduledCall = {
   contract: string;
   observationInterestId?: string;
 };
+export type ScheduleTerminal = (db: Database, model: PublishedOntology, client: Sql, owner: string, scheduleId: string,
+  call: { action: string; arguments: unknown }, state: 'expired' | 'failed', taskId?: string) => Promise<void>;
+type TerminalJob = { owner: string; id: string; body: { action: string; arguments: unknown }; task_id?: string };
 export class DeferredExecution extends Error {
   constructor(readonly until: string) {
     super('Scheduled check will resume');
@@ -41,6 +43,7 @@ export class ScheduledActions {
   constructor(
     private readonly db: Database,
     private readonly metadata = new Metadata(db),
+    private readonly terminalHandlers: ReadonlyMap<string, ScheduleTerminal> = new Map(),
   ) {}
   async enqueue(
     graph: Objects,
@@ -110,6 +113,15 @@ export class ScheduledActions {
   async promoteOne(): Promise<boolean> {
     return this.db.transaction(async (client) => {
       const model = await this.metadata.active('Eigos', client, true);
+      const notify = (job: TerminalJob, state: 'expired' | 'failed') => this.terminalHandlers.get(job.body.action)?.(
+        this.db, model, client, job.owner, job.id, job.body, state, job.task_id ?? undefined);
+      const terminalActions = [...this.terminalHandlers.keys()];
+      const failed = await this.db.query<TerminalJob>(
+        `UPDATE ${this.db.schema}.scheduled_actions s SET state='blocked',error='Scheduled Action failed'
+          WHERE s.state='started' AND s.deadline>now() AND s.body->>'action'=ANY($1::text[])
+            AND EXISTS (SELECT 1 FROM ${this.db.schema}.tasks t WHERE t.id=s.task_id AND t.owner=s.owner AND t.state='failed')
+          RETURNING owner,id,body,task_id`, [terminalActions], client,
+      );
       const expired = await this.db.query(
         `WITH due AS(SELECT t.id FROM ${this.db.schema}.tasks t JOIN ${this.db.schema}.scheduled_actions s ON s.task_id=t.id AND s.owner=t.owner
         WHERE s.state='started' AND s.deadline<=now() AND t.state IN('submitted','working','input-required') FOR UPDATE OF t SKIP LOCKED LIMIT 100)
@@ -117,21 +129,24 @@ export class ScheduledActions {
         [],
         client,
       );
-      const startedExpired = expired.rows.length ? await this.db.query(
+      const startedExpired = expired.rows.length ? await this.db.query<TerminalJob>(
         `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired; inspect the original external operation'
           WHERE task_id=ANY($1::uuid[]) RETURNING owner,id,body,task_id`,
         [expired.rows.map(row => row.id)], client,
       ) : undefined;
-      const unstartedExpired = await this.db.query(
+      const unstartedExpired = await this.db.query<TerminalJob>(
         `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired'
         WHERE deadline<=now() AND (state='scheduled' OR
-          state='started' AND body->>'action'='CheckDidiRideWatch' AND EXISTS (
+          state='started' AND body->>'action'=ANY($1::text[]) AND EXISTS (
             SELECT 1 FROM ${this.db.schema}.tasks t WHERE t.id=task_id AND t.state IN ('completed','failed','canceled')))
         RETURNING owner,id,body,task_id`,
-        [], client,
+        [terminalActions], client,
       );
-      for (const job of [...(startedExpired?.rows ?? []), ...unstartedExpired.rows].sort((a, b) => a.owner.localeCompare(b.owner)))
-        await closeRideWatchSchedule(this.db, model, client, job.owner, job.id, job.body, 'expired', job.task_id ?? undefined);
+      const terminalJobs = [
+        ...[...(startedExpired?.rows ?? []), ...unstartedExpired.rows].map(job => ({ job, state: 'expired' as const })),
+        ...failed.rows.map(job => ({ job, state: 'failed' as const })),
+      ];
+      for (const { job, state } of terminalJobs.sort((a, b) => a.job.owner.localeCompare(b.job.owner))) await notify(job, state);
       const row = (
         await this.db.query(
           `SELECT * FROM ${this.db.schema}.scheduled_actions WHERE state='scheduled' AND run_at<=now() ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1`,
@@ -146,7 +161,7 @@ export class ScheduledActions {
           [row.id, reason, row.owner],
           client,
         );
-        await closeRideWatchSchedule(this.db, model, client, row.owner, row.id, row.body, 'unavailable');
+        await notify(row as TerminalJob, 'failed');
         return true;
       };
       if (new Date(row.deadline).getTime() <= Date.now()) return fail('Execution window expired');

@@ -56,7 +56,7 @@ test('an invited pilot PA quotes and books a synthetic ride using the confirmed 
     return relay(new Request(String(target), init));
   }, 'mock');
   const capabilities = createCapabilities(f.db, source, {});
-  const schedules = new ScheduledActions(f.db, f.metadata);
+  const schedules = new ScheduledActions(f.db, f.metadata, capabilities.scheduledTerminals);
   const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, capabilities, {
     model: 'no-model-needed-for-a-selected-action',
     async run() { throw new Error('The selected Action must run without model selection'); },
