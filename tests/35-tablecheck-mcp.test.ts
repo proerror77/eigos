@@ -65,6 +65,8 @@ test('a verified operator can use the scoped catalog and TableCheck tools withou
     assert((await describe(client, { ontology: 'Other' })).isError);
     assert((await describe(noScope)).isError);
     assert((await describe(other)).isError);
+    const machinery = await client.callTool({ name: 'ontology_machinery_processes', arguments: {} });
+    assert.deepEqual(machinery.structuredContent, { status: 403, error: 'Permission required: ontology:read' });
     const blocked = await client.callTool({ name: 'evaluate_ontology', arguments: {
       function: 'readRestaurantSearch', input: { search: { type: 'RestaurantSearchResult', id: 'unused' } },
     } });
