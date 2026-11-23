@@ -86,6 +86,12 @@ jobs:
             "$RUNNER_TEMP/agentgateway" | sha256sum --check
           chmod 0755 "$RUNNER_TEMP/agentgateway"
           echo "EIGOS_TEST_CUTOVER_AGENTGATEWAY=$RUNNER_TEMP/agentgateway" >> "$GITHUB_ENV"
+      - if: matrix.suite == '41'
+        name: Build the spared quote pilot
+        run: |
+          scripts/prepare-spared-quote-pilot.sh "$RUNNER_TEMP/spared-quote"
+          echo "EIGOS_TEST_SPARED_BIN=$RUNNER_TEMP/spared-quote/spared" >> "$GITHUB_ENV"
+          echo "EIGOS_TEST_SPARED_WASM=$RUNNER_TEMP/spared-quote/quote.wasm" >> "$GITHUB_ENV"
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'

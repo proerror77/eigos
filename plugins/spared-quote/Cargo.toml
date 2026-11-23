@@ -1,0 +1,13 @@
+[package]
+name = "eigos-spared-quote"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[dependencies]
+rusqlite = { version = "=0.41.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+wstd = "=0.6.8"
+
+[profile.release]
+strip = true
