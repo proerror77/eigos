@@ -33,6 +33,7 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiImmediateRideDefinition, immediateApprovalLink, immediateRideState, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { amapObservationDefinition } from './amap-observations.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -61,6 +62,11 @@ export const businessDefinition: OntologyDocument = {
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...luckin.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
+businessDefinition.objectTypes.push(...amapObservationDefinition.objectTypes);
+businessDefinition.interfaceTypes.push(...amapObservationDefinition.interfaceTypes);
+businessDefinition.linkTypes.push(...amapObservationDefinition.linkTypes);
+businessDefinition.functionTypes.push(...amapObservationDefinition.functionTypes);
+businessDefinition.actionTypes.push(...amapObservationDefinition.actionTypes);
 businessDefinition.linkTypes.push(...scheduleJourneyDefinition.linkTypes);
 businessDefinition.functionTypes.push(...scheduleJourneyDefinition.functionTypes);
 businessDefinition.actionTypes.push(...scheduleJourneyDefinition.actionTypes);

@@ -22,6 +22,7 @@ import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-p
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { ontologyName } from '../packages/ontology/schema.js';
 import { accountCommand } from './account-command.js';
+import { amapObservationAccountResources } from '../packages/ontology/amap-observations.js';
 
 const command = process.argv[2];
 const document = businessDefinition;
@@ -46,7 +47,15 @@ else {
       console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
       const args = process.argv.slice(3);
-      if (args[0] === 'applications') {
+      if (args[0] === 'grant-amap-observations') {
+        const active = await metadata.active('Eigos');
+        const grants = businessGrants(active).filter(grant => amapObservationAccountResources.has(grant.resource));
+        if (grants.length !== amapObservationAccountResources.size) throw new Error('The published Amap Action contract is incomplete');
+        await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
+          SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
+          ON CONFLICT DO NOTHING`, ['group:' + accountActionsGroup, JSON.stringify(grants)]);
+        console.log(JSON.stringify({ release: active.release, grants: grants.length }));
+      } else if (args[0] === 'applications') {
         const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
         console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
       } else if (args[0] === 'sync-beta-grants' || args[0] === 'grant-restaurant-search') {

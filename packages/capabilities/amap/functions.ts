@@ -35,7 +35,7 @@ function parsePoint(value: unknown) {
   const [longitude, latitude] = providerPoint.parse(value).split(',').map(Number);
   return gcjPoint.parse({ latitude, longitude, coordinateSystem: 'gcj02' });
 }
-const pointText = ({ longitude, latitude }: Pick<z.infer<typeof gcjPoint>, 'latitude' | 'longitude'>) =>
+export const pointText = ({ longitude, latitude }: Pick<z.infer<typeof gcjPoint>, 'latitude' | 'longitude'>) =>
   `${Number(longitude.toFixed(6))},${Number(latitude.toFixed(6))}`;
 function reportTime(value: unknown) {
   if (value === undefined) return;
@@ -87,7 +87,7 @@ async function geocodeRows(client: AmapClient, input: Address, signal: AbortSign
   return z.array(geocodeRow).max(20).parse(payload.results ?? payload.return ?? payload.geocodes);
 }
 
-function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
+export function geocodeCandidate(record: z.infer<typeof geocodeRow>) {
   return {
     ...administrativeArea(record), level: asText(record.level), address: asText(record.formatted_address),
     point: parsePoint(record.location),

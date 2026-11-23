@@ -22,6 +22,7 @@ import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { withDidiPAReads } from './didi/pa-read.js';
 import { amapFunctions } from './amap/functions.js';
+import { amapObservationFunctions } from './amap/observations.js';
 import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
 import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
@@ -112,6 +113,7 @@ export function createCapabilities(
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
+  const sharedAmap = configuredAmap(connections.amap, connections.amapFetch, connections.betaAmap);
   const getFunctions = () => capabilities.functions;
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
@@ -148,7 +150,8 @@ export function createCapabilities(
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
-    ...amapFunctions(amap, configuredAmap(connections.amap, connections.amapFetch, connections.betaAmap)),
+    ...amapFunctions(amap, sharedAmap),
+    ...amapObservationFunctions(sharedAmap),
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);
