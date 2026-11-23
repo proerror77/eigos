@@ -48,6 +48,7 @@ const linkCookie = '__Host-eigos-account-link';
 const verifyCookie = '__Host-eigos-account-verify';
 const sessionShape = /^[A-Za-z0-9_-]{43}$/, sealedShape = /^[A-Za-z0-9_-]{1,4096}$/;
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/' };
+const portalPolicy = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 const statuses = {
   login: '登录没有完成，请重新登录。',
   verify: '请先打开 Auth0 发到你邮箱的验证邮件，验证后再重新登录。',
@@ -80,7 +81,18 @@ function cookie(req: Request, key: string, shape: RegExp) {
 }
 
 const page = (heading: string, body: string) => `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EIGOS 账号</title>
-      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input,textarea,.button{font:inherit;padding:.35rem .6rem}.button{display:inline-block;border:1px solid;border-radius:.25rem;color:inherit;text-decoration:none}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}</style>
+      <style>body{font:1rem system-ui;max-width:42rem;margin:7vh auto;padding:0 1.5rem;line-height:1.6}button,input,textarea,.button{font:inherit;padding:.35rem .6rem}.button{display:inline-block;border:1px solid;border-radius:.25rem;color:inherit;text-decoration:none}form{margin-block:1.3rem}dd{margin:0 0 .75rem;overflow-wrap:anywhere}
+      .primary{background:#171717;color:#fff}
+      .account-links{display:flex;flex-wrap:wrap;gap:.75rem}
+      .setup{border-top:1px solid #d4d4d4;margin-top:2rem;padding-top:1.25rem}
+      .setup h2{margin-top:0}
+      .setup ol{padding-inline-start:1.5rem}
+      .setup li+li{margin-top:.5rem}
+      .setup code{overflow-wrap:anywhere}
+      .setup textarea{display:block;box-sizing:border-box;width:100%;min-height:8rem;resize:vertical;background:#f5f5f5;color:#171717;border:1px solid #767676;border-radius:.25rem}
+      .setup label{display:block;font-weight:650;margin-bottom:.4rem}
+      .setup button{margin-top:.55rem;cursor:pointer}
+      .copy-status{margin-inline-start:.5rem}</style>
       <main><h1>${heading}</h1>${body}</main></html>`;
 
 /**
@@ -125,6 +137,43 @@ async function resumeLogin(issuer: string, key: Uint8Array, link: NonNullable<Lo
 
 /** Text for an HTML attribute in double quotes. */
 const attribute = (text: string) => text.replace(/[&"'<>]/g, character => `&#${character.charCodeAt(0)};`);
+
+const copyPrompts = `for (const button of document.querySelectorAll('[data-copy-prompt]')) {
+  const prompt = document.getElementById(button.dataset.copyPrompt);
+  const status = button.nextElementSibling;
+  button.hidden = false;
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(prompt.value);
+      status.textContent = '已复制';
+    } catch {
+      prompt.focus();
+      prompt.select();
+      status.textContent = '已选中，请手动复制';
+    }
+  });
+}`;
+const copyPromptHash = createHash('sha256').update(copyPrompts).digest('base64');
+
+function setupGuide(mcpUrl: string) {
+  const install = `请帮我在当前客户端添加名为 EIGOS 的远程 MCP 连接器。服务器地址是 ${mcpUrl}。如果我用的是 Grok，请提示我先在 EIGOS 账号页点「授权 Grok」，再回 Grok 完成登录授权。如果使用接入令牌，请指导我在连接器的凭据设置中填写 Authorization，值为 Bearer 加一个空格和我的接入令牌。不要让我把令牌贴到聊天里。如果你无法直接配置，请给我手动操作步骤。连好后请确认 EIGOS 工具是否可用。`;
+  const tryQuery = '请通过 EIGOS 查询上海市今天的天气，告诉我天气、气温和数据来源。如果查询失败，告诉我客户端或 EIGOS 返回的错误，不要猜测。';
+  const prompt = (id: string, label: string, value: string) => `<p><label for="${id}">${label}</label>
+    <textarea id="${id}" rows="4" readonly>${attribute(value)}</textarea>
+    <button type="button" data-copy-prompt="${id}" hidden>复制${label}</button><span class="copy-status" aria-live="polite"></span></p>`;
+
+  return `<section class="setup" aria-labelledby="setup-heading">
+    <h2 id="setup-heading">连接你的 AI 助手</h2>
+    <p>开通 Beta 后，把 EIGOS 添加为远程 MCP 连接器。</p>
+    <ol>
+      <li><strong>Grok</strong>。先在本页点「授权 Grok」，再到 <a href="https://grok.com/connectors">Grok 连接器</a>，选择「新建连接器」→「自定义」。填入 <code>${attribute(mcpUrl)}</code>。如果界面要求 OAuth Client ID，请使用授权后本页显示的值，再用同一个 EIGOS 账号登录。</li>
+      <li><strong>其他支持自定义 HTTP 请求头的客户端</strong>。在本页点「生成接入令牌」，将 EIGOS 添加为远程 HTTP MCP，使用相同的服务器地址。在客户端凭据设置中添加 <code>Authorization</code>，值为 <code>Bearer &lt;接入令牌&gt;</code>。</li>
+    </ol>
+    ${prompt('install-prompt', '安装提示词', install)}
+    ${prompt('query-prompt', '首条测试提示词', tryQuery)}
+    <p>Beta 默认开放天气、地点、餐厅、机票和酒店的查询。</p>
+    </section><script>${copyPrompts}</script>`;
+}
 
 export function auth0AccountLogin(config: Config, exchange: typeof fetch = fetch,
   keys: JWTVerifyGetKey = createRemoteJWKSet(new URL(config.OAUTH_JWKS_URL!))) {
@@ -184,7 +233,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
   app.use('/account', express.urlencoded({ extended: false, limit: '5kb' }), (_req, res, next) => {
     res.set({
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      'Content-Security-Policy': portalPolicy,
       'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff',
     });
     next();
@@ -195,8 +244,11 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const status = typeof req.query.status === 'string' && Object.hasOwn(statuses, req.query.status)
       ? req.query.status as keyof typeof statuses : undefined;
     let content: string, explains: keyof typeof statuses | undefined;
-    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可申请使用 EIGOS Agent。</p>' : ''}
-      <p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>`;
+    if (!session) content = config.EIGOS_SIGNUP === 'invite'
+      ? `<p>用邮箱或 Google 注册并验证邮箱，登录后提交 Beta 申请。收到邀请码后，回到本页开通。</p>
+        <p class="account-links"><a class="button primary" href="/account/login">登录</a>
+        <a class="button" href="/account/login?signup=1">注册</a></p>`
+      : '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
     else if (!account) {
       if (await accounts.isOperator(session.owner)) { explains = 'operator'; content = `<p>${statuses.operator}</p>`; }
       else if (config.EIGOS_SIGNUP === 'invite') {
@@ -232,8 +284,13 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     // The verify status offers a new verification email when there is a Management API client to ask for it.
     const resend = status === 'verify' && management
       ? '<form method="post" action="/account/resend-verification"><button>重新发送验证邮件</button></form>' : '';
+    const showSetup = account?.status === 'active' || (!account && !explains && config.EIGOS_SIGNUP === 'invite');
+    const setup = showSetup ? setupGuide(new URL('/mcp', config.PUBLIC_URL).href) : '';
+    if (showSetup) {
+      res.set('Content-Security-Policy', `${portalPolicy}; script-src 'sha256-${copyPromptHash}'`);
+    }
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
-    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${resend}${content}
+    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${resend}${content}${setup}
       ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}`));
   });
   app.get('/account/login', flowLimit, (req, res) => {
