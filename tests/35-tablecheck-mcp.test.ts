@@ -68,6 +68,8 @@ test('a verified operator can use the scoped catalog and TableCheck tools withou
     assert(!(await client.listTools()).tools.some(tool => tool.name === 'execute_ontology'));
     await assert.rejects(client.callTool({ name: 'execute_ontology', arguments: { code: 'async () => null' } }), /Tool .* not found/);
     const reader = await authorizedClient('operator', 'tasks:read tasks:write ontology:read');
+    const codeTool = (await reader.listTools()).tools.find(tool => tool.name === 'execute_ontology');
+    assert.deepEqual(Object.keys(codeTool?.inputSchema.properties ?? {}), ['code']);
     const execution = await reader.callTool({ name: 'execute_ontology', arguments: {
       code: 'async ({ query }) => (await query({ type: "TableCheckReservation", select: ["state"] })).items.length',
     } });

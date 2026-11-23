@@ -4,7 +4,6 @@ import { InvalidInput, ServiceUnavailable } from '../../packages/core/identity.j
 import { querySchema, type Query } from '../../packages/runtime/objects.js';
 
 export const codeModeInput = z.strictObject({
-  ontology: z.string().min(1).max(80).optional(),
   code: z.string().trim().min(1).max(12_000),
 });
 

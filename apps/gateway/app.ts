@@ -465,10 +465,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
     if (canExecuteCode) server.registerTool('execute_ontology', {
-      description: 'Run an async JavaScript function for read-only Ontology composition. Supply one function expression such as async ({ query }) => { const page = await query({ type: "TableCheckReservation", select: ["state"], limit: 20 }); return page.items.length; }. query accepts the inner query_ontology object directly and returns { items, cursor }. Await every query and return a compact JSON value. Supports up to 12 reads against one live release.',
+      description: 'Run an async JavaScript function for read-only composition against the live Eigos Ontology. Supply one function expression such as async ({ query }) => { const page = await query({ type: "TableCheckReservation", select: ["state"], limit: 20 }); return page.items.length; }. query accepts the inner query_ontology object directly and returns { items, cursor }. Await every query and return a compact JSON value. Supports up to 12 reads against one live release.',
       inputSchema: codeModeInput,
       annotations: { readOnlyHint: true, openWorldHint: false },
-    }, ({ ontology, code }) => response(async () => {
+    }, ({ code }) => response(async () => {
       requireScope(p, 'ontology:read');
       const cancel = new AbortController();
       const disconnected = () => cancel.abort(new InvalidInput('Code Mode request ended'));
@@ -476,7 +476,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       if (res.destroyed) disconnected();
       try {
         cancel.signal.throwIfAborted();
-        const access = await Access.load(db, p), model = await metadata.active(ontology);
+        const access = await Access.load(db, p), model = await metadata.active();
         const graph = new Objects(db, model, access);
         const result = await codeMode.execute(code, async input => {
           const page = await graph.query(input);

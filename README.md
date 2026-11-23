@@ -68,7 +68,7 @@ MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_on
 
 外部 Agent 可用 `describe_ontology({ query: "TableCheck" })` 查找当前身份可见的资源摘要，再用 `describe_ontology({ names: ["TableCheckReservation"] })` 只读取指定契约。两种查询返回发布版本和定义摘要，均沿用现有目录权限。不传 `query` 或 `names` 时返回原有完整描述。
 
-具有 `ontology:read` 的外部 Agent 可用 `execute_ontology` 组合多次只读查询。传入一个函数表达式 `async ({ query }) => { ... }`，其中 `query` 接收 `query_ontology` 的内部查询对象。一次调用固定在同一发布版本，最多执行 12 次查询。脚本在 WebAssembly 沙箱内处理分页、关联和筛选，只返回最终 JSON。单项查询和失败回退可调用 `query_ontology`，需要业务变更时走已发布的 Action 和原有确认流程。
+具有 `ontology:read` 的外部 Agent 可用 `execute_ontology` 组合多次只读查询。传入一个函数表达式 `async ({ query }) => { ... }`，其中 `query` 接收 `query_ontology` 的内部查询对象。一次调用固定在当前 Eigos 发布版本，最多执行 12 次查询。脚本在 WebAssembly 沙箱内处理分页、关联和筛选，只返回最终 JSON。单项查询和失败回退可调用 `query_ontology`，需要业务变更时走已发布的 Action 和原有确认流程。
 
 例如，在同一次调用中读取订座对象和它的状态日志：
 
