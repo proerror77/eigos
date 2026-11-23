@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
 import { classificationSchema } from './classification.js';
 import { json, time } from './service-contracts.js';
+import { didiOrderEvidence } from './travel.js';
 
 export const immediateRideType = 'DidiImmediateRide';
 export const immediateRideInterface = 'ImmediateRideBooking';
@@ -34,7 +35,7 @@ export const immediateRideRef = z.strictObject({ ride: objectRefSchema });
 export const immediateRideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
 const order = z.strictObject({
   ref: objectRefSchema, orderId: z.string().min(1).max(500), status: z.string(), independentRead: z.boolean(),
-  evidence: z.enum(['live', 'provider_mock', 'synthetic']),
+  evidence: didiOrderEvidence,
 });
 export const immediateRideRecord = z.strictObject({
   id: digest, name: z.string(), sourceTaskId: z.uuid(), state: immediateRideState,

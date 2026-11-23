@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
-import { didiPAReadCapability, didiPAReadTool, withDidiPAReads } from '../packages/capabilities/didi/pa-read.js';
-import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
+import { didiPAReadCapability, didiPAReadTool, didiMcpConsole, didiPAAuthorizeCapability, withDidiPAReads } from '../packages/capabilities/didi/pa-read.js';
+import { didiPAOrderAccountResources, didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
+import { didiPAOrderCapability } from '../packages/capabilities/didi/pa-order.js';
+import { didiEndpoint } from '../packages/capabilities/didi/contracts.js';
+import { DidiPA } from '../packages/sdk/didi-pa.js';
 import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { accountActionsGroup } from '../packages/runtime/accounts.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
@@ -17,6 +23,129 @@ import { digest } from '../packages/core/identity.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, route } from './fixture.js';
+
+test('a Beta rider connects their own DiDi PA and confirms one order on the original MCP task', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });
+  const client = new Client({ name: 'private-didi-pa', version: '1' });
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-fixture-'));
+  const source = withDidiPAReads(async () => { throw new Error('The member must use their own PA'); }, true);
+  const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, createCapabilities(f.db, source), {
+    model: 'selected-action', async run() { throw new Error('The selected Action must resume without model selection'); },
+  }));
+  const reference = digest('the customer PA connection');
+  const orderId = 'synthetic-private-pa-order';
+  let sent = 0, checked = 0, loseReply = false;
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const result = await client.callTool({ name, arguments: args });
+    assert(!result.isError, JSON.stringify(result.content));
+    return JSON.parse((result.content[0] as { text: string }).text);
+  };
+  const adapter = { async request<T>(path: string, body?: unknown): Promise<T> {
+    const taskId = path.split('/')[1];
+    if (body && loseReply) { loseReply = false; throw new Error('PA lost its response to EIGOS'); }
+    return body ? call('respond_to_task', { taskId, ...body as object }) : call('get_task', { taskId });
+  } };
+  const order = () => ({ orderId, status: '匹配中', observedAt: new Date().toISOString(), contentDigest: digest(orderId), evidence: 'live' as const });
+  const pa = new DidiPA({ ontology: adapter, privateDirectory: directory, connection: {
+    reference,
+    reads: {
+      async discover() { return { endpoint: didiEndpoint('production'), environment: 'production', bindingId: reference,
+        enabledTools: [{ name: 'maps_textsearch', inputSchema: {} }], evidenceKind: 'live_readonly' }; },
+      invoke: (...args) => f.provider.source.connector.invoke(...args),
+    },
+    orders: {
+      async checkOrderConnection() {},
+      async quote(args, category) {
+        assert(args.from_name && args.to_name);
+        return { traceId: 'private-estimate-trace', category, amountMinor: '7305', currency: 'CNY' };
+      },
+      async create(quote, _signal, beforeDispatch) {
+        assert.equal(quote.traceId, 'private-estimate-trace');
+        await beforeDispatch();
+        sent++;
+        return { ...order(), state: 'created', independentRead: false };
+      },
+      async query(id) {
+        assert.equal(id, orderId);
+        checked++;
+        return { ...order(), state: 'reported', independentRead: true };
+      },
+    },
+  } });
+  const finishResponse = async (taskId: string, expected: string) => {
+    assert(await worker.runOne('interactive'));
+    const pending = await call('get_task', { taskId });
+    assert.equal(pending.state, 'input-required', pending.error ?? JSON.stringify(pending.result));
+    assert.equal(pending.result.taskId, taskId);
+    assert.equal(pending.result.capability, expected);
+    return pending.result;
+  };
+  try {
+    f.provider.flags.related = false;
+    await syncAccountGrants(f.db, f.model);
+    const grants = businessGrants(f.model).filter(grant => didiPAOrderAccountResources.has(grant.resource));
+    assert.equal(grants.length, didiPAOrderAccountResources.size);
+    const user = 'rides', email = 'rides@example.test', owner = g.owner(user);
+    await setGrants(f.db, 'account-actions:' + owner, grants);
+    const { cookie } = await g.login(user, email);
+    await g.form('apply', cookie, new URLSearchParams({ email, purpose: 'Order rides using my PA' }));
+    await g.form('activate', cookie, new URLSearchParams({ code: await g.accounts.invite(owner, 1) }));
+    await g.form('approve', cookie);
+    const token = await g.token(user, { issuedAt: Math.ceil(Date.now() / 1000) });
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url),
+      { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
+    const args = { requestId: randomUUID(),
+      action: { interface: { type: 'ImmediateRideBooking', action: 'book', implementation: 'DidiImmediateRide' }, input: route },
+      read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
+    };
+    const task = await call('complete_with_action', args);
+    const auth = await finishResponse(task.id, didiPAAuthorizeCapability);
+    const signal = AbortSignal.timeout(20000);
+    const noDidi = new DidiPA({ ontology: adapter, privateDirectory: directory });
+    assert.deepEqual(await noDidi.answer(task.id, signal),
+      { state: 'authorization_required', taskId: task.id, requestId: auth.requestId, authorizationUrl: didiMcpConsole });
+    assert.equal(auth.input.authorizationUrl, didiMcpConsole);
+    assert.equal((await call('get_task', { taskId: task.id })).result.requestId, auth.requestId);
+    await pa.answer(task.id, signal);
+    for (let index = 0; index < 3; index++) {
+      const read = await finishResponse(task.id, didiPAReadCapability);
+      assert.equal(read.input.connectionRef, reference);
+      await pa.answer(task.id, signal);
+    }
+    const approval = await finishResponse(task.id, 'ride.confirm_immediate_order');
+    assert.equal(sent, 0);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id])).rowCount, 0);
+    const fare = approval.input.fares[0];
+    await call('respond_to_task', { taskId: task.id, requestId: approval.requestId,
+      response: { decision: 'confirm', quoteDigest: approval.input.quoteDigest, category: fare.category,
+        amountMinor: fare.amountMinor, currency: fare.currency, acceptVariableFinalFare: true } });
+    const dispatch = await finishResponse(task.id, didiPAOrderCapability);
+    await assert.rejects(pa.answer(task.id, signal), /user already approved/);
+    assert.equal(dispatch.input.quoteDigest, approval.input.quoteDigest);
+    assert.equal(JSON.stringify(dispatch).includes('private-estimate-trace'), false);
+    assert.equal(sent, 0);
+    loseReply = true;
+    await assert.rejects(pa.answer(task.id, signal, true), /PA lost its response/);
+    assert.deepEqual([sent, checked], [1, 1]);
+    await pa.answer(task.id, signal, true);
+    assert(await worker.runOne('interactive'));
+    const done = await call('get_task', { taskId: task.id });
+    assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
+    assert.equal(done.result.state, 'ordered');
+    assert.equal(done.result.sourceTaskId, task.id);
+    assert.equal(done.result.order.orderId, orderId);
+    assert.equal(done.result.order.evidence, 'pa_reported');
+    assert.equal(done.result.order.independentRead, true);
+    assert.equal((await call('complete_with_action', args)).id, task.id);
+    assert.equal(await worker.runOne('interactive'), false);
+    assert.deepEqual([sent, checked], [1, 1]);
+    const recorded = await f.db.query(`SELECT state FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id]);
+    assert.deepEqual(recorded.rows, [{ state: 'confirmed' }]);
+  } finally {
+    await client.close(); await g.close(); await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('the original invited PA directly reads DiDi and completes the same Action task', async () => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });

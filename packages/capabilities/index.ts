@@ -22,6 +22,7 @@ import { configuredTravelNotifications } from './pa/travel-notifications.js';
 import { configuredAmap } from './amap/client.js';
 import { withDidiPAReads } from './didi/pa-read.js';
 import { amapFunctions } from './amap/functions.js';
+import { amapObservationFunctions } from './amap/observations.js';
 import { prepareMapCorrectionPrompt } from './amap/task-correction.js';
 import { hotelTaskWorkflow, publicHotelTaskResult } from './services/hotel-workflows.js';
 import { resolveTaskLocation } from './location.js';
@@ -67,7 +68,9 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
   { marketplaceFetch, ...fetchers }: ProviderFetch = {}) {
   const eligible = (owner: string) => hasBetaReadAccess(db, owner);
   const trialUntil = config.EIGOS_BETA_FLYAI_TRIAL_UNTIL;
-  return createCapabilities(db, config.EIGOS_DIDI_PA_READS_ENABLED === 'true' ? withDidiPAReads(source) : source, extensions,
+  const didi = config.EIGOS_DIDI_PA_READS_ENABLED === 'true'
+    ? withDidiPAReads(source, config.EIGOS_DIDI_PA_ORDERS_ENABLED === 'true') : source;
+  return createCapabilities(db, didi, extensions,
     configuredServices(config.EIGOS_SERVICE_CONNECTION_FILE, undefined, marketplaceFetch, config,
       trialUntil ? { eligible, trialUntil } : undefined),
     configuredStripeSandbox(config.EIGOS_STRIPE_SANDBOX_CONNECTION_FILE), {
@@ -110,6 +113,7 @@ export function createCapabilities(
 ) {
   let sources: Sources;
   const amap = configuredAmap(connections.amap, connections.amapFetch);
+  const sharedAmap = configuredAmap(connections.amap, connections.amapFetch, connections.betaAmap);
   const getFunctions = () => capabilities.functions;
   const notifications = configuredTravelNotifications(db, getFunctions, connections.travelPA, connections.travelPAFetch);
   const handlers = new Map([
@@ -146,7 +150,8 @@ export function createCapabilities(
     ...stripePaymentFunctions(db, stripe),
     ...paotuiFunctions(connections.paotui),
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
-    ...amapFunctions(amap, configuredAmap(connections.amap, connections.amapFetch, connections.betaAmap)),
+    ...amapFunctions(amap, sharedAmap),
+    ...amapObservationFunctions(sharedAmap),
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);

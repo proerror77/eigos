@@ -12,7 +12,7 @@ import type { RideOrders } from './operations.js';
 import type { DidiTool } from './contracts.js';
 import { didiAppLinkInput, didiMapRouteInput, didiNearbyInput, didiReverseInput } from '../../ontology/didi-reads.js';
 
-export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
+export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; paOrdersEnabled?: true; assertCurrent(): Promise<void> }
 export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string; readOnly?: true }) => Promise<DidiSource>;
 export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: didiEvidence });
 export type SourceResult = z.infer<typeof sourceResultSchema>;

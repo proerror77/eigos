@@ -1,0 +1,16 @@
+# 高德出行观察
+
+每次查询通过已发布的 Interface Action，返回一个可读回的观察对象。高德只接收查询请求。EIGOS 保存实际输入、观察时间和结果摘要，并用 Link 连接起终点、区域与结果。
+
+| Interface Action | 实现 | 关联 |
+| --- | --- | --- |
+| `MapAddressResolution.geocode` | `ResolveAmapAddress` | 观察记录关联高德返回的候选坐标 |
+| `MapRoutePlanning.plan` | `PlanAmapRoute` | 观察记录关联起点、终点和各条路线方案 |
+| `MapDistanceMeasurement.measure` | `MeasureAmapDistances` | 观察记录关联共同终点和各条测距结果，每条结果关联其原始起点 |
+| `MapTrafficInspection.inspect` | `InspectAmapTraffic` | 观察记录关联矩形查询区域 |
+
+调用后用 `readAmapObservation` 读回同一引用。`complete_with_action` 可把 Action 返回值绑定到 `observation`。有多个地址候选时先由用户选择一个。规划和测距可直接引用这个 `AmapQueryPoint`，或使用用户确认的 GCJ-02 坐标。公交路线要求两端的高德城市代码，例如上海 021。行政区代码可选，两种代码均可来自地址解析。
+
+这组 Action 使用现有高德 Web 服务凭据。路线使用路径规划 2.0，测距支持直线、驾车和步行，路况是对角线在 10 公里内的矩形区域。读回保留米、秒、观察时间和来源摘要。已有的地图 MCP Function 可以继续单独调用。[高德 Web 服务](https://lbs.amap.com/api/webservice/summary) · [路径规划 2.0](https://lbs.amap.com/api/webservice/guide/api/newroute) · [测距](https://lbs.amap.com/api/webservice/guide/api/direction/#distance) · [交通态势](https://lbs.amap.com/api/webservice/guide/api-advanced/traffic-situation-inquiry)
+
+受邀账号需要独立的地图业务授权。激活包含这四个 Action 的 Ontology 后，可由管理角色运行 `npm run account -- grant-amap-observations` 明确开通。共享高德连接使用已有有效期和账号验证。底层建模沿用 [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)、[Interface Link](https://www.palantir.com/docs/foundry/interfaces/interface-link-types-overview) 和 [Link Types](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。

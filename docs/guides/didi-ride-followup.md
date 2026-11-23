@@ -39,7 +39,7 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 - `readDidiRideWatch` 读回当前进度与可用提醒，`readDidiDriverPosition` 按需读取司机位置。`StopDidiRideWatch` 停止观察，已发出的供应商订单保持原状态。
 - [Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts/) 沿 `stateLogs` 观察可枚举状态的已提交转换。现有可选通知队列按观察版本发送和撤回，发送前重新复核原对象、归属和许可。Webhook 接收确认表示通知进入 PA 通道，用户端已读需要独立证据。
 
-开发测试使用合成订单、文档状态和替代的通知接收方。生产下单开关保持关闭。本能力未通过真实订单或用户端通知的验收。
+开发测试使用合成订单、文档状态和替代的通知接收方。真实订单和用户端通知需要独立验收。
 
 ## 原 PA 的滴滴连接
 
@@ -49,4 +49,15 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 
 Worker 校验调用者、原任务、方法、输入摘要、结果摘要、类型和时间窗口，复用地点解析、报价 Action 和 SourceReceipt 投影。结果标为 pa_reported，完整 PA 回执留在原任务的 PA 请求记录。直接由 EIGOS 验证的 live_readonly 报价仍保留原有 accepted 标志。 [Function 支持的 Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)
 
-部署时保持 EIGOS_SIGNUP=invite。Gateway 和 Worker 设置 EIGOS_DIDI_PA_READS_ENABLED=true，再用管理角色运行 npm run account -- grant-didi-pa 开通邀约账号的询价权限。验收在同一原 PA 对话留存任务 ID、PA 请求、真实报价及来源读回。试点允许只读询价和跟单。PA 报价回执仅用于原询价任务。跨任务跟单需要已验证的 EIGOS 原单和仍有效的同 owner 供应商绑定。试点清单没有滴滴叫车、取消或付款权限。
+部署时使用 `EIGOS_SIGNUP=invite`。Gateway 和 Worker 设置 `EIGOS_DIDI_PA_READS_ENABLED=true`，再用管理角色运行 `npm run account -- grant-didi-pa` 开通受邀账号的询价权限。跨任务跟单仍依赖已验证的 EIGOS 原单和同 owner 的供应商绑定。
+
+### 受邀用户用自己的滴滴连接叫车
+
+1. 用户明确要求即时叫车时，原 PA 调用 `ImmediateRideBooking.book` 或 `bookWithEndpoints`。任务先发出 `didi.authorize` 请求。PA 已接通个人滴滴 MCP 时，确认所需工具并回传该连接的随机引用。缺连接时，PA 展示请求中的[滴滴官方申请入口](https://mcp.didichuxing.com/)，保留原请求。用户在滴滴开通 Key 并存在 PA 私有配置里，回到原对话后由 PA 通过 `respond_to_task` 继续。
+2. 同一个连接用于解析地址和询价。PA 展示起终点、车型、价格和有效期，用户确认一项后才应答 `ride.confirm_immediate_order`。
+3. Worker 记录唯一发单请求后发出 `didi.place_order`。PA 执行器重查原任务，以同一连接验价并使用新报价的 traceId。若车型和价格仍匹配，才从 PA 调用滴滴发单。PA 在私有目录持久化派发与回执。无法确定是否发单时保留未知状态，避免重复叫车。
+4. PA 通过同一个 `respond_to_task` 返回下单回执和单独查询到的原订单状态。EIGOS 将准确订单号、状态和证据 `pa_reported` 写入原任务和本体。收到确认号但是原单读回未完成时，结果显示 `submitted`。
+
+生产开通需要 Gateway 和 Worker 同时设置 `EIGOS_DIDI_PA_ORDERS_ENABLED=true`，并显式运行 `npm run account -- grant-didi-pa-orders` 安装受邀账号的滴滴交易授权。该权限清单独立于五项共享查询。原任务之外的主动跟单、取消和付款使用各自的授权。
+
+PA 主机可以接入 `DidiPA` SDK，复用发起任务时的 EIGOS 客户端。对支持 HTTP 的 PA，构建后可运行 `node dist/scripts/didi-pa.js <taskId>`。用 PA 主机的私有配置提供 `EIGOS_PA_URL`、原 EIGOS 客户端的 `EIGOS_PA_TOKEN`、个人滴滴 Key 文件路径 `EIGOS_PA_DIDI_KEY_FILE`、稳定私有目录 `EIGOS_PA_DIDI_DIRECTORY` 和 64 位十六进制本地连接标识 `EIGOS_PA_DIDI_CONNECTION`。原 PA 自己处理用户确认。只对收到用户确认后生成的 `didi.place_order` 请求使用 `--dispatch-approved-order`。同一 PA 安装应使用同一个目录保存派发记录。

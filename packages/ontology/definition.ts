@@ -33,6 +33,7 @@ import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplac
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
 import { didiImmediateRideDefinition, immediateApprovalLink, immediateRideState, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { amapObservationDefinition } from './amap-observations.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -55,12 +56,17 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 };
 /** Domain packages compose into one published authority, never independent task stores. */
 export const businessDefinition: OntologyDocument = {
-  id: ride.id, version: '48',
+  id: ride.id, version: '49',
   agentProfiles: businessAgentProfiles,
   objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...luckin.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };
+businessDefinition.objectTypes.push(...amapObservationDefinition.objectTypes);
+businessDefinition.interfaceTypes.push(...amapObservationDefinition.interfaceTypes);
+businessDefinition.linkTypes.push(...amapObservationDefinition.linkTypes);
+businessDefinition.functionTypes.push(...amapObservationDefinition.functionTypes);
+businessDefinition.actionTypes.push(...amapObservationDefinition.actionTypes);
 businessDefinition.linkTypes.push(...scheduleJourneyDefinition.linkTypes);
 businessDefinition.functionTypes.push(...scheduleJourneyDefinition.functionTypes);
 businessDefinition.actionTypes.push(...scheduleJourneyDefinition.actionTypes);
