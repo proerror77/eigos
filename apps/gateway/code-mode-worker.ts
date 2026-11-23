@@ -1,10 +1,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
-import releaseVariant from '@jitl/quickjs-wasmfile-release-sync';
-import { newQuickJSWASMModuleFromVariant, type QuickJSDeferredPromise } from 'quickjs-emscripten-core';
+import { getQuickJS, type QuickJSDeferredPromise } from 'quickjs-emscripten';
 
 const port = parentPort!;
 const { code } = workerData as { code: string };
-const runtime = (await newQuickJSWASMModuleFromVariant(releaseVariant)).newRuntime();
+const runtime = (await getQuickJS()).newRuntime();
 const deadline = Date.now() + 7_500;
 runtime.setInterruptHandler(() => Date.now() >= deadline);
 runtime.setMemoryLimit(16 * 1024 * 1024);
