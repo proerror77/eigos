@@ -1,4 +1,4 @@
-import { Conflict, digest, NotFound } from '../../core/identity.js';
+import { Conflict, digest, NotFound, PermissionDenied } from '../../core/identity.js';
 import {
   ridePosition, rideProgress, rideWatchClosed, rideWatchFields, rideWatchRead,
   rideWatchRef, rideWatchStart, rideWatchType, type rideWatchState,
@@ -9,8 +9,8 @@ import type { Database } from '../../runtime/database.js';
 import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { Objects } from '../../runtime/objects.js';
 import { ScheduledActions } from '../../runtime/scheduled-actions.js';
-import { originalDidiRide } from './original-order.js';
-import type { SourceResolver } from './functions.js';
+import { originalDidiOrderAuthority } from './original-order.js';
+import type { DidiFollowup, SourceResolver } from './functions.js';
 import type { z } from 'zod';
 
 type State = z.infer<typeof rideWatchState>;
@@ -27,7 +27,7 @@ const ranks: Partial<Record<State, number>> = {
 };
 
 function nextCheck(now: number, delay: number, expiresAt: string) {
-  return now + delay < Date.parse(expiresAt) ? iso(now + delay) : null;
+  return iso(Math.min(now + delay, Date.parse(expiresAt)));
 }
 
 function withdrawal(watch: Watch) {
@@ -64,7 +64,8 @@ function sourceFailure(watch: Watch, now: number): Partial<Watch> {
   const failures = watch.failures + 1;
   const retryAt = failures < 3 ? nextCheck(now, minute * 2 ** (failures - 1), watch.expiresAt) : null;
   if (retryAt) return { failures, nextCheckAt: retryAt, reason: 'source_retry' };
-  return { state: 'unavailable', reason: 'source_unavailable', failures, nextCheckAt: null, ...withdrawal(watch) };
+  return { state: 'unavailable', reason: 'source_unavailable', failures, nextCheckAt: null,
+    driver: null, distanceKm: null, etaMinutes: null, ...withdrawal(watch) };
 }
 
 async function watchRow(objects: FunctionContext['objects'], watch: ObjectRef) {
@@ -87,17 +88,18 @@ const canceledWatch = (watch: Watch) => ({
 
 export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolver): Map<string, FunctionHandler> {
   const schedules = new ScheduledActions(db);
-  async function sourceFor(order: ObjectRef, ctx: FunctionContext) {
+  async function sourceFor(order: ObjectRef, ctx: FunctionContext, followup?: DidiFollowup) {
     if (order.type !== 'DidiRideOrder') throw new Conflict('Use a linked DiDi order');
     const row = await ctx.objects.read(order);
-    const original = await originalDidiRide(ctx.objects, order);
+    const authorityId = await originalDidiOrderAuthority(ctx.objects, row);
     const { bindingId, orderId } = row.properties;
     if (typeof bindingId !== 'string' || !bindingId || typeof orderId !== 'string' || !orderId)
       throw new Conflict('Original ride authority is unavailable');
-    const source = await resolveSource(ctx.principal.owner, { bindingId, orderId });
+    const source = await resolveSource(ctx.principal.owner, { bindingId, orderId, authorityId,
+      ...(followup ? { followup, db, execution: ctx.execution } : {}) });
     const authority = source.authorityId ?? digest(source.bindingId);
     await source.assertCurrent();
-    if (bindingId !== source.bindingId || original.properties.sourceAuthority !== authority || !source.orders?.observe) {
+    if ((!source.followup && bindingId !== source.bindingId) || authorityId !== authority || !source.orders?.observe) {
       throw new Conflict('Original ride source authority is unavailable');
     }
     return { source, orders: source.orders, authority, orderId };
@@ -110,7 +112,9 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
       const now = Date.now(), end = Date.parse(expiresAt);
       if (end < now + minute || end > now + 4 * 60 * minute) throw new Conflict('Ride tracking needs a window of one minute to four hours');
       if (isCanceled(await ctx.objects.read(order))) throw new Conflict('The original ride is canceled');
-      const { authority } = await sourceFor(order, ctx);
+      const { authority, source } = await sourceFor(order, ctx);
+      if (source.followup && Date.parse(source.followup.expiresAt) < end)
+        throw new Conflict('The PA follow-up authorization must cover the requested tracking window');
       const watch = { type: rideWatchType, id: digest([rideWatchType, order.id]) };
       const prior = await watchRow(ctx.objects, watch).catch(error => {
         if (error instanceof NotFound) return null;
@@ -132,11 +136,12 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
         const value: Watch = { id: watch.id, name: 'DiDi ride tracking', state: 'watching', reason: 'awaiting_provider',
           statusCode: null, observedAt: null, contentDigest: null, driver: null, distanceKm: null, etaMinutes: null,
           expiresAt, nextCheckAt: iso(now), scheduleId: watch.id, sourceAuthority: authority, notifyArrival,
-          failures: 0, arrivalAt: null, arrivalVersion: 0, arrival: null };
+          failures: 0, arrivalAt: null, arrivalVersion: 0, arrival: null,
+          ...(source.followup ? { followup: source.followup } : {}) };
         await graph.create(watch, value);
         await graph.link({ type: 'RideWatchOrder', from: watch, to: order });
         await schedules.enqueue(graph, { id: value.scheduleId, action: 'CheckDidiRideWatch',
-          arguments: { watch }, runAt: value.nextCheckAt!, deadline: expiresAt, sourceTaskId: ctx.taskId });
+          arguments: { watch }, runAt: value.nextCheckAt!, deadline: iso(end + minute), sourceTaskId: ctx.taskId });
       });
     }],
     ['checkDidiRideWatch', async (raw, ctx) => {
@@ -144,26 +149,31 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
       const { row, value } = await watchRow(ctx.objects, watch), task = ctx.execution?.task;
       const scheduled = task?.input.scheduledAction;
       if (!ctx.edit || !scheduled || !task || scheduled.scheduleId !== value.scheduleId) throw new Conflict('Use the original scheduled observation');
-      if (rideWatchClosed.has(value.state) || Date.now() >= Date.parse(value.expiresAt)) throw new Conflict('Ride tracking has ended');
+      if (rideWatchClosed.has(value.state)) return ctx.edit(watch, async () => {});
+      const ended = () => Date.now() >= Date.parse(value.expiresAt);
+      const expired = { state: 'expired', reason: 'expired', nextCheckAt: null,
+        driver: null, distanceKm: null, etaMinutes: null, ...withdrawal(value) };
+      if (ended()) return ctx.edit(watch, graph => graph.edit(watch, row.revision, expired));
       const order = await linkedOrder(ctx.objects, watch);
       if (isCanceled(order)) return ctx.edit(watch, graph => graph.edit(watch, row.revision, canceledWatch(value)));
-      const { source, orders, authority, orderId } = await sourceFor(order.ref, ctx);
-      if (authority !== value.sourceAuthority) throw new Conflict('Original ride source authority changed');
-      const attempt = () => orders.observe!(orderId, ctx.signal);
       let progress: Progress | null;
       try {
+        const { source, orders, authority, orderId } = await sourceFor(order.ref, ctx, value.followup);
+        if (authority !== value.sourceAuthority) throw new Conflict('Original ride source authority changed');
+        const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(Math.max(1, Date.parse(value.expiresAt) - Date.now()))]);
         progress = rideProgress.parse(await ctx.execution!.tasks.readSource(task, 'ride-observation:' + (task.execution_step ?? 0),
-          { order: order.ref, authority, orderId }, attempt));
-      } catch {
+          { order: order.ref, authority, orderId }, () => orders.observe!(orderId, signal)));
+        await source.assertCurrent();
+        if (progress.orderId !== orderId) throw new Conflict('Original provider order identity changed');
+      } catch (error) {
+        if (error instanceof PermissionDenied) throw error;
         progress = null;
       }
       ctx.signal.throwIfAborted();
-      await source.assertCurrent();
-      if (progress && progress.orderId !== orderId) throw new Conflict('Original provider order identity changed');
       const now = Date.now();
       return ctx.edit(watch, async graph => {
         const changes = isCanceled(await graph.read(order.ref)) ? canceledWatch(value)
-          : progress ? observedUpdate(value, progress, now) : sourceFailure(value, now);
+          : ended() ? expired : progress ? observedUpdate(value, progress, now) : sourceFailure(value, now);
         await graph.edit(watch, row.revision, changes);
         if (changes.nextCheckAt) await schedules.continueAt(graph, task, changes.nextCheckAt);
       });
@@ -201,7 +211,7 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
       }
       if (arrival) {
         ctx.objects.access.source(ctx.objects.model, 'Didi');
-        const { authority } = await sourceFor(order.ref, ctx);
+        const { authority } = await sourceFor(order.ref, ctx, value.followup);
         if (authority !== value.sourceAuthority) throw new Conflict('Original ride source authority changed');
       }
       if (!value.observedAt || Date.now() - Date.parse(value.observedAt) >= 2 * minute) {
@@ -218,7 +228,7 @@ export function didiRideWatchFunctions(db: Database, resolveSource: SourceResolv
         throw new Conflict('Driver position requires a current ride');
       const order = await linkedOrder(ctx.objects, watch);
       if (isCanceled(order)) throw new Conflict('The original ride is canceled');
-      const { source, orders, orderId, authority } = await sourceFor(order.ref, ctx);
+      const { source, orders, orderId, authority } = await sourceFor(order.ref, ctx, value.followup);
       if (authority !== value.sourceAuthority || !orders.driverPosition) throw new Conflict('Current driver position is unavailable');
       const point = ridePosition.parse(await orders.driverPosition(orderId, ctx.signal));
       await source.assertCurrent();

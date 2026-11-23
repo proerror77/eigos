@@ -275,7 +275,8 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
       ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900,
     });
     assert.deepEqual((await graph.follow(direct, 'deliveryAddress')).map(row => row.ref), [deliveryAddress]);
-    assert.deepEqual(await graph.follow(direct, 'personalPlaceVersion'), []);
+    assert.deepEqual((await graph.follow(direct, 'personalPlaceVersion')).map(version => version.ref), [confirmedVersion!.ref]);
+    assert.deepEqual((await graph.follow(direct, 'cartChange')).map(row => row.ref), [change]);
     const job = (await f.db.query(`SELECT id,body FROM ${f.db.schema}.scheduled_actions WHERE body->'arguments'->'checkout'->>'id'=$1`,
       [order.id])).rows[0]!;
     assert.equal(job.body.action, 'RefreshTaobaoInstantDeliveryOrder');
@@ -303,6 +304,18 @@ test('buyer transactions require separate PA approvals, preserve unknown attempt
     assert.equal((await checkoutView(order)).observation, 'finished');
     assert.equal((await graph.read(supplier!.ref)).properties.fulfillment, 'completed');
     assert((await graph.follow(order, 'stateLogs')).some(log => log.properties.newState === 'paid'));
+    assert.deepEqual((await graph.follow(order, 'observationLogs')).map(log => log.properties.newState),
+      ['idle', 'watching', 'finished']);
+    const checkoutModel = f.model.object('TaobaoInstantDeliveryCheckoutStateLog').machinery;
+    assert(checkoutModel?.transitions.some(edge => edge.from === 'quoted' && edge.to === 'paid' &&
+      edge.action === 'RefreshTaobaoInstantDeliveryOrder'));
+    await execute('SavePersonalPlace', {
+      address: '虚构区新住址1号', city: '上海市', role: 'home', expectedRevision: 1, confirmed: true,
+    });
+    await assert.rejects(execute('PreviewTaobaoInstantDeliveryCheckout', {
+      ...scope, cartRevision: cartVersion.taobao, maxAmountMinor: 1900,
+    }), /personal delivery address changed/);
+    assert.equal((await graph.follow(order, 'personalPlaceVersion'))[0]?.properties.address, originalAddress);
     assert((await graph.follow(supplier!.ref, 'fulfillmentLogs')).some(log => log.properties.newState === 'completed'));
     assert.equal(await f.worker.runOne('scheduled'), false);
 

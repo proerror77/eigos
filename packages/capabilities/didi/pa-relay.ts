@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { DIDI_TOOLS, didiEndpoint } from './contracts.js';
 
 /** The PA host binds a random reference to its authenticated owner, task and supplier session. */
@@ -7,13 +7,15 @@ export interface DidiPALease {
   taskId: string;
   requestId: string;
   expiresAt: string;
-  access: 'read' | 'ride';
+  access: 'read' | 'ride' | 'followup';
+  orderId?: string;
   readKey(): Promise<string>;
 }
 
 const hash = (value: string) => createHash('sha256').update(value).digest();
 const methods = new Set(['initialize', 'notifications/initialized', 'notifications/cancelled', 'tools/list', 'tools/call', 'ping']);
 const readTools = new Set<string>(DIDI_TOOLS);
+const followupTools = new Set(['taxi_query_order', 'taxi_get_driver_location']);
 const rideTools = new Set(['taxi_create_order', 'taxi_query_order']);
 
 /** Mount this handler inside the PA host. Only the PA loads the official supplier credential. */
@@ -28,17 +30,33 @@ export function createDidiPARelay(transportToken: string, findLease: (reference:
     if (!lease || lease.owner !== request.headers.get('X-EIGOS-Owner') || lease.taskId !== request.headers.get('X-EIGOS-Task') ||
         lease.requestId !== request.headers.get('X-EIGOS-PA-Request') || !(Date.parse(lease.expiresAt) > Date.now()))
       return new Response(null, { status: 403 });
-    if (!['POST', 'DELETE'].includes(request.method)) return new Response(null, { status: 405 });
+    if (!['GET', 'POST', 'DELETE'].includes(request.method)) return new Response(null, { status: 405 });
+    const orderId = request.headers.get('X-EIGOS-Order');
+    if (lease.access === 'followup' ? !orderId || orderId !== lease.orderId : orderId !== null)
+      return new Response(null, { status: 403 });
     try {
+      const key = (await lease.readKey()).trim();
+      if (!/^[A-Za-z0-9._~-]{8,1024}$/.test(key)) return new Response(null, { status: 403 });
+      const authorityId = createHmac('sha256', transportToken).update(JSON.stringify(['didi-authority', lease.owner, key])).digest('hex');
+      const expected = request.headers.get('X-EIGOS-Authority');
+      if (expected && !timingSafeEqual(hash(expected), hash(authorityId))) return new Response(null, { status: 403 });
+      if (request.method === 'GET') return Response.json({ authorityId: authorityId, access: lease.access,
+        expiresAt: lease.expiresAt, ...(orderId ? { orderId } : {}) });
       const body = request.method === 'POST' ? await request.text() : undefined;
       if (body !== undefined) {
         if (body.length > 64_000) return new Response(null, { status: 413 });
         const rpc = JSON.parse(body);
-        if (!methods.has(rpc.method) || rpc.method === 'tools/call' && !readTools.has(rpc.params?.name) &&
-            !(lease.access === 'ride' && rideTools.has(rpc.params?.name))) return new Response(null, { status: 403 });
+        if (!methods.has(rpc.method)) return new Response(null, { status: 403 });
+        if (rpc.method === 'tools/call') {
+          const tool = rpc.params?.name;
+          if (lease.access === 'followup') {
+            if (!expected || !followupTools.has(tool) || rpc.params?.arguments?.order_id !== orderId)
+              return new Response(null, { status: 403 });
+          } else if (!readTools.has(tool) && !(lease.access === 'ride' && rideTools.has(tool))) {
+            return new Response(null, { status: 403 });
+          }
+        }
       }
-      const key = (await lease.readKey()).trim();
-      if (!/^[A-Za-z0-9._~-]{8,1024}$/.test(key)) return new Response(null, { status: 403 });
       const target = new URL(didiEndpoint('production'));
       target.searchParams.set('key', key);
       const headers = new Headers();

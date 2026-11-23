@@ -7,10 +7,12 @@ import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
-import { didiPAConnectionCapability, withDidiPAConnection } from '../packages/capabilities/didi/pa-connection.js';
+import { didiPAConnectionCapability, didiPAFollowupCapability, withDidiPAConnection } from '../packages/capabilities/didi/pa-connection.js';
 import { createDidiPARelay, type DidiPALease } from '../packages/capabilities/didi/pa-relay.js';
 import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
 import { immediateRideApprovalCapability } from '../packages/ontology/didi-immediate-ride.js';
+import { internalClassification } from '../packages/ontology/classification.js';
+import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { accountActionsGroup } from '../packages/runtime/accounts.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
@@ -44,7 +46,7 @@ test('an invited pilot PA quotes and books a synthetic ride using the confirmed 
     if (rpc.params?.name === 'taxi_create_order' || rpc.params?.name === 'taxi_query_order') {
       if (rpc.params.name === 'taxi_create_order') created++;
       else { readBack++; assert.equal(rpc.params.arguments.order_id, 'synthetic-pa-order'); }
-      return Response.json({ jsonrpc: '2.0', id: rpc.id, result: { structuredContent: { orderId: 'synthetic-pa-order', status: 'mock order' } } });
+      return Response.json({ jsonrpc: '2.0', id: rpc.id, result: { structuredContent: { orderId: 'synthetic-pa-order', status: 'mock order', statusCode: 1 } } });
     }
     return f.provider.fetcher(target, init);
   });
@@ -53,10 +55,12 @@ test('an invited pilot PA quotes and books a synthetic ride using the confirmed 
     assert(!JSON.stringify(init).includes(key));
     return relay(new Request(String(target), init));
   }, 'mock');
-  const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, createCapabilities(f.db, source, {}), {
+  const capabilities = createCapabilities(f.db, source, {});
+  const schedules = new ScheduledActions(f.db, f.metadata);
+  const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, capabilities, {
     model: 'no-model-needed-for-a-selected-action',
     async run() { throw new Error('The selected Action must run without model selection'); },
-  }));
+  }), schedules, new ScheduledActionRunner(f.db, f.metadata, f.tasks, capabilities.actions));
   async function call(name: string, args = {}) {
     const value = await client.callTool({ name, arguments: args });
     assert(!value.isError, JSON.stringify(value.content));
@@ -156,6 +160,70 @@ test('an invited pilot PA quotes and books a synthetic ride using the confirmed 
     const [confirmedHome] = await graph.follow(actualRoute.ref, 'destinationPersonalPlace');
     assert.equal(confirmedHome?.properties.version, 1);
     assert.equal(confirmedHome?.properties.address, route.destination);
+    const ride = { type: 'DidiImmediateRide', id: result.result.id };
+    const [approvalProcess] = await graph.follow(ride, 'approval');
+    assert.equal(approvalProcess?.properties.state, 'completed');
+    assert((await graph.follow(approvalProcess!.ref, 'stateLogs')).some(log => log.properties.newState === 'awaiting-input'));
+    assert.deepEqual((await graph.follow(ride, 'stateLogs')).map(log => log.properties.newState), ['ordered']);
+    const order = result.result.order.ref;
+    const low = await Access.load(f.db, access.principal);
+    const orderRead = await low.measureEgress(() => capabilities.functions.invoke(f.model, 'readDidiRideOrder', { order }, {
+      principal: low.principal, objects: new Objects(f.db, f.model, low), signal: AbortSignal.timeout(5000),
+    }), internalClassification);
+    assert.equal((orderRead.result as { orderId: string }).orderId, 'synthetic-pa-order');
+    assert(!JSON.stringify(orderRead.result).includes(route.destination));
+    assert.deepEqual((await graph.follow(order, 'stateLogs')).map(log => log.properties.newState), ['reported']);
+
+    const started = await call('apply_ontology_action', {
+      requestId: randomUUID(), action: 'StartDidiRideWatch',
+      input: { order, expiresAt: new Date(Date.now() + 120_000).toISOString() },
+    });
+    assert.notEqual(started.id, submitted.id);
+    assert(await worker.runOne('interactive'));
+    const waiting = await call('get_task', { taskId: started.id });
+    assert.equal(waiting.state, 'input-required', JSON.stringify(waiting));
+    assert.equal(waiting.result.capability, didiPAFollowupCapability);
+    assert.equal(waiting.result.input.orderId, 'synthetic-pa-order');
+    const followupRef = randomUUID(), followupExpiry = new Date(Date.now() + 600_000).toISOString();
+    const followupLease = { owner, taskId: started.id, requestId: waiting.result.requestId,
+      expiresAt: followupExpiry, access: 'followup' as const, orderId: 'synthetic-pa-order', async readKey() { return key; } };
+    leases.set(followupRef, followupLease);
+    await call('respond_to_task', { taskId: started.id, requestId: waiting.result.requestId,
+      response: { status: 'authorized', connectionRef: followupRef, expiresAt: followupExpiry, access: 'followup' } });
+    assert(await worker.runOne('interactive'));
+    const watched = await call('get_task', { taskId: started.id });
+    assert.equal(watched.state, 'completed', JSON.stringify(watched));
+    const watch = { type: watched.result.type, id: watched.result.id };
+    assert.deepEqual((await graph.follow(order, 'watches')).map(row => row.ref), [watch]);
+    assert(await worker.runOne('scheduled'));
+    assert.equal((await graph.read(watch)).properties.state, 'driver_assigned');
+    assert.equal(created, 1);
+    assert.equal(readBack, 2);
+
+    const relayHeaders = { Authorization: 'Bearer ' + relayToken, 'X-EIGOS-Owner': owner,
+      'X-EIGOS-Task': started.id, 'X-EIGOS-PA-Request': waiting.result.requestId, 'X-EIGOS-Connection': followupRef,
+      'X-EIGOS-Order': 'synthetic-pa-order' };
+    const attested = await relay(new Request(requestURL, { headers: relayHeaders }));
+    assert.equal(attested.status, 200);
+    const { authorityId } = await attested.json() as { authorityId: string };
+    for (const [name, order_id] of [['taxi_query_order', 'different-order'], ['taxi_create_order', 'synthetic-pa-order']]) {
+      const rejected = await relay(new Request(requestURL, { method: 'POST', headers: { ...relayHeaders, 'X-EIGOS-Authority': authorityId },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { order_id } } }) }));
+      assert.equal(rejected.status, 403);
+    }
+    // A rotated/different supplier credential cannot operate on the old order.
+    leases.set(followupRef, { ...followupLease, async readKey() { return 'different-synthetic-key'; } });
+    const changed = await relay(new Request(requestURL, { headers: { ...relayHeaders, 'X-EIGOS-Authority': authorityId } }));
+    assert.equal(changed.status, 403);
+    leases.set(followupRef, followupLease);
+
+    await f.db.query(`UPDATE ${f.schema}.scheduled_actions SET deadline=now()-interval '1 second' WHERE id=$1`, [watch.id]);
+    await worker.runOne('scheduled');
+    assert.equal((await graph.read(watch)).properties.state, 'expired');
+    assert.deepEqual((await graph.follow(watch, 'stateLogs')).map(log => log.properties.newState),
+      ['watching', 'driver_assigned', 'expired']);
+    assert.equal(created, 1);
+    assert.equal(readBack, 2);
     assert(!JSON.stringify((await f.db.query('SELECT response FROM ' + f.schema + '.pa_requests')).rows).includes(key));
   } finally {
     await client.close();

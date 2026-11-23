@@ -205,6 +205,7 @@ export const travelDefinition: OntologyDocument = {
         observedAt: time,
         contentDigest: z.string(),
         bindingId: z.string(),
+        sourceAuthority: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         cancellationReceipt: rideCancellationReceipt.optional(),
       },
       'The exact original ride order and latest independent status report. Creation does not mean arrival or completion.',

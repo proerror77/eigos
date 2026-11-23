@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import {
-  bookImmediateRideAction, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
+  bookImmediateRideAction, immediateApprovalLink, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
   immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType,
 } from '../../ontology/didi-immediate-ride.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, immediateRideRouteLink, resolvedRideEndpoints,
@@ -10,6 +10,7 @@ import { assertSavedRideEndpoints, rideEndpointLinks, savedRideRevisions } from 
 import { privateLocation } from '../../ontology/personal-places.js';
 import { json } from '../../ontology/service-contracts.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
+import { actionConfirmationRef } from '../../runtime/action-confirmation.js';
 import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
 import type { Database } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
@@ -122,6 +123,10 @@ export function immediateDidiRideFunctions(
       await source.assertCurrent();
       assertFresh();
       await assertSavedRideEndpoints(objects, endpoints);
+      if (task.input.placeContinuation?.requestId === context.operationId && objects.model.links.has(immediateApprovalLink)) {
+        objects.access.definition(objects.model, 'link', immediateApprovalLink);
+        await objects.read(actionConfirmationRef(context.operationId!));
+      }
       if (route) {
         const { access, model } = objects;
         access.read(model, 'Route');
@@ -243,6 +248,8 @@ function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
     const personalPlaceRevisions = endpoints && savedRideRevisions(endpoints);
     const classified = personalPlaceRevisions ? { locationClassification: privateLocation } : {};
     await graph.create(ride, { ...fields, ...classified, id: ride.id, name: '滴滴即时叫车', sourceTaskId: task.id });
+    if (task.input.placeContinuation?.requestId === context.operationId && graph.model.links.has(immediateApprovalLink))
+      await graph.link({ type: immediateApprovalLink, from: ride, to: actionConfirmationRef(context.operationId!) });
     if (endpoints) {
       const route = immediateRouteRef(ride);
       await graph.create(route, { id: route.id, name: `${fields.pickup!.name} → ${fields.destination!.name}`,
@@ -252,7 +259,8 @@ function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
     }
     if (!order) return;
     const ref = { type: 'DidiRideOrder', id: digest([order.bindingId, order.value.orderId]) };
-    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId } }],
+    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId,
+      ...(graph.model.object(ref.type).properties.sourceAuthority ? { sourceAuthority: fields.sourceAuthority } : {}) } }],
       'DidiRideOrders', order.value.observedAt);
     await graph.link({ type: immediateOrderLink, from: ride, to: ref });
   });

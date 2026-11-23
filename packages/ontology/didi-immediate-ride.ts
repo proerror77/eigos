@@ -7,6 +7,7 @@ export const immediateRideType = 'DidiImmediateRide';
 export const immediateRideInterface = 'ImmediateRideBooking';
 export const bookImmediateRideAction = 'BookDidiImmediateRide';
 export const immediateRideApprovalCapability = 'ride.confirm_immediate_order';
+export const immediateApprovalLink = 'ImmediateDidiApproval';
 export const immediateOrderLink = 'ImmediateDidiOrder';
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const amount = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -30,13 +31,13 @@ export const immediateRideTerms = z.strictObject({
   pickup: location, destination: location, expiresAt: time, fares: z.array(immediateFare).min(1).max(50),
 });
 export const immediateRideRef = z.strictObject({ ride: objectRefSchema });
-const rideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
+export const immediateRideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
 const order = z.strictObject({
   ref: objectRefSchema, orderId: z.string().min(1).max(500), status: z.string(), independentRead: z.boolean(),
   evidence: z.enum(['live', 'provider_mock', 'synthetic']),
 });
 export const immediateRideRecord = z.strictObject({
-  id: digest, name: z.string(), sourceTaskId: z.uuid(), state: rideState,
+  id: digest, name: z.string(), sourceTaskId: z.uuid(), state: immediateRideState,
   pickup: location.nullable(), destination: location.nullable(), selectedFare: immediateFare.nullable(),
   updatedEstimateMinor: amount.nullable(), sourceAuthority: digest.nullable(),
   locationClassification: classificationSchema.optional(),

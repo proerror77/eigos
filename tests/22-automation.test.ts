@@ -696,7 +696,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   ]);
   const model = new Ontology(document);
   const logs = document.objectTypes.flatMap(type => processLogTarget(model, type.apiName) ?? []);
-  const addedLogs = logs.filter(log => addedTypes.has(log.objectType));
+  const addedLogs = logs.filter(log => addedTypes.has(log.objectType) || log.type === 'DidiRideOrderStateLog');
   const addedActions = new Set([...laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)),
     ...scheduleJourneyDefinition.actionTypes.map(action => action.apiName)]);
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
@@ -746,6 +746,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
   delete didiOrder.properties.cancellationReceipt;
+  delete didiOrder.properties.sourceAuthority;
   for (const type of didiOrderDefinitions.interfaceTypes) delete didiOrder.interfaces[type.apiName];
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type =>
     !didiOrderDefinitions.interfaceTypes.some(item => item.apiName === type.apiName));
@@ -767,7 +768,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
-    type.apiName !== immediateOrderLink && type.apiName !== immediateRideRouteLink &&
+    type.apiName !== 'ImmediateDidiApproval' && type.apiName !== immediateOrderLink && type.apiName !== immediateRideRouteLink &&
     !ridePersonalPlaceLinks.some(link => link.apiName === type.apiName) && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&

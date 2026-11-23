@@ -9,7 +9,8 @@ import { Metadata, type PublishedOntology } from './metadata.js';
 import { Access, TaskResult } from './access.js';
 import { Actions } from './actions.js';
 import { Objects } from './objects.js';
-import { Tasks, type Task } from './tasks.js';
+import { taskPrincipal, Tasks, type Task } from './tasks.js';
+import { closeRideWatchSchedule } from './ride-watch-schedule-status.js';
 import { Clarification } from './clarification.js';
 
 export type ScheduledCall = {
@@ -80,6 +81,7 @@ export class ScheduledActions {
       contract: actionContract(graph.model, job.action),
       sourceTaskId: job.sourceTaskId ?? null,
       plannedRelease: graph.model.release,
+      ...(graph.access.principal.memberAccess ? { memberAccess: true } : {}),
       ...(job.observationInterestId?{observationInterestId:job.observationInterestId}:{}),
     };
     const prior = (
@@ -115,17 +117,21 @@ export class ScheduledActions {
         [],
         client,
       );
-      if (expired.rows.length)
-        await this.db.query(
-          `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired; inspect the original external operation' WHERE task_id=ANY($1::uuid[])`,
-          [expired.rows.map((row) => row.id)],
-          client,
-        );
-      await this.db.query(
-        `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired before dispatch' WHERE state='scheduled' AND deadline<=now()`,
-        [],
-        client,
+      const startedExpired = expired.rows.length ? await this.db.query(
+        `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired; inspect the original external operation'
+          WHERE task_id=ANY($1::uuid[]) RETURNING owner,id,body,task_id`,
+        [expired.rows.map(row => row.id)], client,
+      ) : undefined;
+      const unstartedExpired = await this.db.query(
+        `UPDATE ${this.db.schema}.scheduled_actions SET state='expired',error='Execution window expired'
+        WHERE deadline<=now() AND (state='scheduled' OR
+          state='started' AND body->>'action'='CheckDidiRideWatch' AND EXISTS (
+            SELECT 1 FROM ${this.db.schema}.tasks t WHERE t.id=task_id AND t.state IN ('completed','failed','canceled')))
+        RETURNING owner,id,body,task_id`,
+        [], client,
       );
+      for (const job of [...(startedExpired?.rows ?? []), ...unstartedExpired.rows].sort((a, b) => a.owner.localeCompare(b.owner)))
+        await closeRideWatchSchedule(this.db, model, client, job.owner, job.id, job.body, 'expired', job.task_id ?? undefined);
       const row = (
         await this.db.query(
           `SELECT * FROM ${this.db.schema}.scheduled_actions WHERE state='scheduled' AND run_at<=now() ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1`,
@@ -140,10 +146,11 @@ export class ScheduledActions {
           [row.id, reason, row.owner],
           client,
         );
+        await closeRideWatchSchedule(this.db, model, client, row.owner, row.id, row.body, 'unavailable');
         return true;
       };
       if (new Date(row.deadline).getTime() <= Date.now()) return fail('Execution window expired');
-      const principal = { owner: row.owner, scopes: row.scopes } as Principal;
+      const principal = { owner: row.owner, scopes: row.scopes, memberAccess: row.body.memberAccess === true } as Principal;
       try {
         const access = await Access.load(this.db, principal, client);
         access.action(model, row.body.action);
@@ -157,6 +164,7 @@ export class ScheduledActions {
       const input = {
         requestId,
         message: `Execute scheduled Action ${row.body.action}`,
+        ...(principal.memberAccess ? { memberAccess: true } : {}),
         scheduledAction: {
           scheduleId: row.id,
           action: row.body.action,
@@ -283,7 +291,7 @@ export class ScheduledActionRunner {
     if (!call) throw new Conflict('Scheduled Action is required');
     const schedules = new ScheduledActions(this.db, this.metadata),
       model = await this.metadata.get(task.release),
-      access = await Access.load(this.db, { owner: task.owner, scopes: task.scopes });
+      access = await Access.load(this.db, taskPrincipal(task));
     if (actionContract(model, call.action) !== call.contract) throw new Conflict('Scheduled Action contract changed');
     const guard = async (client: Sql) => {
       await this.tasks.current(task, client);

@@ -22,7 +22,9 @@ PA 在原任务的 `ride.confirm_immediate_order` 请求中展示已解析的起
 
 只有用户明确选择车型并确认对应预估价后，原 PA 才通过 `respond_to_task` 回传该请求的 `quoteDigest`、`category`、`amountMinor`、`currency` 和 `acceptVariableFinalFare: true`。实际车费可能随行程变化。用户也可以通过 `decision: cancel` 拒绝报价。
 
-Action 发单前复核起终点及常用地点版本，并按原起终点和所选车型向滴滴重新估价。常用地点地址更新后，需要按新版本重新确认。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
+Action 发单前复核起终点及常用地点版本，并按原起终点和所选车型向滴滴重新估价。常用地点地址更新后，需要按新版本重新确认。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用已授权的跟单 Action。跟单和取消分别授权。发单仍检查滴滴绑定和 `ordersEnabled`。
+
+Machinery 从 `DidiImmediateRideStateLog` 下钻原 Action 的 PA 审批过程和 `DidiRideOrderStateLog`，再沿原单 `watches` 查看跟单状态日志。跟单到期或调度失败由系统提交状态转换。
 
 原单通过 `immediateRides` 关联 `DidiImmediateRide`。新版叫车记录的 `route` Link 指向实际路线，路线指向滴滴的起终点 POI 和实际使用的不可变 `PersonalPlaceVersion`。搬家后，历史路线仍指向原版本。由常用地点解析的滴滴 POI 保留机密分级以及独立的对象身份。使用手机定位的路线保留坐标系转换证据。该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
 
@@ -36,7 +38,7 @@ EIGOS 先保存原单取消尝试，再调用 `taxi_cancel_order`。收到明确
 
 ## 进入和退出
 
-- `StartDidiRideWatch` 只接受用户已有的、可沿 Link 回查原 `EventTrip` 的 `DidiRideOrder`。调用者授权一分钟至四小时的观察期限，选择是否向已配置且同 owner 的 PA 递送到车提醒。创建订单权限仍由原出行 Action 处理。
+- `StartDidiRideWatch` 只接受用户已有且可验证来源归属的 `DidiRideOrder`。调用者授权一分钟至四小时的观察期限，选择是否向已配置且同 owner 的 PA 递送到车提醒。创建订单权限仍由原出行 Action 处理。
 - Worker 按现有 `ScheduledActions` 运行 `CheckDidiRideWatch`，绑定原账户、订单与同一有界排程。每一步在同一个 Action 事务更新状态并写入下一次时间。使用来源回执摘要，拒绝把别的订单、账号或无结构的状态当作本订单到车。
 - `readDidiRideWatch` 读回当前进度与可用提醒，`readDidiDriverPosition` 按需读取司机位置。`StopDidiRideWatch` 停止观察，已发出的供应商订单保持原状态。
 - [Machinery](https://www.palantir.com/docs/foundry/machinery/core-concepts/) 沿 `stateLogs` 观察可枚举状态的已提交转换。现有可选通知队列按观察版本发送和撤回，发送前重新复核原对象、归属和许可。Webhook 接收确认表示通知进入 PA 通道，用户端已读需要独立证据。
@@ -52,3 +54,5 @@ PA 主机将 `createDidiPARelay` 挂到固定的 HTTPS 入口。经过 EIGOS 身
 Gateway 和 Worker 设置 `EIGOS_DIDI_PA_RELAY_URL` 与 `EIGOS_DIDI_PA_RELAY_TOKEN_FILE`。文件保存 EIGOS 与受信任 PA 主机之间的中转凭据，至少 32 字符，权限为 `0600`。用管理角色运行 `npm run account -- grant-didi-pa` 明确加入询价与即时叫车的试点授权。未启用 `EIGOS_DIDI_PA_ORDERS_ENABLED=true` 时，中转接入只用于真实查询。开启实际叫车还需要 PA 的 `ride` 连接权限和用户在同一任务内对确切车型、起终点和报价的单独确认。订单发送后沿用现有原单回查和防重复发单机制。
 
 验收先检查新账号提交 Action 后出现授权请求，再用原 PA 的短期引用在同一任务读到真实报价。叫车流程使用合成供应商验证第二次批准、单次发送和原单回查。
+
+PA 跟单使用独立的 `didi.authorize_followup` 请求。PA 将租约绑定到指定原单，并回传 `access: "followup"`。跟单授权必须覆盖所选时间窗，最长 30 分钟。Relay 逐次核对该原单、访问范围和同一 PA 所持的供应商凭据证明。该租约只允许状态和司机位置读取。既有准许叫车的 PA 连接可继续完成同任务调用，跨任务跟单需要支持跟单租约的 Relay。

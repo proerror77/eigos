@@ -396,10 +396,23 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
         throw new InvalidInput('Choose this checkout channel’s valid lines and delivery preference');
       const scope = deliveryScope.parse({ channel: input.channel, merchantId: input.merchantId });
       const conn = await connection(input.channel, ctx);
-      const addressKey = await assertCartChange(input.cartChange, scope, input.cartRevision, conn, ctx.objects);
+      // Identify the owner-bound cart revision before checking row visibility.
+      // A hidden known change must fail closed instead of becoming a direct checkout.
+      const knownCartChange = async (client?: Sql) => {
+        const rows = (await db.query<{ id: string }>(`SELECT id FROM ${db.schema}.objects
+          WHERE projection=$1 AND owner=$2 AND type=$3 AND properties->>'bindingId'=$4
+            AND properties->>'channel'=$5 AND properties->>'state'='changed'
+            AND properties->'cart'->>'revision'=$6 AND ($7::text IS NULL OR properties->'cart'->>'merchantId'=$7)
+          ORDER BY id LIMIT 2`, [ctx.objects.model.projection, ctx.principal.owner, cartChangeType, conn.id,
+          scope.channel, input.cartRevision, scope.merchantId ?? null], client)).rows;
+        if (rows.length > 1) throw new Conflict('Supply the original cart change for this checkout');
+        return rows[0] ? { type: cartChangeType, id: rows[0].id } : undefined;
+      };
+      const cartChange = input.cartChange ?? await knownCartChange();
+      const addressKey = await assertCartChange(cartChange, scope, input.cartRevision, conn, ctx.objects);
       const fromCart = async (graph: Pick<Objects, 'follow' | 'read'>) => {
-        if (!addressKey || !input.cartChange) return;
-        const [search] = await graph.follow(input.cartChange, 'search');
+        if (!addressKey || !cartChange) return;
+        const [search] = await graph.follow(cartChange, 'search');
         if (!search) throw new Conflict('The address-bound cart lacks its original search');
         return searchPersonalVersion(graph, search.ref);
       };
@@ -433,15 +446,17 @@ function providerTradeFunctions(db: Database, provider: LocalDeliveryProvider, p
       });
       return stage(ref, async graph => {
         await conn.assertBinding();
+        if (!input.cartChange && digest(await knownCartChange(graph.client) ?? null) !== digest(cartChange ?? null))
+          throw new Conflict('The recorded cart revision changed during checkout; retry with the original cart change');
         await fromCart(graph);
         await persistDeliveryAddress(graph, receipt.selected.address, provider, receipt.selected.text);
         await graph.create(ref, row);
         await graph.link({ type: addresses.checkoutAddressLink, from: ref, to: receipt.selected.address });
         if (personalVersion)
           await graph.link({ type: addresses.checkoutVersionLink, from: ref, to: personalVersion });
-        if (input.cartChange) {
-          await assertCartChange(input.cartChange, scope, input.cartRevision, conn, graph);
-          await graph.link({ type: cartCheckoutLink, from: input.cartChange, to: ref });
+        if (cartChange) {
+          await assertCartChange(cartChange, scope, input.cartRevision, conn, graph);
+          await graph.link({ type: cartCheckoutLink, from: cartChange, to: ref });
         }
       });
     }],

@@ -24,7 +24,7 @@ import { deliveryTradeServices, hemaCheckoutStates, localDeliveryTradeDefinition
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import { applicationDefinition as applications, geometryUploadCriterion } from './applications.js';
 import {scenarioObjectType} from './scenario-definition.js';
-import { rideWatchDefinition, rideWatchType } from './ride-watch.js';
+import { rideWatchDefinition, rideWatchState, rideWatchClosed, rideWatchType } from './ride-watch.js';
 import { petRideDefinition, petRideType } from './pet-ride.js';
 import { addProcessLogs } from './process-definition.js';
 import { readFileSync } from 'node:fs';
@@ -32,7 +32,7 @@ import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
-import { didiImmediateRideDefinition, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { didiImmediateRideDefinition, immediateApprovalLink, immediateRideState, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -343,6 +343,11 @@ businessDefinition.objectTypes.push({
     }, required: true },
   },
 });
+businessDefinition.linkTypes.push({
+  apiName: immediateApprovalLink, description: 'PA input and approval lifecycle for the original immediate ride Action.',
+  from: { type: immediateRideType, name: 'approval', cardinality: 'one' },
+  to: { type: 'ActionConfirmation', name: 'immediateRide', cardinality: 'one' },
+});
 businessDefinition.objectTypes.push(...rideWatchDefinition.objectTypes);
 businessDefinition.linkTypes.push(...rideWatchDefinition.linkTypes);
 businessDefinition.functionTypes.push(...rideWatchDefinition.functionTypes);
@@ -350,6 +355,8 @@ businessDefinition.actionTypes.push(...rideWatchDefinition.actionTypes);
 addProcessLogs(businessDefinition, [
   { type: itineraryType, property: 'state' },
   { type: rideWatchType, property: 'state' },
+  { type: immediateRideType, property: 'state' },
+  { type: 'DidiRideOrder', property: 'state' },
   { type: 'FliggyHotelBooking', property: 'state' },
   { type: 'FliggyFlightBooking', property: 'issuanceState' },
   { type: petRideType, property: 'state' },
@@ -359,9 +366,37 @@ addProcessLogs(businessDefinition, [
   { type: diningReservationType, property: 'state' },
   ...localDeliveryProviders.flatMap(provider => {
     const service = deliveryTradeServices[provider];
-    return [{ type: service.checkoutType, property: 'state' }, { type: service.orderType, property: 'fulfillment' }];
+    return [{ type: service.checkoutType, property: 'state' }, { type: service.checkoutType, property: 'observation' },
+      { type: service.orderType, property: 'fulfillment' }];
   }),
 ]);
+
+businessDefinition.objectTypes.find(type => type.apiName === 'ActionConfirmationStateLog')!.machinery = {
+  states: [{ name: 'awaiting-input' }, { name: 'confirmed' },
+    ...['completed', 'failed', 'canceled'].map(name => ({ name, terminal: true }))],
+  transitions: [{ from: null, to: 'awaiting-input' }, { from: 'awaiting-input', to: 'confirmed' },
+    { from: 'confirmed', to: 'awaiting-input' }, { from: 'awaiting-input', to: 'canceled' },
+    ...['completed', 'failed', 'canceled'].map(to => ({ from: 'confirmed', to }))],
+};
+businessDefinition.objectTypes.find(type => type.apiName === 'DidiImmediateRideStateLog')!.machinery = {
+  states: immediateRideState.options.map(name => ({ name, terminal: true })),
+  transitions: immediateRideState.options.map(to => ({ from: null, to })),
+  subprocesses: [{ link: 'approval', process: 'ActionConfirmationStateLog' }, { link: 'order', process: 'DidiRideOrderStateLog' }],
+};
+businessDefinition.objectTypes.find(type => type.apiName === 'DidiRideOrderStateLog')!.machinery = {
+  states: ['created', 'reported', 'unknown'].map(name => ({ name })),
+  transitions: [
+    ...['created', 'reported', 'unknown'].map(to => ({ from: null, to })),
+    { from: 'created', to: 'reported' }, { from: 'unknown', to: 'reported' },
+  ],
+  subprocesses: [{ link: 'watches', process: 'DidiRideWatchStateLog' }],
+};
+const watchPhases = rideWatchState.options.filter(state => !rideWatchClosed.has(state));
+businessDefinition.objectTypes.find(type => type.apiName === 'DidiRideWatchStateLog')!.machinery = {
+  states: rideWatchState.options.map(name => ({ name, terminal: rideWatchClosed.has(name) })),
+  transitions: [{ from: null, to: 'watching', action: 'StartDidiRideWatch' },
+    ...watchPhases.flatMap((from, index) => [...watchPhases.slice(index + 1), ...rideWatchClosed].map(to => ({ from, to })))],
+};
 
 for (const provider of localDeliveryProviders) {
   const service = deliveryTradeServices[provider], actions = service.names;
@@ -378,11 +413,21 @@ for (const provider of localDeliveryProviders) {
       ...(taobao ? [
         ...['awaiting_payment', 'payment_handoff'].flatMap(from => ['payment_unknown', 'payment_verification', 'payment_failed']
           .map(to => ({ from, to, action: actions.pay }))),
-        ...['awaiting_payment', 'payment_handoff', 'payment_unknown', 'payment_verification', 'payment_failed', 'order_unknown']
+        ...['quoted', 'awaiting_payment', 'payment_handoff', 'payment_unknown', 'payment_verification', 'payment_failed', 'order_unknown']
           .map(from => ({ from, to: 'paid', action: actions.refresh })),
+        ...['quoted', 'order_unknown', 'payment_unknown', 'payment_verification', 'payment_failed'].flatMap(from =>
+          ['payment_unknown', 'payment_verification', 'payment_failed'].filter(to => to !== from)
+            .map(to => ({ from, to, action: actions.refresh }))),
       ] : []),
     ],
     subprocesses: [{ link: 'orders', process: service.orderProcess }],
+  };
+  businessDefinition.objectTypes.find(type => type.apiName === service.checkoutType + 'ObservationLog')!.machinery = {
+    states: [{ name: 'idle' }, { name: 'watching' }, ...['finished', 'timed_out', 'source_unavailable', 'stopped']
+      .map(name => ({ name, terminal: true }))],
+    transitions: [{ from: null, to: 'idle', action: actions.preview }, { from: 'idle', to: 'watching', action: actions.submit },
+      ...['finished', 'timed_out', 'source_unavailable'].map(to => ({ from: 'watching', to, action: actions.refresh })),
+      { from: 'watching', to: 'stopped', action: actions.stopObservation }],
   };
   businessDefinition.objectTypes.find(type => type.apiName === service.orderProcess)!.machinery = {
     states: ['unknown', 'in_progress', 'completed', 'canceled'].map(name => ({ name,
