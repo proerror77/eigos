@@ -1,16 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
-import { didiPAConnectionCapability, withDidiPAConnection } from '../packages/capabilities/didi/pa-connection.js';
-import { createDidiPARelay, type DidiPALease } from '../packages/capabilities/didi/pa-relay.js';
+import { didiPAReadCapability, didiPAReadTool, withDidiPAReads } from '../packages/capabilities/didi/pa-read.js';
 import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
-import { immediateRideApprovalCapability } from '../packages/ontology/didi-immediate-ride.js';
 import { businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
 import { accountActionsGroup } from '../packages/runtime/accounts.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
@@ -18,43 +13,13 @@ import { PARequests } from '../packages/runtime/pa.js';
 import { accountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-test('an invited PA connects DiDi and approves one synthetic ride on the original Action task', async () => {
-  const f = await fixture();
-  const folder = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-'));
-  const g = await accountGateway(f, { signup: 'invite' });
+test('the original invited PA directly reads DiDi and completes the same Action task', async () => {
+  const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });
   const client = new Client({ name: 'invited-pa', version: '1' });
-  const leases = new Map<string, DidiPALease>();
-  const relayToken = randomUUID(), tokenFile = join(folder, 'relay-token');
-  const key = 'private-synthetic-provider-key';
-  const requestURL = 'https://relay.example.test/didi';
-  let created = 0, readBack = 0;
-  const relay = createDidiPARelay(relayToken, async ref => leases.get(ref), async (target, init) => {
-    assert.equal(new URL(String(target)).searchParams.get('key'), key);
-    const rpc = JSON.parse(String(init?.body));
-    if (rpc.method === 'tools/list') {
-      const response = await f.provider.fetcher(target, init);
-      const body = await response.json() as { result: { tools: unknown[] } };
-      for (const [name, fields] of [['taxi_create_order', ['product_category', 'estimate_trace_id']], ['taxi_query_order', ['order_id']]] as const) {
-        body.result.tools.push({ name, inputSchema: { type: 'object',
-          properties: Object.fromEntries(fields.map(field => [field, { type: 'string' }])), required: fields } });
-      }
-      return Response.json(body);
-    }
-    if (rpc.params?.name === 'taxi_create_order' || rpc.params?.name === 'taxi_query_order') {
-      if (rpc.params.name === 'taxi_create_order') created++;
-      else { readBack++; assert.equal(rpc.params.arguments.order_id, 'synthetic-pa-order'); }
-      return Response.json({ jsonrpc: '2.0', id: rpc.id, result: { structuredContent: { orderId: 'synthetic-pa-order', status: 'mock order' } } });
-    }
-    return f.provider.fetcher(target, init);
-  });
-  const source = withDidiPAConnection(f.source, { url: requestURL, tokenFile, ordersEnabled: true }, async (target, init) => {
-    assert.equal(String(target), requestURL);
-    assert(!JSON.stringify(init).includes(key));
-    return relay(new Request(String(target), init));
-  }, 'mock');
+  const source = withDidiPAReads(async () => { throw new Error('EIGOS has no individual provider binding'); });
   const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, createCapabilities(f.db, source, {}), {
-    model: 'no-model-needed-for-a-selected-action',
-    async run() { throw new Error('The selected Action must run without model selection'); },
+    model: 'selected-action',
+    async run() { throw new Error('The selected Action should not need model selection'); },
   }));
   async function call(name: string, args = {}) {
     const value = await client.callTool({ name, arguments: args });
@@ -63,68 +28,71 @@ test('an invited PA connects DiDi and approves one synthetic ride on the origina
   }
   try {
     f.provider.flags.related = false;
-    await writeFile(tokenFile, relayToken, { mode: 0o600 });
     await syncAccountGrants(f.db, f.model);
     await setGrants(f.db, 'group:' + accountActionsGroup, businessGrants(f.model).filter(grant => didiPAAccountResources.has(grant.resource)));
     await syncAccountGrants(f.db, f.model);
     const email = 'pa-ride@example.test', owner = g.owner('pa-ride');
     const { cookie } = await g.login('pa-ride', email);
-    await g.form('apply', cookie, new URLSearchParams({ email, purpose: 'DiDi authorization pilot' }));
+    await g.form('apply', cookie, new URLSearchParams({ email, purpose: 'Direct DiDi PA read pilot' }));
     assert.equal((await g.form('activate', cookie, new URLSearchParams({ code: await g.accounts.invite(email, 1) }))).headers.get('location'), '/account');
     await g.form('approve', cookie);
     const token = await g.token('pa-ride', { issuedAt: Math.ceil(Date.now() / 1000) });
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
+    const catalogue = await call('describe_ontology');
+    assert(!catalogue.actionTypes.some((x: { apiName: string }) => x.apiName === 'BookDidiImmediateRide'));
     const args = { requestId: randomUUID(),
-      action: { interface: { type: 'ImmediateRideBooking', action: 'book', implementation: 'DidiImmediateRide' }, input: route },
-      read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
+      action: { interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: route },
+      read: { function: 'readRideEstimates', resultParameter: 'request' },
     };
     const submitted = await call('complete_with_action', args);
     assert.equal(submitted.state, 'submitted');
     assert.equal((await call('complete_with_action', args)).id, submitted.id);
-    async function next() {
+    const pendingRequests = new Set<string>();
+    for (let index = 0; index < 3; index++) {
       assert(await worker.runOne('interactive'));
-      return call('get_task', { taskId: submitted.id });
+      const task = await call('get_task', { taskId: submitted.id });
+      assert.equal(task.id, submitted.id);
+      assert.equal(task.state, 'input-required', JSON.stringify(task));
+      assert.equal(task.result.capability, didiPAReadCapability);
+      assert.equal(task.result.taskId, submitted.id);
+      const requestId = task.result.requestId, input = task.result.input;
+      assert(!pendingRequests.has(requestId));
+      pendingRequests.add(requestId);
+      assert.equal(f.provider.calls.length, index, 'only the original PA called the provider');
+      const method = didiPAReadTool.parse(input.tool);
+      assert.equal(method, index < 2 ? 'maps_textsearch' : 'taxi_estimate');
+      const { data, receipt } = await f.provider.source.connector.invoke(
+        { requestId, requestRevision: 1 }, method, input.arguments, AbortSignal.timeout(5_000),
+      );
+      const { bindingId: _bindingId, environment: _environment, ...proof } = receipt;
+      const response = { status: 'observed', data, receipt: proof };
+      const handoff = { taskId: submitted.id, requestId, response };
+      if (index === 0) {
+        await assert.rejects(new PARequests(f.tasks).respond({
+          owner, clientId: 'another-pa-client', memberAccess: true, scopes: ['tasks:read', 'tasks:write'],
+        }, submitted.id, { requestId, response }), /belongs to the original client/);
+        const mismatched = await client.callTool({ name: 'respond_to_task', arguments: {
+          ...handoff, response: { ...response, receipt: { ...proof, inputDigest: '0'.repeat(64) } },
+        } });
+        assert(mismatched.isError);
+      }
+      await call('respond_to_task', handoff);
+      await call('respond_to_task', handoff);
     }
-    const auth = await next();
-    assert.equal(auth.state, 'input-required', JSON.stringify(auth));
-    assert.equal(auth.result.capability, didiPAConnectionCapability);
-    assert.equal(auth.result.taskId, submitted.id);
-    assert.deepEqual(f.provider.calls, []);
-    assert.equal(created, 0);
-    const connectionRef = randomUUID(), expiresAt = new Date(Date.now() + 60_000).toISOString();
-    leases.set(connectionRef, { owner, taskId: submitted.id, requestId: auth.result.requestId, expiresAt, access: 'ride', async readKey() { return key; } });
-    const response = { status: 'authorized', connectionRef, expiresAt, access: 'ride' };
-    const handoff = { taskId: submitted.id, requestId: auth.result.requestId, response };
-    await assert.rejects(new PARequests(f.tasks).respond({
-      owner, clientId: 'another-pa-client', memberAccess: true, scopes: ['tasks:read', 'tasks:write'],
-    }, submitted.id, { requestId: handoff.requestId, response }), /belongs to the original client/);
-    const mistaken = await client.callTool({ name: 'respond_to_task', arguments: { ...handoff, response: { ...response, token: key } } });
-    assert(mistaken.isError, 'the PA response schema must exclude provider credentials');
-    await call('respond_to_task', handoff);
-    const approval = await next();
-    assert.equal(approval.state, 'input-required', JSON.stringify(approval));
-    assert.equal(approval.result.capability, immediateRideApprovalCapability);
-    assert.equal(created, 0);
+    assert(await worker.runOne('interactive'));
+    const complete = await call('get_task', { taskId: submitted.id });
+    assert.equal(complete.id, submitted.id);
+    assert.equal(complete.state, 'completed', JSON.stringify(complete));
+    assert.deepEqual(complete.result.evidence, ['pa_reported']);
+    assert.equal(complete.result.accepted, false);
+    assert.equal(complete.result.estimates.length, 2);
+    assert.deepEqual(f.provider.calls, ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await f.db.query('SELECT 1 FROM ' + f.schema + '.external_operations')).rowCount, 0);
-    const { category, amountMinor, currency } = approval.result.input.fares[0];
-    const confirm = { taskId: submitted.id, requestId: approval.result.requestId,
-      response: { decision: 'confirm', quoteDigest: approval.result.input.quoteDigest, category, amountMinor, currency, acceptVariableFinalFare: true },
-    };
-    await call('respond_to_task', confirm);
-    await call('respond_to_task', confirm);
-    const result = await next();
-    assert.equal(result.state, 'completed', JSON.stringify(result));
-    assert.equal(result.result.sourceTaskId, submitted.id);
-    assert.equal(result.result.order.orderId, 'synthetic-pa-order');
-    assert.equal(result.result.order.independentRead, true);
-    assert.equal(result.result.order.evidence, 'provider_mock');
-    assert.equal(created, 1);
-    assert.equal(readBack, 1);
-    assert(!JSON.stringify((await f.db.query('SELECT response FROM ' + f.schema + '.pa_requests')).rows).includes(key));
+    assert.equal((await f.db.query('SELECT 1 FROM ' + f.schema + '.pa_requests WHERE response IS NOT NULL')).rowCount, 3);
   } finally {
     await client.close();
     await g.close();
     await f.close();
-    await rm(folder, { recursive: true, force: true });
   }
 });

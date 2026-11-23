@@ -48,12 +48,12 @@ export class DidiMcpConnector implements DidiConnector {
   readonly binding: DidiBinding;
   private directoryCache?: { expiresAt: number; tools: DidiDirectory };
   private directoryReads = new Map<string, Promise<DidiDirectory>>();
-  constructor(binding: DidiBinding, private fetcher: typeof fetch = fetch, fixture = false, private readonly readKey = readDidiCredential) {
+  constructor(binding: DidiBinding, private fetcher: typeof fetch = fetch, fixture = false) {
     this.binding = didiBindingSchema.parse(binding);
     if (!isAbsolute(binding.keyFile) || binding.auditDirectory && !isAbsolute(binding.auditDirectory)) throw new DidiReadError('PRIVATE_ABSOLUTE_PATH_REQUIRED');
     this.evidenceKind = fixture ? 'fixture' : binding.environment === 'mock' ? 'provider_mock' : 'live_readonly';
   }
-  private key() { return this.readKey(this.binding); }
+  private key() { return readDidiCredential(this.binding); }
   async verifyCredential(): Promise<void> { await this.key(); }
   private async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<T> {
     const allowed = didiToolInputs;

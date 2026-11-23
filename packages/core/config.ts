@@ -32,12 +32,7 @@ export const connectionConfigSchema = z.object({
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).optional(),
   EIGOS_DIDI_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_WATCH_SANDBOX_CONNECTION_FILE: z.string().optional(),
-  EIGOS_DIDI_PA_RELAY_URL: z.url().refine(value => {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
-  }, 'Use a fixed HTTPS PA relay URL').optional(),
-  EIGOS_DIDI_PA_RELAY_TOKEN_FILE: z.string().refine(isAbsolute).optional(),
-  EIGOS_DIDI_PA_ORDERS_ENABLED: z.enum(['true', 'false']).optional(),
+  EIGOS_DIDI_PA_READS_ENABLED: z.enum(['true', 'false']).optional(),
   EIGOS_SERVICE_CONNECTION_FILE: z.string().optional(),
   EIGOS_FLIGGY_FLIGHT_CONNECTION_FILE: z.string().optional(),
   EIGOS_FLIGGY_HOTEL_CONNECTION_FILE: z.string().optional(),
@@ -94,9 +89,6 @@ export const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 export function readConfig(env = process.env): Config {
   const config = configSchema.parse(env);
-  if (Boolean(config.EIGOS_DIDI_PA_RELAY_URL) !== Boolean(config.EIGOS_DIDI_PA_RELAY_TOKEN_FILE) ||
-      config.EIGOS_DIDI_PA_ORDERS_ENABLED === 'true' && !config.EIGOS_DIDI_PA_RELAY_URL)
-    throw new Error('Configure the PA relay URL and private transport credential together');
   if (config.EIGOS_AUTH_MODE === 'development') {
     if (!config.EIGOS_DEV_TOKEN || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost'].includes(config.HOST)) throw new Error('Development authentication requires an explicit loopback token');
   } else if (!config.OAUTH_ISSUER || !config.OAUTH_AUDIENCE || !config.OAUTH_JWKS_URL) throw new Error('Configure JWT issuer, audience and verification keys');

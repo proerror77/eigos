@@ -7,14 +7,14 @@ import { timeOperation } from '../../core/operation-timing.js';
 import { objectRefSchema, type ObjectData } from '../../ontology/schema.js';
 import { Functions, type FunctionContext, type FunctionHandler, type VersionedFunction } from '../../runtime/functions.js';
 import type { DidiConnector, DidiCallContext, DidiReadResult } from './connector.js';
-import { didiDataSchema, didiReceiptSchema } from './contracts.js';
+import { didiDataSchema, didiEvidence, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
 import type { DidiTool } from './contracts.js';
 import { didiAppLinkInput, didiMapRouteInput, didiNearbyInput, didiReverseInput } from '../../ontology/didi-reads.js';
 
 export interface DidiSource { bindingId: string; authorityId?:string; connector: DidiConnector; orders?:RideOrders; assertCurrent(): Promise<void> }
 export type SourceResolver = (owner: string, order?: { bindingId: string; orderId: string }) => Promise<DidiSource>;
-export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: z.enum(['live_readonly', 'provider_mock', 'fixture']) });
+export const sourceResultSchema = z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema, evidence: didiEvidence });
 export type SourceResult = z.infer<typeof sourceResultSchema>;
 export const isCurrentDidiObservation = (time: unknown) => typeof time === 'string' && Number.isFinite(Date.parse(time)) && Date.now() - Date.parse(time) < 300000 && Date.parse(time) <= Date.now() + 5000;
 
