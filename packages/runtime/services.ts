@@ -96,6 +96,7 @@ export function ontologyServices(
       schema: z.ZodType;
       description: string;
       invoke: (principal: Principal, input: unknown) => Promise<unknown>;
+      invokeForMcpOperator?: (principal: Principal, input: unknown) => Promise<unknown>;
     }
   >();
   const register = <S extends z.ZodType>(
@@ -104,18 +105,24 @@ export function ontologyServices(
     schema: S,
     write: boolean,
     run: (access: Access, input: z.output<S>) => Promise<unknown>,
+    options?: { mcpOperatorRead: true },
   ) => {
+    const invoke = async (principal: Principal, raw: unknown, mcpOperatorRead: boolean) => {
+      if (!mcpOperatorRead) requireScope(principal, write ? 'ontology:write' : 'ontology:read');
+      const access = await Access.load(db, principal);
+      if (mcpOperatorRead) access.require(ontologyId, 'view_definition', ontologyId, true);
+      const result = await run(access, schema.parse(raw));
+      if (!write && !(await access.canReturn(access.dataRequirements())))
+        throw new PermissionDenied('Result permissions changed');
+      return result;
+    };
     services.set(name, {
       schema,
       description,
-      invoke: async (principal, raw) => {
-        requireScope(principal, write ? 'ontology:write' : 'ontology:read');
-        const access = await Access.load(db, principal),
-          result = await run(access, schema.parse(raw));
-        if (!write && !(await access.canReturn(access.dataRequirements())))
-          throw new PermissionDenied('Result permissions changed');
-        return result;
-      },
+      invoke: (principal, raw) => invoke(principal, raw, false),
+      ...(!write && options?.mcpOperatorRead && ontologyId === 'Eigos' && {
+        invokeForMcpOperator: (principal, raw) => invoke(principal, raw, true),
+      }),
     });
   };
   const define = async (access:Access) => {
@@ -646,9 +653,9 @@ export function ontologyServices(
   register('cancel_observation_interest','Withdraw an owned observation interest and stop its outstanding checks.',
     cancelInterestSchema,true,async(a,input)=>interests.cancel(a,await active(),input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
-    z.strictObject({}), false, async a => listMachineryProcesses(a, await active()));
+    z.strictObject({}), false, async a => listMachineryProcesses(a, await active()), { mcpOperatorRead: true });
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
-    machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input));
+    machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input), { mcpOperatorRead: true });
   register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',
     machineryHistorySchema,true,async(a,input)=>ingestMachineryHistory(db,a,await active(),input));
   register('save_machinery_cases','Save all authorized matches from a Machinery filter into a static Object Set.',

@@ -11,7 +11,7 @@ Gateway 通过 HTTP `POST /ontology/services/<operation>` 和 MCP `ontology_<ope
 | 发布治理 | `project`、`assign_project`、`create_branch`、`get_branch`、`list_branches`、`update_branch`、`prepare_branch`、`review_branch`、`merge_branch`、`rebase_branch`、`catch_up_branch` |
 | 逻辑与副作用 | `function_versions`、`effect_status`、`retry_effect` |
 
-读取需要 `ontology:read`，修改需要 `ontology:write`，各模块继续检查资源级授权。管理接口还要求相应项目或本体的定义权限，使用能够写治理表的管理服务数据库账号。普通 Gateway/Worker 账号按所需表授权，权限配置表由管理角色维护。
+读取通常需要 `ontology:read`，修改需要 `ontology:write`，各模块继续检查资源级授权。指定的运营者 MCP 连接可配置 [Machinery 只读入口](machinery.md)。管理接口还要求相应项目或本体的定义权限，使用能够写治理表的管理服务数据库账号。普通 Gateway/Worker 账号按所需表授权，权限配置表由管理角色维护。
 
 ## 对象与属性安全
 
