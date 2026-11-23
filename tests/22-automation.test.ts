@@ -1,5 +1,7 @@
 import { restaurantServices } from '../packages/ontology/restaurant-services.js';
 import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
+import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink,
+  prepareWithEndpoints, ridePersonalPlaceLinks } from '../packages/ontology/didi-ride-endpoints.js';
 import { localDeliveryProviders } from '../packages/ontology/local-delivery.js';
 import { localDeliveryTradeDefinition } from '../packages/ontology/local-delivery-trade.js';
 import { localDeliveryDefinition } from '../packages/ontology/local-delivery.js';
@@ -698,7 +700,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const addedActions = new Set([...laterDomains.flatMap(domain => domain.actionTypes.map(action => action.apiName)),
     ...scheduleJourneyDefinition.actionTypes.map(action => action.apiName)]);
   for (const action of didiOrderDefinitions.actionTypes) addedActions.add(action.apiName);
-  addedActions.add(bookImmediateRideAction);
+  for (const action of [bookImmediateRideAction, bookWithEndpoints, estimateWithEndpoints]) addedActions.add(action);
   addedActions.add(executeHotelDependentTrip);
   addedActions.add('StageDiningActivity');
   addedActions.add('StageScheduleRecommendation');
@@ -710,7 +712,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedActions.add('EstimateRideWithPlaceClues');
   for (const action of rideWatchDefinition.actionTypes) addedActions.add(action.apiName);
   for (const fn of rideWatchDefinition.functionTypes) addedFunctions.add(fn.apiName);
-  addedFunctions.add('bookDidiImmediateRide');
+  for (const name of ['bookDidiImmediateRide', bookWithEndpointsFunction, prepareWithEndpoints]) addedFunctions.add(name);
   addedFunctions.add('readDidiImmediateRide');
   addedFunctions.add('prepareRideInquiryWithPlaceClues');
   addedFunctions.add('readInteractiveRideEstimate');
@@ -754,11 +756,16 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   delete tripProperties.hotelBooking;
   delete tripProperties.pendingHotelDependencyReview;
   v9Definition.actionTypes.find(action => action.apiName === 'AuthorizeEventTrip')!.submissionCriteria = [];
-  const routeProperties = v9Definition.objectTypes.find(type => type.apiName === 'Route')!.properties;
+  const historicalRoute = v9Definition.objectTypes.find(type => type.apiName === 'Route')!;
+  delete historicalRoute.classificationProperty;
+  const routeProperties = historicalRoute.properties;
+  delete routeProperties.locationClassification;
+  delete routeProperties.personalPlaceRevisions;
   delete routeProperties.pickup;
   delete routeProperties.drivingEstimate;
   v9Definition.linkTypes = v9Definition.linkTypes.filter(type =>
-    type.apiName !== immediateOrderLink && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
+    type.apiName !== immediateOrderLink && type.apiName !== immediateRideRouteLink &&
+    !ridePersonalPlaceLinks.some(link => link.apiName === type.apiName) && !addedLogs.some(log => log.link === type.apiName) && !documentDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !rideWatchDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !flightDefinition.linkTypes.some(link => link.apiName === type.apiName) &&
     !calendarJourneyDefinition.linkTypes.some(link => link.apiName === type.apiName) &&

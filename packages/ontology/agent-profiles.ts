@@ -2,6 +2,7 @@ import { deliveryAddressNames, deliveryAddressType } from './delivery-addresses.
 import { personalPlaceType, savePersonalPlace } from './personal-places.js';
 import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
+import { bookWithEndpoints, estimateWithEndpoints, immediateRideRouteLink } from './didi-ride-endpoints.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import type { OntologyDocument } from './schema.js';
 
@@ -22,26 +23,32 @@ export const businessAgentProfiles: AgentProfile[] = [
     apiName: 'RideQuote',
     terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate', '打车链接', '滴滴跳转', '滴滴小程序', 'ride link',
       '叫车', '叫个车', '叫辆车', '打个车', '打辆车', '网约车', '专车', '快车', '用车'],
-    objects: ['RideRequest', 'Route', 'Place', 'RideEstimate'],
+    objects: ['RideRequest', 'Route', 'Place', 'RideEstimate', personalPlaceType],
     interfaces: ['RideInquiry', 'RideInquiryWithPlaceClues', 'RideEstimatable'],
-    actions: ['EstimateRide', 'EstimateRideWithPlaceClues'],
+    actions: ['EstimateRide', 'EstimateRideWithPlaceClues', estimateWithEndpoints],
     functions: ['readRideEstimates', 'readInteractiveRideEstimate', 'generateDidiRideAppLink'],
     instructions: [
       { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
       { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
+      { action: estimateWithEndpoints, function: 'readInteractiveRideEstimate',
+        text: 'For a saved endpoint such as home or work, query PersonalPlace by role with select [id, name, role]. Use RideInquiryWithPlaceClues.estimateWithEndpoints and pass originPersonalPlace or destinationPersonalPlace as {place: reference, revision}. Omit origin for the original PA’s current device pickup when that is the requested origin. Keep the exact confirmed endpoint and use readInteractiveRideEstimate (resultParameter: request). Ask for an exact endpoint if the personal place is unavailable or permission is missing.' },
       { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },
     ],
   },
   {
     apiName: 'DidiImmediateBooking',
     terms: ['叫车', '叫个车', '叫一辆车', '叫辆车', '打个车', '打一辆车', '打辆车', '现在打车', '现在下单', 'book a ride', 'call a taxi'],
-    objects: [immediateRideType, 'DidiRideOrder'],
+    objects: [immediateRideType, 'DidiRideOrder', 'Route', personalPlaceType],
     interfaces: [immediateRideInterface],
-    actions: [bookImmediateRideAction],
+    actions: [bookImmediateRideAction, bookWithEndpoints],
+    links: [immediateRideRouteLink],
     functions: ['readDidiImmediateRide'],
     instructions: [{
       action: bookImmediateRideAction, function: 'readDidiImmediateRide',
-      text: 'For an explicit request to book a ride now, such as 帮我叫辆车, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+      text: 'For clients using the legacy booking contract, use complete_with_action with ImmediateRideBooking.book on DidiImmediateRide and readDidiImmediateRide (resultParameter: ride). Pass only known endpoints and an explicitly requested vehicle and let the Action ask for missing inputs and obtain authenticated PA approval. If the request is only a quote, an App link or a future ride, use the corresponding inquiry or planning capability.',
+    }, {
+      action: bookWithEndpoints, function: 'readDidiImmediateRide',
+      text: 'For an explicit order now, prefer ImmediateRideBooking.bookWithEndpoints on DidiImmediateRide. For home or work, query PersonalPlace by role and send the reference and revision on the correct side. Omit origin only for current pickup from the original PA. The Action asks for missing information and requires exact fare approval. The result is linked to its confirmed route and original order. For a quote only, use the ride inquiry capability.',
     }],
   },
   {

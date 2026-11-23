@@ -16,6 +16,9 @@ import { locationFunctions, taskLocationValueType } from './location.js';
 import { luckinDefinition as luckin } from './luckin.js';
 import { deliveryFunctions } from './delivery.js';
 import { personalPlaceDefinition, personalPlaceType } from './personal-places.js';
+import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink, prepareWithEndpoints,
+  ridePersonalPlaceLinks, ridePersonalPlaceRevisions, savedRideEndpoint } from './didi-ride-endpoints.js';
+import { classificationSchema } from './classification.js';
 import { localDeliveryDefinition, localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices, hemaCheckoutStates, localDeliveryTradeDefinition, taobaoCheckoutStates } from './local-delivery-trade.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
@@ -29,7 +32,7 @@ import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
-import { didiImmediateRideDefinition } from './didi-immediate-ride.js';
+import { didiImmediateRideDefinition, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
 import { paymentsDefinition as payments } from './payments.js';
@@ -264,6 +267,60 @@ const clueMapping = structuredClone(inquiryMappings.RideInquiry!);
 clueMapping.actions.estimate!.action = quoteWithClues.apiName;
 Object.assign(clueMapping.actions.estimate!.parameters, { originLandmark: 'originLandmark', destinationLandmark: 'destinationLandmark' });
 inquiryMappings[clueInquiry.apiName] = clueMapping;
+
+const endpointParameters = {
+  ...quoteParameters, properties: { ...quoteParameters.properties,
+    originPersonalPlace: jsonSchema(savedRideEndpoint), destinationPersonalPlace: jsonSchema(savedRideEndpoint) },
+};
+const extraEndpointDependencies = {
+  objectTypes: [personalPlaceType, 'Route', 'Place'],
+  linkTypes: ['RouteOrigin', 'RouteDestination', ...ridePersonalPlaceLinks.map(link => link.apiName)],
+};
+routeType.classificationProperty = 'locationClassification';
+routeType.properties.locationClassification = { description: 'Data classification of a route using a personal place',
+  schema: jsonSchema(classificationSchema), required: false };
+routeType.properties.personalPlaceRevisions = { description: 'Revisions of the confirmed personal endpoints used on this route',
+  schema: jsonSchema(ridePersonalPlaceRevisions), required: false };
+businessDefinition.linkTypes.push(...ridePersonalPlaceLinks, {
+  apiName: immediateRideRouteLink, description: 'The confirmed route used by this immediate DiDi booking.',
+  from: { type: immediateRideType, name: 'route', cardinality: 'one' },
+  to: { type: 'Route', name: 'immediateRides', cardinality: 'one' },
+});
+const estimateEndpointDescription = 'Estimate the fare from named places, saved personal place references and revisions, or the original PA’s current pickup.';
+businessDefinition.functionTypes.push({ ...prepareWithClues, apiName: prepareWithEndpoints, description: estimateEndpointDescription,
+  parameters: endpointParameters, dependencies: { ...prepareWithClues.dependencies,
+    objectTypes: [...new Set([...prepareWithClues.dependencies.objectTypes ?? [], ...extraEndpointDependencies.objectTypes])],
+    linkTypes: [...new Set([...prepareWithClues.dependencies.linkTypes ?? [], ...extraEndpointDependencies.linkTypes])],
+  } });
+businessDefinition.actionTypes.push({ ...quoteWithClues, apiName: estimateWithEndpoints, function: prepareWithEndpoints,
+  description: estimateEndpointDescription, parameters: endpointParameters });
+clueInquiry.actions.estimateWithEndpoints = { parameters: endpointParameters, objectParameters: {}, required: false };
+const endpointMapping = { originPersonalPlace: 'originPersonalPlace', destinationPersonalPlace: 'destinationPersonalPlace' };
+clueMapping.actions.estimateWithEndpoints = { action: estimateWithEndpoints,
+  parameters: { ...clueMapping.actions.estimate!.parameters, ...endpointMapping } };
+
+const bookingInterface = immediateRide.interfaceTypes[0]!;
+const bookingObject = immediateRide.objectTypes[0]!;
+const bookingAction = immediateRide.actionTypes[0]!;
+const bookingFunction = immediateRide.functionTypes[0]!;
+const bookingEndpointDescription = 'Resolve a named, saved or current pickup and a named or saved destination; book after the original PA approves the exact route and fare.';
+businessDefinition.actionTypes.push({ ...bookingAction, apiName: bookWithEndpoints, function: bookWithEndpointsFunction,
+  parameters: endpointParameters, description: bookingEndpointDescription });
+businessDefinition.functionTypes.push({ ...bookingFunction, apiName: bookWithEndpointsFunction, parameters: endpointParameters,
+  description: bookingEndpointDescription, dependencies: { ...bookingFunction.dependencies,
+    objectTypes: [...new Set([...bookingFunction.dependencies?.objectTypes ?? [], ...extraEndpointDependencies.objectTypes])],
+    linkTypes: [...bookingFunction.dependencies?.linkTypes ?? [], ...extraEndpointDependencies.linkTypes, immediateRideRouteLink],
+  } });
+Object.assign(bookingInterface.actions, {
+  bookWithEndpoints: { parameters: endpointParameters, objectParameters: {}, required: false },
+});
+Object.assign(bookingObject.interfaces[immediateRideInterface]!.actions, {
+  bookWithEndpoints: { action: bookWithEndpoints,
+    parameters: { ...bookingObject.interfaces[immediateRideInterface]!.actions.book.parameters, ...endpointMapping } },
+});
+Object.assign(bookingInterface.links, { route: { target: 'Route', cardinality: 'one', required: false } });
+Object.assign(bookingObject.interfaces[immediateRideInterface]!.links, { route: 'route' });
+
 
 businessDefinition.objectTypes.find(type => type.apiName === 'SchedulePlan')!.properties.state = {
   description: 'Internal plan review state; confirmation does not write an external calendar',

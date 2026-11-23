@@ -14,13 +14,17 @@
 
 ## 即时叫车
 
-用户明确要求现在叫车时，Agent 使用 `ImmediateRideBooking.book`（`BookDidiImmediateRide`），按原任务补全城市、上车点和目的地。PA 在原任务的 `ride.confirm_immediate_order` 请求中展示已解析的起终点、可确认的车型、人民币预估价和有效期。价格区间或无法核对的报价不进入可发单清单。
+用户明确要求现在叫车时，Agent 使用 `ImmediateRideBooking.bookWithEndpoints`（`BookDidiRideWithEndpoints`）。旧客户端可继续调用 `ImmediateRideBooking.book`。只查车费时使用 `RideInquiryWithPlaceClues.estimateWithEndpoints`，再用 `readInteractiveRideEstimate` 读回结果。
+
+「从家出发」或「回家」分别传 `originPersonalPlace` 或 `destinationPersonalPlace`，每个参数包括 `PersonalPlace` 引用与用户确认的 `revision`。使用手机当前位置作上车点时，省略上车点，沿用原 PA 的 `location.resolve`。滴滴地点返回多个匹配时，由用户在原任务确认。使用常用地点的路线及叫车记录沿用[机密数据权限](model-egress.md)。
+
+PA 在原任务的 `ride.confirm_immediate_order` 请求中展示已解析的起终点、可确认的车型、人民币预估价和有效期。价格区间或无法核对的报价不进入可发单清单。
 
 只有用户明确选择车型并确认对应预估价后，原 PA 才通过 `respond_to_task` 回传该请求的 `quoteDigest`、`category`、`amountMinor`、`currency` 和 `acceptVariableFinalFare: true`。实际车费可能随行程变化。用户也可以通过 `decision: cancel` 拒绝报价。
 
-Action 发单前按原起终点和所选车型向滴滴重新估价。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
+Action 发单前复核起终点及常用地点版本，并按原起终点和所选车型向滴滴重新估价。常用地点地址更新后，需要按新版本重新确认。价格变化或报价过期时结束本次确认，重新报价后才能发单。每个原任务最多发出一次下单操作。回包丢失时保留 `unknown`，先核对滴滴原单。收到订单号但暂时无法独立回查时保留 `submitted`，已回查原单才报告 `ordered`。结果附原单引用，可用既有的跟单和取消 Action。发单仍检查滴滴绑定和 `ordersEnabled`。
 
-该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
+原单通过 `immediateRides` 关联 `DidiImmediateRide`。新版叫车记录的 `route` Link 指向实际路线，路线指向滴滴的起终点 POI，并记录使用的常用地点和版本。使用手机定位的路线保留坐标系转换证据。该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
 
 ## 取消已发订单
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { objectRefSchema, type OntologyDocument } from './schema.js';
+import { classificationSchema } from './classification.js';
 import { json, time } from './service-contracts.js';
 
 export const immediateRideType = 'DidiImmediateRide';
@@ -38,18 +39,19 @@ export const immediateRideRecord = z.strictObject({
   id: digest, name: z.string(), sourceTaskId: z.uuid(), state: rideState,
   pickup: location.nullable(), destination: location.nullable(), selectedFare: immediateFare.nullable(),
   updatedEstimateMinor: amount.nullable(), sourceAuthority: digest.nullable(),
+  locationClassification: classificationSchema.optional(),
 });
-export const immediateRideResult = immediateRideRecord.omit({ sourceAuthority: true }).extend({ order: order.nullable() });
+export const immediateRideResult = immediateRideRecord.omit({ sourceAuthority: true, locationClassification: true }).extend({ order: order.nullable() });
 
 export function didiImmediateRideDefinition(parameters: Record<string, unknown>) {
   const properties = Object.fromEntries(Object.entries(immediateRideRecord.shape).map(([name, shape]) =>
-    [name, { description: name, required: true, schema: json(shape) }]));
+    [name, { description: name, required: !shape.isOptional(), schema: json(shape) }]));
   const scope = { objectTypes: [immediateRideType, 'DidiRideOrder'], linkTypes: [immediateOrderLink] };
   const functionName = 'bookDidiImmediateRide';
   const description = 'Resolve pickup and destination, then book a DiDi ride now only after the authenticated PA confirms an exact available vehicle and fare estimate on this task.';
   return {
     objectTypes: [{
-      apiName: immediateRideType, displayName: '滴滴即时叫车', description, primaryKey: 'id', titleProperty: 'name', properties,
+      apiName: immediateRideType, displayName: '滴滴即时叫车', description, primaryKey: 'id', titleProperty: 'name', classificationProperty: 'locationClassification', properties,
       interfaces: { [immediateRideInterface]: { properties: { state: 'state' }, links: {}, actions: {
         book: { action: bookImmediateRideAction, parameters: Object.fromEntries(
           Object.keys(parameters.properties as Record<string, unknown>).map(name => [name, name])),

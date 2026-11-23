@@ -15,7 +15,9 @@ import { unresolvedMapPlace } from '../packages/runtime/clarification.js';
 import { amendMapPlace } from '../packages/capabilities/amap/task-correction.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { setModelClearance } from '../packages/runtime/model-egress.js';
 import { PARequests } from '../packages/runtime/pa.js';
+import type { ObjectRef } from '../packages/ontology/schema.js';
 import { mapFunctions, pickupCoordinateEvidence } from '../packages/ontology/maps.js';
 import { document, fixture, principal, route } from './fixture.js';
 
@@ -97,6 +99,61 @@ test('the original ride Action obtains missing endpoints and uses GCJ-02 before 
     assert.equal(calls.length, initialAmap);
     assert.equal((await f.db.query(`SELECT count(*)::int n FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [direct.id])).rows[0]?.n, 0);
     assert.equal(modelCalls, 3);
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a quote from current phone pickup to a saved home links the exact provider POIs and personal endpoint', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eigos-home-ride-'));
+  const config = await testConnection(directory);
+  const model = 'saved-home-ride-fixture';
+  let home: ObjectRef;
+  const f = await fixture({
+    model, provider: 'openai-codex',
+    async run(_prompt, tools) {
+      await tools.get('complete_with_action')!.invoke({
+        action: { interface: { type: 'RideInquiryWithPlaceClues', implementation: 'RideRequest', action: 'estimateWithEndpoints' },
+          input: { destinationPersonalPlace: { place: home, revision: 1 } } },
+        read: { function: 'readInteractiveRideEstimate', resultParameter: 'request' },
+      });
+    },
+  }, undefined, undefined, undefined, { amap: config, amapFetch: fakeAmap([]) });
+  try {
+    await setModelClearance(f.db, { owner: principal.owner, provider: 'openai-codex', model,
+      clearance: { sensitivity: 'CONFIDENTIAL', compartments: [] }, active: true });
+    const address = '虚构区青禾示例路8号';
+    home = await f.capabilities.actions.apply(f.access, f.model, 'SavePersonalPlace', {
+      address, city: '上海市', role: 'home', expectedRevision: 0, confirmed: true,
+    }, 'save-home-for-ride');
+    f.provider.flags.related = false;
+    f.provider.flags.placeName = name => name === address ? '青禾虚构园区北门' : name;
+    const task = await f.tasks.submit(principal, { requestId: 'quote-go-home', message: '从我这里回家，查滴滴车费' });
+    await f.worker.runOne();
+    const waiting = await f.tasks.get(principal, task.id);
+    assert.equal(waiting.state, 'input-required', waiting.error ?? JSON.stringify(waiting.result));
+    const pending = waiting.result as { capability: string; requestId: string };
+    assert.equal(pending.capability, 'location.resolve');
+    assert.equal(f.provider.calls.length, 0);
+    await new PARequests(f.tasks).respond(principal, task.id, { requestId: pending.requestId,
+      response: { status: 'available', location: { source: 'device', coordinateSystem: 'wgs84',
+        latitude: 31.201, longitude: 121.495, observedAt: new Date().toISOString(), accuracyMeters: 25 } },
+    });
+    await f.worker.runOne();
+    const done = await f.tasks.get(principal, task.id);
+    assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
+    const { request } = done.result as { request: ObjectRef };
+    const graph = new Objects(f.db, f.model, f.access);
+    const [linked] = await graph.follow(request, 'route');
+    assert(linked);
+    const pickup = pickupCoordinateEvidence.parse(linked.properties.pickup);
+    assert.equal(pickup.conversion, 'converted_by_amap');
+    assert.deepEqual(linked.properties.personalPlaceRevisions, { destination: 1 });
+    assert.deepEqual((await graph.follow(linked.ref, 'destination')).map(row => row.properties.name), ['青禾虚构园区北门']);
+    assert.deepEqual((await graph.follow(linked.ref, 'destinationPersonalPlace')).map(row => row.ref), [home]);
+    assert.deepEqual(await graph.follow(linked.ref, 'originPersonalPlace'), []);
+    assert.equal(f.provider.flags.orderCreates, 0);
   } finally {
     await f.close();
     await rm(directory, { recursive: true, force: true });
