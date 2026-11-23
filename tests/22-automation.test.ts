@@ -754,6 +754,9 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
     !petRideDefinition.interfaceTypes.some(item => item.apiName === type.apiName));
   delete v9Definition.objectTypes.find(type => type.apiName === 'RideRequest')!.interfaces.RideInquiryWithPlaceClues;
   const didiOrder = v9Definition.objectTypes.find(type => type.apiName === 'DidiRideOrder')!;
+  const originalOrderEvidence = ['live', 'provider_mock', 'synthetic'];
+  didiOrder.properties.evidence!.schema.enum = originalOrderEvidence;
+  v9Definition.interfaceTypes.find(type => type.apiName === 'RideOrder')!.properties.evidence!.schema.enum = originalOrderEvidence;
   delete didiOrder.properties.cancellationReceipt;
   delete didiOrder.properties.sourceAuthority;
   for (const type of didiOrderDefinitions.interfaceTypes) delete didiOrder.interfaces[type.apiName];
