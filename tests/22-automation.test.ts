@@ -720,6 +720,15 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedFunctions.add('stageScheduleRecommendation');
   const v9Definition = structuredClone(document);
   v9Definition.version = '9';
+  // Historical DiDi contracts predate PA-reported observations.
+  const legacyEvidence = ['live_readonly', 'provider_mock', 'fixture'];
+  v9Definition.objectTypes.find(type => type.apiName === 'SourceReceipt')!.properties.evidence!.schema.enum = legacyEvidence;
+  for (const name of ['searchPlaces', 'estimateRoute', 'estimateLocations']) {
+    const returns = v9Definition.functionTypes.find(fn => fn.apiName === name)!.returns;
+    (returns.properties as { evidence: { enum: string[] } }).evidence.enum = legacyEvidence;
+  }
+  const readEstimates = v9Definition.functionTypes.find(fn => fn.apiName === 'readRideEstimates')!.returns;
+  (readEstimates.properties as { evidence: { items: { enum: string[] } } }).evidence.items.enum = legacyEvidence;
   delete v9Definition.agentProfiles;
   delete v9Definition.imports;
   for (const resource of [...v9Definition.objectTypes, ...v9Definition.functionTypes, ...v9Definition.actionTypes]) {

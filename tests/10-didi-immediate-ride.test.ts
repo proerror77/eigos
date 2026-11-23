@@ -132,6 +132,11 @@ test('the PA confirms the exact vehicle and fare on the original MCP task before
     assert.deepEqual((await graph.follow(version!.ref, 'place')).map(row => row.ref), [f.saved!.place]);
     assert.deepEqual((await graph.follow(rideRoute.ref, 'destination')).map(row => row.properties.name), [route.destination]);
     assert.deepEqual((await graph.follow(result.order!.ref, 'immediateRides')).map(row => row.ref), [ride]);
+    const [approvalProcess] = await graph.follow(ride, 'approval');
+    assert.equal(approvalProcess?.properties.state, 'completed');
+    assert((await graph.follow(approvalProcess!.ref, 'stateLogs')).some(log => log.properties.newState === 'awaiting-input'));
+    assert.deepEqual((await graph.follow(ride, 'stateLogs')).map(log => log.properties.newState), ['ordered']);
+    assert.deepEqual((await graph.follow(result.order!.ref, 'stateLogs')).map(log => log.properties.newState), ['reported']);
     assert.equal((await tool('submit_task', request)).id, task.id);
 
     // The same order can be canceled through the existing RideOrder capability.

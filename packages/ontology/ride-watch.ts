@@ -54,7 +54,6 @@ export const rideWatchFields = observation.extend({
   id: z.string(), name: z.string(),
   scheduleId: z.string().min(1), sourceAuthority: z.string().min(1),
   notifyArrival: z.boolean(), failures: z.number().int().min(0).max(3),
-  followup: z.strictObject({ taskId: z.uuid(), requestId: z.uuid(), expiresAt: time }).optional(),
 });
 export const rideWatchRead = observation.extend({
   watch: ref, order: ref, revision: z.number().int().positive(),
@@ -75,7 +74,7 @@ export const rideWatchDefinition: OntologyDocument = {
     description: 'Bounded, read-only observations of an original DiDi order.',
     primaryKey: 'id', titleProperty: 'name', interfaces: {},
     properties: Object.fromEntries(Object.entries(rideWatchFields.shape).map(([name, schema]) =>
-      [name, { description: name, required: !schema.isOptional(), schema: json(schema) }])),
+      [name, { description: name, required: true, schema: json(schema) }])),
   }],
   linkTypes: [{
     apiName: 'RideWatchOrder', description: 'The original verified provider order for this tracking process.',

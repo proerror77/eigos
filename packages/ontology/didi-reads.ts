@@ -70,7 +70,7 @@ export const didiMapRoutes = z.array(didiMapRoute).min(1).max(5);
 const receipt = {
   provider: z.literal('Didi'),
   observedAt: time,
-  evidence: z.enum(['live_readonly', 'provider_mock', 'fixture']),
+  evidence: z.enum(['live_readonly', 'provider_mock', 'fixture', 'pa_reported']),
   receiptDigest: z.string().length(64),
 };
 const place = z.strictObject({

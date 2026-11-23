@@ -3,6 +3,7 @@ import { validator, Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
 import type { ObjectRef, OntologyDocument } from '../ontology/schema.js';
+import { legacySourceEvidence } from '../ontology/source-evidence.js';
 import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
 import type { ActionEffect } from './effects.js';
@@ -39,12 +40,16 @@ export interface VersionedFunction {
 const contract = ({ parameters, returns, source, edits, dependencies }: Definition) => digest({ parameters, returns, source, edits, ...(dependencies?{dependencies}:{}) });
 const key = (definition: Definition) => JSON.stringify([definition.apiName, definition.version ?? null]);
 export class Functions {
-  private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler }>();
+  private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = []) {
     for (const definition of definitions) {
       if (definition.version) continue;
       const handler = handlers.get(definition.apiName);
-      if (handler) this.registered.set(key(definition), { contract: contract(definition), binding: contract(definition), handler });
+      if (handler) {
+        const current = contract(definition), legacyReturns = legacySourceEvidence(definition.returns);
+        this.registered.set(key(definition), { contract: current, binding: current, handler,
+          ...(legacyReturns !== definition.returns ? { legacy: contract({ ...definition, returns: legacyReturns }) } : {}) });
+      }
     }
     for (const entry of versions) {
       const identity = key(entry.definition);
@@ -61,8 +66,9 @@ export class Functions {
   bindings(model: Ontology): Record<string, string> {
     return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
       const entry = this.registered.get(key(fn));
-      if (!entry || entry.contract !== contract(fn)) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
-      return [fn.apiName, entry.binding];
+      const reply = contract(fn);
+      if (!entry || entry.contract !== reply && entry.legacy !== reply) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
+      return [fn.apiName, entry.legacy === reply ? reply : entry.binding];
     }));
   }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
@@ -79,7 +85,9 @@ export class Functions {
     const definition = model.functions.get(name), entry = definition && this.registered.get(key(definition));
     if (!definition) throw new NotFound(`Function is unavailable: ${name}`);
     if (!entry) throw new Error(`Published Function implementation is unavailable: ${name}`);
-    if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== entry.binding || contract(definition) !== entry.contract) throw new Conflict('Historical Function implementation is unavailable in this runtime');
+    const reply = contract(definition), binding = entry.legacy === reply ? reply : entry.binding;
+    if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== binding ||
+        reply !== entry.contract && reply !== entry.legacy) throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (context.scenarioEvaluation) this.requireScenarioEvaluation(model, name);
     if (model.scenario && definition.source && !(entry.handler.scenarioPARead && definition.edits && context.edit &&
       context.execution?.task.cognitive_context?.scenarioId === model.scenario))

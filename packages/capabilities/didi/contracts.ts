@@ -61,5 +61,6 @@ export const didiReceiptSchema = z.strictObject({
   startedAt: z.iso.datetime(), receivedAt: z.iso.datetime(),
 });
 export type DidiReceipt = z.infer<typeof didiReceiptSchema>;
-export type DidiEvidenceKind = 'live_readonly' | 'provider_mock' | 'fixture';
+export const didiEvidence = z.enum(['live_readonly', 'provider_mock', 'fixture', 'pa_reported']);
+export type DidiEvidenceKind = z.infer<typeof didiEvidence>;
 export const didiEndpoint = (environment: DidiBinding['environment']) => environment === 'production' ? 'https://mcp.didichuxing.com/mcp-servers' : 'https://mcp.didichuxing.com/mcp-servers-sandbox';
