@@ -207,14 +207,25 @@ test('restaurant Interface actions link source venues and record TableCheck hold
       assert.equal(pending.state, 'input-required');
       assert.equal(pending.result.capability, 'dining.tablecheck.confirm.approval');
       assert.equal(pending.result.taskId, submitted.task.id);
+      const replay = body(await execute(requestId, code));
+      assert.equal(replay.task.id, submitted.task.id);
+      assert.equal(replay.task.state, 'input-required');
       assert.deepEqual([holdCount, createCount, cancelCount], [0, 0, 0]);
-      await d.tasks.cancel(principal, submitted.task.id);
+      const confirmed = body(await mcp.callTool({ name: 'respond_to_task', arguments: {
+        taskId: submitted.task.id, requestId: pending.result.requestId,
+        response: { approved: true, termsDigest: pending.result.input.termsDigest },
+      } }));
+      assert.equal(confirmed.id, submitted.task.id);
+      assert(await d.worker.runOne('interactive'));
+      const completed = body(await mcp.callTool({ name: 'get_task', arguments: { taskId: submitted.task.id } }));
+      assert.equal(completed.state, 'completed', JSON.stringify(completed));
+      assert.equal(completed.result.id, reservation.id);
+      assert.equal(body(await execute(requestId, code)).task.id, submitted.task.id);
     } finally {
       await mcp.close();
       gateway.closeAllConnections();
       await new Promise<void>(resolve => gateway.close(() => resolve()));
     }
-    await apply(confirm.action, confirm.input, 'approved-once');
     assert.equal((await booking()).state, 'unknown');
     assert((await booking()).holdExpiresAt);
     await apply('ExpireTableCheckReservation', { commitment: reservation }, 'expiry-after-dispatch');

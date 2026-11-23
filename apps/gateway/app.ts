@@ -478,21 +478,27 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         cancel.signal.throwIfAborted();
         const access = await Access.load(db, p), model = await metadata.active();
         const graph = new Objects(db, model, access);
-        let action: ActionCall | undefined;
+        let stagedAction: ActionCall | undefined;
         const value = await codeMode.execute(code, async input => {
           const page = await graph.query(input);
           await confirmReadAccess(access);
           return page;
-        }, cancel.signal, requestId === undefined ? undefined : input => { action = input; });
+        }, cancel.signal, requestId === undefined ? undefined : input => { stagedAction = input; });
         await confirmReadAccess(access);
         if (requestId === undefined) return value;
+        const action = stagedAction;
         if (!action) throw new InvalidInput('Call and await applyAction() to submit a published Action');
-        const admission = await capabilities.actions.validate(access, model, action, cancel.signal);
-        checkAgentCapability(model, db.sandboxEnabled, 'action', admission.action);
         const task = await tasks.submit(p, { requestId, message: 'Execute the selected published Action' }, {
           actionInvocation: { action }, expectedRelease: model.release,
           authorize: async client => {
             cancel.signal.throwIfAborted();
+            if (!await access.canReturn(access.dataRequirements(), client)) throw new PermissionDenied('Result permissions changed');
+          },
+          admit: async (client, release) => {
+            cancel.signal.throwIfAborted();
+            const signal = AbortSignal.any([cancel.signal, AbortSignal.timeout(30_000)]);
+            const selected = await capabilities.actions.validateSubmission(access, release, action, client, signal);
+            checkAgentCapability(release, db.sandboxEnabled, 'action', selected);
             if (!await access.canReturn(access.dataRequirements(), client)) throw new PermissionDenied('Result permissions changed');
           },
         });

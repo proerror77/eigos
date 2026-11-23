@@ -66,18 +66,21 @@ export class Actions {
     return this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
       [this.db.lockKey('action', owner, model.scenario ?? 'main', requestId)], client);
   }
+  async validateSubmission(access: Access, model: PublishedOntology, call: ActionCall, client: Sql, signal: AbortSignal) {
+    await access.refresh(client);
+    await this.requireActive(model, client);
+    await checkScenario(this.db, model, access.principal.owner, client);
+    const { action, input } = this.resolve(access, model, call);
+    access.action(model, action);
+    if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
+    const parameters = validator(model.action(action).parameters).parse(input) as Record<string, unknown>;
+    await this.checkInput(new Objects(this.db, model, access, client), action, parameters, signal);
+    return action;
+  }
   async validate(access: Access, model: PublishedOntology, call: ActionCall, signal = AbortSignal.timeout(30_000)) {
     const selected = await this.db.transaction(async client => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
-      await access.refresh(client);
-      await this.requireActive(model, client);
-      await checkScenario(this.db, model, access.principal.owner, client);
-      const { action, input } = this.resolve(access, model, call);
-      access.action(model, action);
-      if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
-      const parameters = validator(model.action(action).parameters).parse(input) as Record<string, unknown>;
-      await this.checkInput(new Objects(this.db, model, access, client), action, parameters, signal);
-      return action;
+      return this.validateSubmission(access, model, call, client, signal);
     });
     await access.refresh();
     if (!(await access.canReturn(access.dataRequirements()))) throw new PermissionDenied('Result permissions changed');
