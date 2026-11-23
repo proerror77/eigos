@@ -90,7 +90,12 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
       return { receipt, objects, request };
     },
   };
-  sources = new Sources(db, functions, new Map([...['DidiPlaces', 'DidiEstimates'].map(name => [name, projection] as const), ...additionalSources]));
+  const projections = new Map([...['DidiPlaces', 'DidiEstimates'].map(name => [name, projection] as const), ...additionalSources]);
+  for (const [name, extension] of extensions.sources ?? []) {
+    if (projections.has(name)) throw new Error('Source projection is already registered: ' + name);
+    projections.set(name, extension);
+  }
+  sources = new Sources(db, functions, projections);
   return { functions, actions: new Actions(db, functions, effects, committedEffects), effects, sources, describe: (model: Ontology) => {
     effects.check(model.resolvedDocument.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
     return {functions:functions.bindings(model),sources:sources.bindings(model)};
