@@ -1,5 +1,6 @@
 import { Conflict, digest } from '../core/identity.js';
 import type { FunctionDependencies, OntologyDocument } from '../ontology/schema.js';
+import { legacySourceEvidence } from '../ontology/source-evidence.js';
 import type { PublishedOntology } from './metadata.js';
 
 const propertyContract = ({schema, required, derived}: OntologyDocument['objectTypes'][number]['properties'][string]) => ({schema, required, derived});
@@ -27,8 +28,11 @@ export function checkWorkflowDependencies(previous: PublishedOntology, current: 
     if (kind === 'objectTypes' || kind === 'interfaceTypes') {
       const old = before[kind].get(name)!, next = after[kind].get(name)!;
       for (const [field, property] of Object.entries(old.properties)) {
+        const candidate = next.properties[field];
+        const actual = candidate && propertyContract(candidate);
         check(kind, `${name}.${field}`, Object.hasOwn(next.properties, field) &&
-          digest(propertyContract(property)) === digest(propertyContract(next.properties[field]!)));
+          (digest(propertyContract(property)) === digest(actual) || field === 'evidence' && !!actual &&
+            digest(propertyContract(property)) === digest({ ...actual, schema: legacySourceEvidence(actual.schema) })));
       }
       if ('primaryKey' in old && 'primaryKey' in next) {
         check(kind, name, old.primaryKey === next.primaryKey &&
@@ -52,8 +56,10 @@ export function checkWorkflowDependencies(previous: PublishedOntology, current: 
       const old = before.functions.get(name)!;
       const next = after.functions.get(name)!;
       const binding = previous.bindings.functions[name];
+      const previousContract = digest(functionContract(old)), nextContract = functionContract(next);
       check(kind, name, !!binding && !!current.bindings.functions[name] &&
-        digest(functionContract(old)) === digest(functionContract(next)) &&
+        (previousContract === digest(nextContract) ||
+          previousContract === digest({ ...nextContract, returns: legacySourceEvidence(next.returns) })) &&
         (!old.version || binding === current.bindings.functions[name]));
       add(old.dependencies ?? {});
       add(next.dependencies ?? {});
