@@ -6,7 +6,7 @@
 
 1. 登录账号页，点「生成接入令牌」。页面仅这一次显示完整令牌。把它保存到客户端的凭据配置。
 2. 支持自定义 HTTP 请求头的客户端使用 `Authorization: Bearer <接入令牌>`。MCP 地址为 `https://<gateway>/mcp`，A2A 地址为 `https://<gateway>/a2a`，A2A Agent Card 位于 `/.well-known/agent-card.json`。客户端在每次请求自动带上令牌。
-3. MCP 使用 `submit_task` 和 `get_task`。A2A 使用 `SendMessage` 提交新的文本任务，用 `GetTask` 读取原任务。两个入口共用账号下的任务。账号页的「重新生成接入令牌」会替换原令牌，「撤销 Agent 接入」会收回账号的连接授权。停用账号会阻止调用。令牌持续有效，无需定期登录。停用后恢复账号时，未撤销的令牌可以继续使用。客户端可用 `GET /identity` 核对接入身份。
+3. MCP 使用 `submit_task` 提交自然语言请求，或用 `apply_ontology_action`、`complete_with_action` 提交已选的已发布业务 Action。两个 Action 入口返回任务，使用 `get_task` 跟进。A2A 使用 `SendMessage` 提交新的文本任务，用 `GetTask` 读取原任务。原 PA 用 `respond_to_task` 或带 `taskId` 和 `paResponse` 的 A2A `SendMessage` 提交原请求要求的响应。账号页可替换或撤销接入令牌。客户端可用 `GET /identity` 核对接入身份。
 
 Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OAuth。账号会话 Cookie 用于账号页。供应商授权和需要用户确认的业务操作沿用原有流程。
 
@@ -381,7 +381,7 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 
 ### 账号组
 
-普通账号通过 `group:eigos-accounts` 使用固定的 Beta 查询权限。Gateway 和 Worker 在读取组授权时再次按固定清单筛选。账号只使用组的资源授权，owner 自身的 `memberships` 仍用于对象策略。
+普通账号通过 `group:eigos-accounts` 使用固定的 Beta 共享查询权限。Gateway 和 Worker 在读取这组授权时按固定清单筛选。可用 `access:configure` 将业务资源授权显式加到 `group:eigos-account-actions`，或加到 `account-actions:<owner>` 供指定账号使用。两处业务授权允许应用 Action、执行 Function、读取对象与读取来源。Ontology 发布只同步共享查询组。普通账号的数据仍按 owner 隔离。
 
 运营者使用 `npm run account -- sync-beta-grants` 将组授权整组替换为当前 Eigos 发布中存在的固定权限。`npm run ontology:publish` 和 `npm run ontology:activate -- <release>` 对业务 Ontology 做同样的同步。其他 Ontology 的发布和 `ontology:prepare` 跳过同步。分支提案合并继续保留授权记录，必要时可以在合并后运行同步命令。新增 Function、Action、来源或对象不会进入 Beta 权限。以前的 `grant-restaurant-search` 命令是同步命令的兼容别名。
 
@@ -392,7 +392,7 @@ SELECT permission, resource FROM <schema>.resource_grants
 WHERE subject='group:eigos-accounts' ORDER BY permission, resource;
 ```
 
-组只获飞猪和高德的来源读取权限、五项查询用到的 Function、结果对象和三个保存查询结果的 Action。查询 Action 在执行时检查对应 Function，拒绝附带声明规则或外部效果的定义。变更 Beta 服务范围需要单独修改并审查权限清单。参见 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
+共享查询组包含飞猪和高德的来源读取权限、五项查询用到的 Function、结果对象和三个保存查询结果的 Action。查询 Action 在执行时检查对应 Function，拒绝附带声明规则或外部效果的定义。使用其他 Action 时照常检查业务资源权限、提交条件及供应商授权。部署带外部效果的账号 Action 时，为 Indexer 的运行角色提供读取账号状态所需的最小 SELECT 权限。参见 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
 
 ### Beta 默认只读服务
 
@@ -405,7 +405,7 @@ Gateway 和 Worker 由运营统一配置：
 - 运行角色需读取 `accounts`（现有权限）及 `member_invitations.redeemed_by`。由管理角色授予最小范围的 `GRANT SELECT (redeemed_by) ON <schema>.member_invitations TO <gateway_role>, <worker_role>;`。
 - 用管理角色运行 `npm run account -- sync-beta-grants`，同步五项查询和读回权限。
 
-MCP 的 `search_restaurants` 用高德查询门店和地址。A2A 用户也可以用文本任务查询。TableCheck、滴滴和交易能力使用单独授权的运营者连接。
+MCP 的 `search_restaurants` 用高德查询门店和地址。A2A 用户也可以用文本任务查询。滴滴 PA 试点使用单独启用的业务授权。见 [原 PA 的滴滴连接](didi-ride-followup.md#原-pa-的滴滴连接)。
 
 ## 账号页和 Gateway 的提示
 
@@ -492,7 +492,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 
 ## 验收
 
-验收只做真实查询和 synthetic 执行，不写外部日历，不真实报名、下单或付款。用没有专属飞猪或高德连接的受邀账号，核对机票、酒店、天气、地点和餐厅五项查询。再确认滴滴估价、TableCheck 和交易能力对普通账号关闭。每一项记录结果和标识，不记录令牌、邮箱、验证链接或任何凭据。
+验收做真实查询和 synthetic 执行。用没有专属飞猪或高德连接的受邀账号，核对机票、酒店、天气、地点和餐厅五项查询。用通用 Action 提交滴滴业务时，核对未获业务授权的账号被拒绝，获授权的账号由原 PA 提供连接引用并续接。用合成供应商验证独立的叫车确认和读回。记录结果和标识，凭据、邮箱和验证链接留在原系统。
 
 全程使用 `invite`。每个测试账号独立申请、兑换邀请码和授权 Grok。
 

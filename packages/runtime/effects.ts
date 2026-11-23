@@ -37,7 +37,8 @@ export class Effects {
     for (const effect of effects) {
       const id = digest([access.principal.owner, requestId, effect.name]);
       await this.db.query(`INSERT INTO ${this.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements), JSON.stringify(access.principal.scopes)], client);
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements),
+        JSON.stringify(access.principal.memberAccess ? { scopes: access.principal.scopes, memberAccess: true } : access.principal.scopes)], client);
     }
   }
   async status(access: Access, requestId: string) {
@@ -92,7 +93,9 @@ export class Effects {
             AND committed.action=effect.action AND committed.release=effect.release
           WHERE effect.id=$1 AND effect.owner=$2 AND effect.token=$3 AND effect.state='working' AND effect.lease_until>now()`, lease)).rows[0];
         if (!row) throw new Conflict('Effect lease is unavailable');
-        const principal = { owner: claim.owner, scopes: row.scopes as string[] };
+        const identity = z.object({ scopes: z.array(z.string()), memberAccess: z.literal(true).optional() })
+          .parse(Array.isArray(row.scopes) ? { scopes: row.scopes } : row.scopes);
+        const principal = { owner: claim.owner, ...identity };
         const access = await Access.load(this.db, principal);
         if (!await access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
         for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);

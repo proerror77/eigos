@@ -10,5 +10,4 @@ export const betaQueries = {
     ['SearchFliggyHotels', 'searchFliggyHotels'],
     ['FindRestaurants', 'findRestaurants'],
   ],
-  instructions: 'This Beta account can search FlyAI flights and hotels and query Amap weather, places and restaurants. Use only these queries with the dates and places provided. Return supplier evidence through the published query Functions.',
 } as const;

@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { Conflict, digest, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
 import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visitInput } from '../../packages/ontology/restaurant-services.js';
-import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema } from '../../packages/ontology/invocation.js';
+import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema, type ActionCall } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
@@ -283,7 +283,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const p = principal(req), member = memberRequests.has(req);
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
-    const taskInstructions = member ? 'Beta supports Fliggy flight and hotel searches and Amap weather, place and restaurant searches. Submit a read-only query once and poll get_task with the original returned ID.' : paTravelInstructions;
+    const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. ${paTravelInstructions}` : paTravelInstructions;
     const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);
@@ -362,8 +362,39 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     }, input => response(() => completeWithAction(req, input, true)));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
+      const queueAction = async (requestId: string, ontology: string | undefined, action: ActionCall,
+        read?: z.infer<typeof completeWithActionRequestSchema>['read']) => {
+        if (ontology && ontology !== 'Eigos' || action.scenarioId) throw new PermissionDenied('Account Actions use the live Eigos Ontology');
+        return publicTask(await tasks.submit(p, { requestId, message: 'Execute the selected published Action' }, {
+          actionInvocation: { action, read }, authorize: authorizeMemberSubmission(req),
+        }));
+      };
+      server.registerTool('describe_ontology', {
+        description: 'Discover the published business Actions available to this account.',
+        inputSchema: z.strictObject({ ontology: z.literal('Eigos').optional() }),
+      }, () => response(async () => (await Access.load(db, p)).describe(await metadata.active('Eigos'), true)));
+      server.registerTool('apply_ontology_action', {
+        description: 'Start a task for a published Action. Use the returned task ID for status and authorization.',
+        inputSchema: actionInput,
+      }, ({ requestId, ontology, ...action }) => response(() => queueAction(requestId, ontology, action)));
+      server.registerTool('complete_with_action', {
+        description: 'Start a task for a published Interface Action and a result Function. Use the returned task ID for status and authorization.',
+        inputSchema: completeWithActionRequestSchema,
+      }, ({ requestId, ontology, action, read }) => response(() => queueAction(requestId, ontology, action, read)));
+      server.registerTool('respond_to_task', {
+        description: 'Return the original PA response using the request ID and schema reported by get_task.',
+        inputSchema: z.strictObject({ taskId: z.uuid(), ...paResponseSchema.shape }),
+      }, ({ taskId, ...answer }) => response(async () => publicTask(await pa.respond(p, taskId, answer, undefined, authorizeMemberSubmission(req)))));
+      server.registerTool('select_task_places', {
+        description: 'Confirm the original task’s current place candidates after the user has reviewed them.',
+        inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }),
+      }, ({ taskId, places }) => response(async () => publicTask(await tasks.selectPlaces(p, taskId, places))));
+      server.registerTool('supply_task_input', {
+        description: 'Supply a requested city or endpoint, or retry a supplier read when the original task permits it.',
+        inputSchema: z.strictObject({ taskId: z.uuid(), answer: taskInputAnswerSchema }),
+      }, ({ taskId, answer }) => response(async () => publicTask(await tasks.answerInput(p, taskId, answer))));
       server.registerTool('submit_task', {
-        description: 'Submit a read-only travel inquiry. Send the natural-language request once and preserve the returned task ID.',
+        description: 'Submit a business request once and preserve the returned task ID.',
         inputSchema: memberSubmit,
       }, input => response(async () => publicTask(await tasks.submit(p, input, {
         authorize: authorizeMemberSubmission(req),

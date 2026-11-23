@@ -1,4 +1,4 @@
-import { accountGroup } from './accounts.js';
+import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
@@ -37,6 +37,7 @@ const accountGrantKeys = new Set([
 ]);
 
 const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
+const accountActionPermissions = new Set<Permission>(['view_objects', 'apply_action', 'execute_function', 'read_source']);
 
 /** Resource grants and object/property visibility, independent of OAuth transport scopes. */
 export class Access {
@@ -129,18 +130,22 @@ export class Access {
   }
   async refresh(client?: Sql) {
     const grantSubject = this.principal.memberAccess
-      ? `subject=$2 AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
+      ? `subject IN ($2,$3,$4) AND EXISTS (SELECT 1 FROM ${this.db.schema}.accounts WHERE owner=$1 AND status='active' AND approved_at IS NOT NULL AND revoked_at IS NULL)`
       : `(subject=$1 OR subject IN (SELECT 'group:'||name FROM ${this.db.schema}.security_memberships WHERE subject=$1 AND kind='group'))`;
-    const subjects = this.principal.memberAccess ? [this.principal.owner, 'group:' + accountGroup] : [this.principal.owner];
+    const defaultGroup = 'group:' + accountGroup;
+    const subjects = this.principal.memberAccess
+      ? [this.principal.owner, defaultGroup, 'group:' + accountActionsGroup, 'account-actions:' + this.principal.owner] : [this.principal.owner];
     const result = await this.db.query(`SELECT
-      (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission)),'[]')
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('resource',resource,'permission',permission,'subject',subject)),'[]')
         FROM ${this.db.schema}.resource_grants WHERE ${grantSubject}) AS grants,
       (SELECT coalesce(jsonb_agg(ontology||'/property/'||type||'/'||property),'[]') FROM ${this.db.schema}.property_security) AS properties,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'type',type,'policy',policy)),'[]') FROM ${this.db.schema}.object_policies) AS policies,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('kind',kind,'name',name)),'[]') FROM ${this.db.schema}.security_memberships WHERE subject=$1) AS memberships,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, subjects, client);
-    const keys = (result.rows[0]!.grants as Grant[]).map(grantKey);
-    this.grants = new Set(this.principal.memberAccess ? keys.filter(key => accountGrantKeys.has(key)) : keys);
+    const grants = result.rows[0]!.grants as (Grant & { subject: string })[];
+    this.grants = new Set(grants.filter(grant => !this.principal.memberAccess || (grant.subject === defaultGroup
+      ? accountGrantKeys.has(grantKey(grant))
+      : grant.resource.startsWith(businessOntology + '/') && accountActionPermissions.has(grant.permission))).map(grantKey));
     for (const assignment of result.rows[0]!.projects as {ontology:string;resource:string;project:string}[]) {
       for (const permission of ['view_definition','edit_definition','manage_definition']) {
         if(this.grants.has(`${permission}:${assignment.ontology}/project/${assignment.project}`)) this.grants.add(`${permission}:${assignment.resource}`);
@@ -364,11 +369,11 @@ export class Access {
   action(model: Ontology, name: string) {
     this.requireAvailable(model, 'action', name);
     const action = model.actions.get(name);
-    if (this.principal.memberAccess && (!action?.function || action.function !== accountSearchActions.get(name) ||
-        action.rules?.length || action.effects?.length)) throw new PermissionDenied('Beta accounts can use only published query Actions');
     this.useModelData(action?.classification);
     this.definition(model, 'action', name);
-    this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name));
+    this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name), this.principal.memberAccess);
+    if (this.principal.memberAccess && accountSearchActions.has(name) && (action?.function !== accountSearchActions.get(name) ||
+        action?.rules?.length || action?.effects?.length)) throw new PermissionDenied('The shared Beta query Action changed its contract');
   }
   function(model: Ontology, name: string) {
     this.requireAvailable(model, 'function', name);
@@ -467,7 +472,8 @@ export class Access {
       this.observeClassification(item.classification);
       return true;
     };
-    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) && this.canDefine(model, 'object', type.apiName) && modelVisible(type));
+    document.objectTypes = document.objectTypes.filter(type => include('object', type.apiName) && visibleInCatalogue('object', type.apiName) &&
+      this.canDefine(model, 'object', type.apiName) && (!this.principal.memberAccess || !executable || this.canRead(model, type.apiName)) && modelVisible(type));
     document.interfaceTypes = document.interfaceTypes.filter(type => include('interface', type.apiName) && this.canDefine(model, 'interface', type.apiName) && modelVisible(type));
     if (limited) {
       for (const type of [...document.objectTypes, ...document.interfaceTypes])

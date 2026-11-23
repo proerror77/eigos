@@ -239,7 +239,6 @@ export class Actions {
         await this.checkInput(objects, actionName, input, signal);
       },
       deferEffect: effect => {
-        if (principal.memberAccess) throw new PermissionDenied('Beta accounts cannot dispatch external effects');
         if (model.scenario) throw new Conflict('External effects require a formal Action');
         if (!this.effects) throw new Conflict('Action effects require a configured dispatcher');
         if (declaredEffects.length >= 20 || declaredEffects.some(item => item.name === effect.name)) {
@@ -259,15 +258,16 @@ export class Actions {
   }
   /** Complete an MCP invocation, with a durable pause only for task execution. */
   async complete(access: Access, model: PublishedOntology, selected: { action: string; input: Record<string, unknown> },
-    requestId: string, read: ActionResultRead, execution: TaskExecution | undefined, signal: AbortSignal,
+    requestId: string, read: ActionResultRead | undefined, execution: TaskExecution | undefined, signal: AbortSignal,
     options: { allowPause?: boolean; applied?: (reference: ObjectRef) => void; authorize?: (client: Sql) => Promise<void> } = {},
   ) {
-    access.function(model, read.function);
-    const definition = model.functions.get(read.function);
-    if (!definition || definition.edits || !Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter)) {
-      throw new Conflict('Action completion requires a declared result parameter on a read Function');
+    if (read) {
+      access.function(model, read.function);
+      const definition = model.functions.get(read.function);
+      if (!definition || definition.edits || !Object.hasOwn(definition.parameters.properties ?? {}, read.resultParameter))
+        throw new Conflict('Action completion requires a declared result parameter on a read Function');
+      if (definition.source) access.source(model, definition.source);
     }
-    if (definition.source) access.source(model, definition.source);
     const guard = execution || options.authorize ? async (client: Sql) => {
       signal.throwIfAborted();
       if (execution) await execution.tasks.current(execution.task, client, true);
@@ -298,6 +298,7 @@ export class Actions {
       throw error;
     }
     options.applied?.(reference);
+    if (!read) return reference;
     const result = await timeOperation('result_read', () => this.functions.invoke(model, read.function, { ...read.input, [read.resultParameter]: reference }, {
       principal: access.principal, objects: new Objects(this.db, model, access), signal, taskId: execution?.task.id, execution,
     }), read.function);

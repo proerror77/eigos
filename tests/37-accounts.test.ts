@@ -370,7 +370,7 @@ test('a published query Action cannot acquire declared effects for Beta accounts
     const body = structuredClone(f.model.document);
     const action = body.actionTypes.find(action => action.apiName === 'FindRestaurants')!;
     action.effects = [{ name: 'SearchNotice', handler: 'SyntheticSearchNotice', payload: { query: { parameter: 'query' } } }];
-    assert.throws(() => access.action(new Ontology(body), 'FindRestaurants'), /Beta accounts can use only published query Actions/);
+    assert.throws(() => access.action(new Ontology(body), 'FindRestaurants'), /The shared Beta query Action changed its contract/);
   } finally { await f.close(); }
 });
 

@@ -85,7 +85,7 @@ export async function provider() {
   const connector = new DidiMcpConnector({ bindingId: 'synthetic', keyFile, keySha256: createHash('sha256').update(key).digest('hex'), environment: 'production' }, fetcher, true);
   const source: DidiSource = { bindingId: 'synthetic', connector, async assertCurrent() { if (!flags.active) throw new Error('Source revoked'); } };
   source.orders={environment:'mock',supportedCurrencies:['CNY'],async assertAvailable(){if(!flags.orderEnabled)throw new Error('DIDI_ORDER_EXECUTION_DISABLED');},async quote(_input,category){return {traceId:'PRIVATE_ORDER_TOKEN',amountMinor:flags.amountMinor,currency:'CNY',category};},async create(_quote,_signal,guard){await guard();flags.orderCreates++;if(flags.loseOrderReply)throw new Error('Synthetic lost reply');return {orderId:'synthetic-original-order',status:'Created by fixture',state:'created',independentRead:false,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('created')};},async query(orderId){flags.orderQueries++;return {orderId,status:'Independent fixture status',state:'reported',independentRead:true,evidence:'synthetic',observedAt:new Date().toISOString(),contentDigest:digest('queried')};},async cancel(){throw new Error('No synthetic cancellation requested');}};
-  return { source, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
+  return { source, fetcher, calls, inputs, flags, close: () => rm(directory, { recursive: true, force: true }) };
 }
 export async function fixture(driver: AgentDriver = new FixtureAgent(),services?:ServiceResolver,stripe?:StripeSandboxResolver,definition=document,
   connections?: Parameters<typeof createCapabilities>[5], extensions: RuntimeExtensions = {},

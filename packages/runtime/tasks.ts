@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { Conflict, NotFound, SourceReadFailure, digest, requireScope, type Principal } from '../core/identity.js';
 import type { Sql } from './database.js';
@@ -10,7 +11,7 @@ import type { CognitiveContext } from './cognitive-workflow.js';
 import { Clarification, taskInputAnswerSchema, placeAmendmentSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
-import { parseSubmission, storedInputSchema, taskOptions } from './task-input.js';
+import { parseSubmission, storedInputSchema, taskActionSchema, taskOptions } from './task-input.js';
 export { routeInputSchema, submitSchema, type RouteInput } from './task-input.js';
 
 export interface Task { id: string; owner: string; request_id: string; input: z.infer<typeof storedInputSchema> & {scheduledAction?:ScheduledCall}; release: string; scopes: string[]; state: string; token: string | null; result: unknown; result_permissions?: Requirement[] | null; error: string | null; created_at: Date; available_at?: Date; updated_at: Date; execution_step?:number; conversation_id?: string | null; cognitive_context?: CognitiveContext | null }
@@ -32,15 +33,20 @@ const headOfConversation = (table: string) => `NOT EXISTS (
 
 export const taskPrincipal = (task: Task): Principal =>
   ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess });
+export const currentTaskExecution = new AsyncLocalStorage<{ task: Task; tasks: Tasks }>();
 export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize }: { assignConversation?: boolean; authorize?: (client: Sql) => Promise<void> } = {}): Promise<Task> {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation }: {
+    assignConversation?: boolean; authorize?: (client: Sql) => Promise<void>; actionInvocation?: z.infer<typeof taskActionSchema>;
+  } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = parseSubmission(raw);
-    const fingerprint = digest(input);
-    const stored = principal.memberAccess ? { ...input, memberAccess: true } : input;
+    const invocation = actionInvocation && taskActionSchema.parse(actionInvocation);
+    const fingerprint = digest(invocation ? { ...input, actionInvocation: invocation } : input);
+    const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true, paClient: principal.clientId } : {}),
+      ...(invocation ? { actionInvocation: invocation } : {}) };
     const task = await this.db.transaction(async client => {
       await authorize?.(client);
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
@@ -65,10 +71,11 @@ export class Tasks {
           WHERE owner=$1 AND conversation_id=$2 ORDER BY conversation_batch DESC LIMIT 1`, [owner, conversation], client)).rows[0];
       }
       let submitted: Task | undefined, position = 1;
-      if (latest?.collecting && latest.message_count < maxBatchMessages && latest.release === model.release
+      if (!invocation && !latest?.input.actionInvocation && latest?.collecting && latest.message_count < maxBatchMessages && latest.release === model.release
           && digest([...new Set(latest.scopes)].sort()) === digest([...new Set(scopes)].sort())
           && latest.input.message.length + 1 + input.message.length <= maxBatchLength
           && Boolean(latest.input.memberAccess) === Boolean(principal.memberAccess)
+          && latest.input.paClient === ('paClient' in stored ? stored.paClient : undefined)
           && digest(taskOptions.parse(latest.input)) === digest(taskOptions.parse(input))) {
         const merged = { ...latest.input, message: `${latest.input.message}\n${input.message}` };
         submitted = (await this.db.query<Task>(`UPDATE ${table} SET input=$2,input_digest=$3,message_count=$4,updated_at=clock_timestamp()
