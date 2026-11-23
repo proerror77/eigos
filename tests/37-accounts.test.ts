@@ -4,6 +4,7 @@ import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-p
 import { readConfig } from '../packages/core/config.js';
 import { digest, type Principal } from '../packages/core/identity.js';
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
+import { Ontology } from '../packages/ontology/model.js';
 import { Access, businessGrants, setGrants, syncAccountGrants, syncAccountGrantsAfterActivation } from '../packages/runtime/access.js';
 import { Accounts, accountGroup, emailDigest, initializeAccounts } from '../packages/runtime/accounts.js';
 import type { Database } from '../packages/runtime/database.js';
@@ -275,29 +276,35 @@ test('upgrading the legacy member schema keeps accounts and invitations, and can
   } finally { await f.close(); }
 });
 
-test('account grants follow the published business resources', async () => {
+test('account grants cover only the five queries and their result readback', async () => {
   const f = await fixture();
   try {
     await syncAccountGrants(f.db, f.model);
     const rows = (await f.db.query(`SELECT resource,permission FROM ${f.db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows;
-    assert.deepEqual(new Set(rows.map(r => r.permission + ':' + r.resource)),
-      new Set(businessGrants(f.model, f.db.sandboxEnabled).map(g => g.permission + ':' + g.resource)));
-    assert.ok(rows.every(r => !['edit_definition', 'manage_definition'].includes(r.permission)));
+    const names = (permission: string) => rows.filter(r => r.permission === permission).map(r => r.resource.split('/').at(-1)!).sort();
+    assert.deepEqual(names('execute_function'), ['findRestaurants', 'readFliggyFlights', 'readFliggyHotels', 'readMapPlace', 'readRestaurantSearch',
+      'readServiceSearch', 'readServiceSearchPages', 'readWeather', 'searchFliggyFlights', 'searchFliggyHotels', 'searchMapPlaces']);
+    assert.deepEqual(names('apply_action'), ['FindRestaurants', 'SearchFliggyFlights', 'SearchFliggyHotels']);
+    assert.deepEqual(names('read_source'), ['Amap', 'Fliggy']);
+    assert.deepEqual(names('view_objects'), ['FliggyFlightOffer', 'FliggyFlightSearch', 'FliggyHotelOffer', 'FliggyHotelSearch', 'RestaurantSearchResult', 'RestaurantSourceVenue']);
+    assert.deepEqual(names('view_definition'), ['Eigos']);
+    assert.equal(rows.length, 23);
   } finally { await f.close(); }
 });
 
-test('syncing the account group replaces its grants, follows the sandbox switch and joins a caller transaction', async () => {
+test('syncing the account group replaces broad legacy grants and joins a caller transaction', async () => {
   const f = await fixture(undefined, undefined, undefined, undefined, undefined, {}, { sandbox: true });
   try {
-    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const;
-    await setGrants(f.db, 'group:' + accountGroup, [retired]);
+    const broad = businessGrants(f.model, true);
+    await setGrants(f.db, 'group:' + accountGroup, broad);
     // Inside a caller's transaction the sync is committed or rolled back with it.
     await assert.rejects(f.db.transaction(async client => { await syncAccountGrants(f.db, f.model, client); throw new Error('roll back'); }), /roll back/);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
+    assert.deepEqual(await accountGroupGrants(f.db), new Set(broad.map(grantKey)));
     await syncAccountGrants(f.db, f.model);
-    // The sync replaces what the group held, and the database's sandbox switch decides which resources count as business grants.
-    assert.ok(businessGrants(f.model, true).length > businessGrants(f.model, false).length);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model, true).map(grantKey)));
+    const fixed = await accountGroupGrants(f.db);
+    assert.equal(fixed.size, 23);
+    assert(!fixed.has('apply_action:Eigos/action/EstimateRide'));
+    assert(!fixed.has('read_source:Eigos/source/Didi'));
   } finally { await f.close(); }
 });
 
@@ -317,15 +324,16 @@ test('after an activation only the business Ontology feeds the account group', a
     assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
     // The business Ontology does sync.
     await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(f.model.release, f.capabilities, deployer));
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(f.model).map(grantKey)));
+    assert.equal((await accountGroupGrants(f.db)).size, 23);
   } finally { await f.close(); }
 });
 
-test('a branch merge leaves every authorization row alone, so the operator syncs the account group by activating again', async () => {
+test('merging and reactivating a release with a new resource cannot widen account grants', async () => {
   const f = await fixture();
   try {
-    const retired = { resource: 'Eigos/object/Retired', permission: 'view_objects' } as const, governance = new Governance(f.db, f.metadata, f.capabilities);
-    // Only the merged release has this object type, so the account group can only hold it after a sync from the merged release.
+    const governance = new Governance(f.db, f.metadata, f.capabilities);
+    await syncAccountGrants(f.db, f.model);
+    const fixed = await accountGroupGrants(f.db);
     const body = structuredClone(f.model.document);
     body.version = 'account-sync';
     body.objectTypes.push({ apiName: 'AccountProbe', displayName: 'Account probe', description: 'Synthetic type for the account group sync',
@@ -333,7 +341,6 @@ test('a branch merge leaves every authorization row alone, so the operator syncs
     const branch = await governance.create(f.publisher, { ontology: 'Eigos', name: 'Account sync', body });
     const prepared = await governance.prepare(f.publisher, { id: branch.id, revision: branch.revision });
     const approved = await governance.review(f.publisher, { id: prepared.id, revision: prepared.revision, release: prepared.release });
-    await setGrants(f.db, 'group:' + accountGroup, [retired]);
     // The runtime role cannot write authorization tables, so a merge must not write resource_grants at all.
     // xmin also exposes a row that was rewritten with the same values.
     const grantRows = async () => (await f.db.query(`SELECT xmin::text AS written_by,subject,resource,permission
@@ -344,10 +351,27 @@ test('a branch merge leaves every authorization row alone, so the operator syncs
     assert.equal(merged.release, prepared.release);
     assert.ok(businessGrants(merged).some(grant => grant.resource === 'Eigos/object/AccountProbe'));
     assert.deepEqual(await grantRows(), before);
-    assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
+    assert.deepEqual(await accountGroupGrants(f.db), fixed);
     // The operator activates the merged release again with the admin role, which is what `npm run ontology:activate <release>` does.
     await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(merged.release, f.capabilities, f.publisher));
-    assert.deepEqual(await accountGroupGrants(f.db), new Set(businessGrants(merged).map(grantKey)));
+    assert.deepEqual(await accountGroupGrants(f.db), fixed);
+  } finally { await f.close(); }
+});
+
+test('a published query Action cannot acquire declared effects for Beta accounts', async () => {
+  const f = await fixture();
+  try {
+    const owner = '3'.repeat(64), accounts = new Accounts(f.db, 'open');
+    await accounts.provision(owner, emailDigest('beta@example.test'));
+    await accounts.approve(owner);
+    await syncAccountGrants(f.db, f.model);
+    const access = await Access.load(f.db, { owner, scopes: ['tasks:read', 'tasks:write'], memberAccess: true });
+    assert.doesNotThrow(() => access.action(f.model, 'FindRestaurants'));
+    const body = structuredClone(f.model.document);
+    const action = body.actionTypes.find(action => action.apiName === 'FindRestaurants')!;
+    const withEffects = body.actionTypes.find(action => action.effects?.length)!;
+    action.effects = structuredClone(withEffects.effects);
+    assert.throws(() => access.action(new Ontology(body), 'FindRestaurants'), /Beta accounts can use only published query Actions/);
   } finally { await f.close(); }
 });
 

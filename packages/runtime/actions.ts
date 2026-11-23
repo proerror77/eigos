@@ -239,6 +239,7 @@ export class Actions {
         await this.checkInput(objects, actionName, input, signal);
       },
       deferEffect: effect => {
+        if (principal.memberAccess) throw new PermissionDenied('Beta accounts cannot dispatch external effects');
         if (model.scenario) throw new Conflict('External effects require a formal Action');
         if (!this.effects) throw new Conflict('Action effects require a configured dispatcher');
         if (declaredEffects.length >= 20 || declaredEffects.some(item => item.name === effect.name)) {

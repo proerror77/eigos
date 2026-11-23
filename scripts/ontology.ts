@@ -5,7 +5,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Database } from '../packages/runtime/database.js';
 import { Metadata } from '../packages/runtime/metadata.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
-import { Access, setGrants, businessGrants, grantBetaRestaurantSearch, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
+import { Access, setGrants, businessGrants, syncAccountGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { configuredSource } from '../packages/core/config.js';
@@ -48,8 +48,10 @@ else {
       if (args[0] === 'applications') {
         const offset = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(args[1] ?? 0);
         console.log(JSON.stringify(await new Accounts(db, signupMode()).applications(offset)));
-      } else if (args[0] === 'grant-restaurant-search') {
-        console.log(JSON.stringify(await grantBetaRestaurantSearch(db, await metadata.active('Eigos'))));
+      } else if (args[0] === 'sync-beta-grants' || args[0] === 'grant-restaurant-search') {
+        const active = await metadata.active('Eigos');
+        await syncAccountGrants(db, active);
+        console.log(JSON.stringify({ release: active.release }));
       } else console.log(JSON.stringify(await accountCommand(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {
       const project = ontologyName.parse(process.argv[3]);

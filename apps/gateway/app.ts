@@ -216,7 +216,6 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     }
     const complete = () => capabilities.actions.complete(
       access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
-      quoteOnly && memberRequests.has(req) ? { authorize: authorizeMemberSubmission(req) } : {},
     );
     const result = await (quoteOnly ? withoutExternalDispatch(complete) : complete());
     if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
@@ -282,9 +281,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/mcp', (_req, res) => res.set('Allow', 'POST').sendStatus(405));
   app.post('/mcp', async (req, res) => {
     const p = principal(req), member = memberRequests.has(req);
-    const quoteOnly = member || (accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
-      !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write')));
-    const taskInstructions = member ? 'Submit other read-only travel queries once and poll get_task with the original returned ID.' : paTravelInstructions;
+    const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
+      !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
+    const taskInstructions = member ? 'Beta supports Fliggy flight and hotel searches and Amap weather, place and restaurant searches. Submit a read-only query once and poll get_task with the original returned ID.' : paTravelInstructions;
     const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);
@@ -336,15 +335,16 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       return result;
     };
     server.registerTool('search_restaurants', {
-      description: 'Find Amap restaurant listings or TableCheck venues by city and keyword. Amap is the default. Preserve the returned TableCheck venue ID for an availability query.',
+      description: member ? 'Find Amap restaurant listings and addresses by city and keyword.' :
+        'Find Amap restaurant listings or TableCheck venues by city and keyword. Amap is the default. Preserve the returned TableCheck venue ID for an availability query.',
       inputSchema: restaurantSearchInput.pick({ city: true, query: true, limit: true })
-        .extend({ requestId: submitSchema.shape.requestId, provider: z.enum(['Amap', 'TableCheck']).optional() }),
+        .extend({ requestId: submitSchema.shape.requestId, provider: (member ? z.literal('Amap') : z.enum(['Amap', 'TableCheck'])).optional() }),
     }, ({ requestId, provider = 'Amap', ...input }) => response(async () => {
       const { access, model } = await restaurantAccess(provider);
       if (provider === 'Amap') access.function(model, 'searchMapPlaces');
       return completeRestaurantRead(access, model, requestId, 'search', { ...input, providers: [provider] });
     }));
-    server.registerTool('check_restaurant_availability', {
+    if (!member) server.registerTool('check_restaurant_availability', {
       description: 'Read TableCheck availability for a venue returned by search_restaurants, on an exact local date and for a specified party size. Reuse the same request ID to read the original result.',
       inputSchema: visitInput.pick({ date: true, partySize: true })
         .extend({ venueId: z.string().regex(/^[a-f0-9]{64}$/), requestId: submitSchema.shape.requestId }),

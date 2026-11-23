@@ -24,6 +24,25 @@ export class TaskResult {
 export const resource = (ontology: string, kind: string, name: string) => `${ontology}/${kind}/${name}`;
 export { PermissionDenied } from '../core/identity.js';
 
+const businessOntology = 'Eigos';
+const accountSearchActions = new Map([
+  ['SearchFliggyFlights', 'searchFliggyFlights'],
+  ['SearchFliggyHotels', 'searchFliggyHotels'],
+  ['FindRestaurants', 'findRestaurants'],
+]);
+const accountGrantKeys = new Set([
+  'view_definition:Eigos',
+  ...['Amap', 'Fliggy'].map(name => `read_source:Eigos/source/${name}`),
+  ...['FliggyFlightOffer', 'FliggyFlightSearch', 'FliggyHotelOffer', 'FliggyHotelSearch',
+    'RestaurantSearchResult', 'RestaurantSourceVenue'].map(name => `view_objects:Eigos/object/${name}`),
+  ...['readFliggyFlights', 'readFliggyHotels', 'readServiceSearch', 'readServiceSearchPages',
+    'readWeather', 'searchMapPlaces', 'readMapPlace', 'readRestaurantSearch',
+    ...accountSearchActions.values()].map(name => `execute_function:Eigos/function/${name}`),
+  ...[...accountSearchActions.keys()].map(name => `apply_action:Eigos/action/${name}`),
+]);
+
+const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
+
 /** Resource grants and object/property visibility, independent of OAuth transport scopes. */
 export class Access {
   private policies = new Map<string, ObjectPolicy>();
@@ -125,7 +144,8 @@ export class Access {
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'type',type,'policy',policy)),'[]') FROM ${this.db.schema}.object_policies) AS policies,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('kind',kind,'name',name)),'[]') FROM ${this.db.schema}.security_memberships WHERE subject=$1) AS memberships,
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, subjects, client);
-    this.grants = new Set((result.rows[0]!.grants as Grant[]).map(grant => `${grant.permission}:${grant.resource}`));
+    const keys = (result.rows[0]!.grants as Grant[]).map(grantKey);
+    this.grants = new Set(this.principal.memberAccess ? keys.filter(key => accountGrantKeys.has(key)) : keys);
     for (const assignment of result.rows[0]!.projects as {ontology:string;resource:string;project:string}[]) {
       for (const permission of ['view_definition','edit_definition','manage_definition']) {
         if(this.grants.has(`${permission}:${assignment.ontology}/project/${assignment.project}`)) this.grants.add(`${permission}:${assignment.resource}`);
@@ -348,7 +368,10 @@ export class Access {
   }
   action(model: Ontology, name: string) {
     this.requireAvailable(model, 'action', name);
-    this.useModelData(model.actions.get(name)?.classification);
+    const action = model.actions.get(name);
+    if (this.principal.memberAccess && (!action?.function || action.function !== accountSearchActions.get(name) ||
+        action.rules?.length || action.effects?.length)) throw new PermissionDenied('Beta accounts can use only published query Actions');
+    this.useModelData(action?.classification);
     this.definition(model, 'action', name);
     this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name));
   }
@@ -551,34 +574,12 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }
-/** Grants only the restaurant search and its readback to the existing Beta group. */
-export async function grantBetaRestaurantSearch(db: Database, model: Ontology, client?: Sql) {
-  if (model.document.id !== 'Eigos') throw new Error('Expected the published business Ontology');
-  const paths = new Set([
-    'Eigos/action/FindRestaurants',
-    'Eigos/function/findRestaurants',
-    'Eigos/function/readRestaurantSearch',
-    'Eigos/object/RestaurantSearchResult',
-    'Eigos/object/RestaurantSourceVenue',
-  ]);
-  const grants = businessGrants(model).filter(grant => paths.has(grant.resource));
-  if (grants.length !== paths.size) throw new Error('The restaurant search contract is incomplete');
-  const result = await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
-    SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
-    ON CONFLICT DO NOTHING RETURNING resource`, ['group:' + accountGroup, JSON.stringify(grants)], client);
-  return (result.rows as { resource: string }[]).map(row => row.resource);
-}
-/** Makes the account group hold exactly the business grants of `model`, replacing whatever the group held. Pass the business Ontology only; the operator commands call `syncAccountGrantsAfterActivation`. */
+/** Replace legacy group grants with the fixed subset supported by this release. */
 export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
-  await setGrants(db, 'group:' + accountGroup, businessGrants(model, db.sandboxEnabled), client);
+  if (model.document.id !== businessOntology) throw new Error('Expected the published business Ontology');
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model).filter(grant => accountGrantKeys.has(grantKey(grant))), client);
 }
-const businessOntology = 'Eigos';
-/**
- * Keeps the account group in step with the business Ontology. The operator commands sync after publish/activate.
- * After a branch merge activates a new business release, the operator re-runs `npm run ontology:activate <release>`,
- * because the runtime role cannot write authorization tables. Any other Ontology is ignored: its resources must never
- * replace the business grants of every account.
- */
+
 export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology): Promise<void> {
   if (activated.document.id === businessOntology) await syncAccountGrants(db, activated);
 }
