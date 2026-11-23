@@ -8,6 +8,7 @@ import { Accounts, emailDigest, newAccountSecret } from '../../packages/runtime/
 import type { Auth0Management } from './auth0-management.js';
 import { rateLimit } from './rate-limit.js';
 import { seal, unseal } from './sealed-cookie.js';
+import { betaPage } from './beta-page.js';
 
 /**
  * One sign-in of the portal. `link` is set on the login that verifies the original account for a login that Auth0 paused for
@@ -181,7 +182,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
   };
   const redirect = (res: Response, status?: keyof typeof statuses) =>
     res.redirect(303, '/account' + (status ? '?status=' + status : ''));
-  app.use('/account', express.urlencoded({ extended: false, limit: '5kb' }), (_req, res, next) => {
+  app.use(['/account', '/beta'], express.urlencoded({ extended: false, limit: '5kb' }), (_req, res, next) => {
     res.set({
       'Cache-Control': 'no-store',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -189,26 +190,38 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     });
     next();
   });
+  app.get('/beta', async (req, res) => {
+    if (config.EIGOS_SIGNUP !== 'invite' || await accounts.session(cookie(req, sessionCookie, sessionShape))) {
+      res.redirect(302, '/account'); return;
+    }
+    res.type('html').send(betaPage('申请 EIGOS Beta', `
+      <h2>加入候补名单</h2>
+      <p>注册并验证邮箱后提交测试用途。审核通过后，我们会通过邮件通知你。</p>
+      <p><a class="button" href="/account/login?signup=1">注册并申请</a></p>
+      <a href="/account/login">已有账号？登录</a>`));
+  });
   app.get('/account', async (req, res) => {
     const session = await accounts.session(cookie(req, sessionCookie, sessionShape));
     const account = session && await accounts.account(session.owner);
     const status = typeof req.query.status === 'string' && Object.hasOwn(statuses, req.query.status)
       ? req.query.status as keyof typeof statuses : undefined;
     let content: string, explains: keyof typeof statuses | undefined;
-    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可申请使用 EIGOS Agent。</p>' : ''}
+    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可加入 EIGOS Beta 候补名单。</p>' : ''}
       <p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>`;
     else if (!account) {
       if (await accounts.isOperator(session.owner)) { explains = 'operator'; content = `<p>${statuses.operator}</p>`; }
       else if (config.EIGOS_SIGNUP === 'invite') {
         const application = await accounts.applicationStatus(session);
-        const apply = application === 'invited' ? '<p>申请已通过。收到运营提供的邀请码后，请填写下方表单。</p>'
-          : application === 'pending' ? '<p>已收到申请，等待运营审核。</p>'
+        const apply = application === 'invited' ? '<p>申请已通过。可以使用此前收到的有效邀请码，或等待运营直接开通。</p>'
+          : application === 'pending' ? '<h2>已加入候补名单</h2><p>正在等待运营审核。通过后会收到开通邮件，也可以回到这里查看。</p>'
           : `<form method="post" action="/account/apply">
+              <h2>加入候补名单</h2>
               <p><label>已验证的登录邮箱 <input type="email" name="email" autocomplete="email" maxlength="254" required></label></p>
               <p><label>你计划用 Agent 做什么？<br><textarea name="purpose" maxlength="300" rows="3" required></textarea></label></p>
-              <p>运营审核后会单独提供邀请码。</p><button>申请使用 Agent</button>
+              <small>邮箱和测试用途会用于审核。通过后，我们会把开通通知发到这个邮箱。</small>
+              <button>提交申请</button>
             </form>`;
-        content = apply + '<form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form>';
+        content = apply + '<details><summary>使用此前收到的邀请码</summary><form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form></details>';
       } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
       else content = '<p>账号还没有开通，请重新登录。</p>';
     } else if (account.status === 'suspended') content = '<p>这个账号已停用，请联系 EIGOS 支持。</p>';
@@ -233,8 +246,10 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const resend = status === 'verify' && management
       ? '<form method="post" action="/account/resend-verification"><button>重新发送验证邮件</button></form>' : '';
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
-    res.set('Referrer-Policy', 'same-origin').type('html').send(page('EIGOS 账号', `${banner}${resend}${content}
-      ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}`));
+    const body = `${banner}${resend}${content}
+      ${session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : ''}`;
+    const render = config.EIGOS_SIGNUP === 'invite' && !account && !explains;
+    res.set('Referrer-Policy', 'same-origin').type('html').send(render ? betaPage('申请 EIGOS Beta', body) : page('EIGOS 账号', body));
   });
   app.get('/account/login', flowLimit, (req, res) => {
     // The attempt travels in a sealed cookie, so any Gateway replica can finish the login.
@@ -314,7 +329,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const opened = await accounts.provision(result.owner, emailDigest(result.email));
     const session = await accounts.startSession(result.owner, result.email, previous);
     res.cookie(sessionCookie, session, { ...cookieOptions, maxAge: sessionAge });
-    // An invitation-only deployment opens the account on the page, so `invite_required` needs no status.
+    // The account page shows the review status for applicants in invite mode.
     redirect(res, opened === 'signup_closed' ? 'closed' : opened === 'operator_account' ? 'operator' : undefined);
   });
   // Unlike the forms below, this one has no session: the sign-in ended at an unverified email, and only the verify cookie names the user.

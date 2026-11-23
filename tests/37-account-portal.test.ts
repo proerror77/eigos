@@ -12,7 +12,8 @@ import { seal, unseal } from '../apps/gateway/sealed-cookie.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { Accounts } from '../packages/runtime/accounts.js';
+import { Accounts, hasBetaReadAccess } from '../packages/runtime/accounts.js';
+import { accountCommand } from '../scripts/account-command.js';
 import { portalEnv } from './account-env.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
@@ -429,6 +430,40 @@ test('form posts need the portal origin and a session, and activation reports op
   } finally { await invite.close(); await closed.close(); await f.close(); }
 });
 
+test('a verified applicant can use Beta after operator approval and separate Agent consent, without a code', async () => {
+  const f = await fixture(), portal = await accountGateway(f, { signup: 'invite' });
+  try {
+    const applicant = await portal.login('waitlisted', 'waitlisted@example.test');
+    const owner = portal.owner('waitlisted');
+    const approve = (mode: 'invite' | 'closed' = 'invite') =>
+      accountCommand(f.db, mode, ['approve-application', owner]);
+    await assert.rejects(approve(), /No pending application/);
+    assert.match(await portal.page(applicant.cookie), /加入候补名单/);
+    await portal.form('apply', applicant.cookie,
+      new URLSearchParams({ email: 'waitlisted@example.test', purpose: 'Search travel options' }));
+    assert.deepEqual((await portal.accounts.applications()).map(row => row.owner), [owner]);
+    await portal.form('approve', applicant.cookie);
+    assert.equal(await portal.accounts.account(owner), undefined);
+    assert.match(await portal.page(applicant.cookie), /等待运营审核/);
+    await assert.rejects(approve('closed'), /requires invite sign-up mode/);
+
+    const [approved, replay] = await Promise.all([approve(), approve()]);
+    assert.ok(approved.waitlistApprovedAt);
+    assert.deepEqual(replay, approved);
+    assert.equal(approved.approvedAt, null);
+    assert.deepEqual(await portal.accounts.applications(), []);
+    assert.match(await portal.page(applicant.cookie), /Beta 账号已开通/);
+    assert.equal(await hasBetaReadAccess(f.db, owner), false);
+    await portal.form('approve', applicant.cookie);
+    assert.equal(await hasBetaReadAccess(f.db, owner), true);
+    await portal.form('revoke', applicant.cookie);
+    assert.equal(await hasBetaReadAccess(f.db, owner), false);
+    assert.ok((await approve()).revokedAt);
+    const codes = await f.db.query(`SELECT 1 FROM ${f.db.schema}.member_invitations WHERE applicant_owner=$1 OR redeemed_by=$1`, [owner]);
+    assert.equal(codes.rowCount, 0);
+  } finally { await portal.close(); await f.close(); }
+});
+
 test('sign-in and form requests have separate per-address limits that follow the client address behind a trusted proxy', async () => {
   const f = await fixture();
   const direct = await accountGateway(f), hops = await accountGateway(f, { env: { EIGOS_TRUST_PROXY: '1' } }),
@@ -565,7 +600,7 @@ test('every refusal names its reason and only a missing scope adds a challenge',
   const refusedAs = (error: string, reason: string) => ({ status: 403, challenge: null, body: { error, reason, account: '/account' } });
   try {
     assert.deepEqual(await answer(invite, '/mcp', await invite.token('ivan')),
-      refusedAs('Redeem an EIGOS invitation on the account page first', 'invite_required'));
+      refusedAs('Join the EIGOS Beta waitlist on the account page and wait for approval', 'invite_required'));
     await setGrants(f.db, open.owner('olga'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.deepEqual(await answer(open, '/mcp', await open.token('olga')), refusedAs('Operator accounts use their existing client', 'operator_account'));
     const notAllowed = refusedAs('This client is not allowed for EIGOS accounts', 'client_not_allowed');

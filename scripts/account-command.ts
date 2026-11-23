@@ -4,12 +4,14 @@ import type { Database } from '../packages/runtime/database.js';
 export interface AccountReport {
   owner: string; status: string; activatedAt: string; approvedAt: string | null; revokedAt: string | null;
   suspendedAt: string | null; suspendedReason: string | null;
+  waitlistApprovedAt?: string;
 }
 
 const report = (account: Account): AccountReport => ({
   owner: account.owner, status: account.status, activatedAt: account.activated_at.toISOString(),
   approvedAt: account.approved_at?.toISOString() ?? null, revokedAt: account.revoked_at?.toISOString() ?? null,
   suspendedAt: account.suspended_at?.toISOString() ?? null, suspendedReason: account.suspended_reason,
+  ...(account.waitlist_approved_at ? { waitlistApprovedAt: account.waitlist_approved_at.toISOString() } : {}),
 });
 
 /**
@@ -18,6 +20,10 @@ const report = (account: Account): AccountReport => ({
  */
 export async function accountCommand(db: Database, signup: SignupMode, args: readonly string[]): Promise<AccountReport> {
   const [subcommand, target, ...words] = args;
+  if (subcommand === 'approve-application') {
+    if (!target || words.length) throw new Error('Use account approve-application <owner>');
+    return report(await new Accounts(db, signup).approveApplication(target));
+  }
   if (subcommand !== 'show' && subcommand !== 'suspend' && subcommand !== 'restore') throw new Error('Use account show, suspend or restore');
   if (!target) throw new Error('Provide the account owner or e-mail address');
   const reason = words.join(' ');
