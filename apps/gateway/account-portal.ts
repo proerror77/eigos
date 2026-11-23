@@ -195,20 +195,20 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const status = typeof req.query.status === 'string' && Object.hasOwn(statuses, req.query.status)
       ? req.query.status as keyof typeof statuses : undefined;
     let content: string, explains: keyof typeof statuses | undefined;
-    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可申请使用 EIGOS Agent。</p>' : ''}
+    if (!session) content = `${config.EIGOS_SIGNUP === 'invite' ? '<p>注册并验证邮箱后，即可加入 EIGOS Beta 候补名单。</p>' : ''}
       <p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>`;
     else if (!account) {
       if (await accounts.isOperator(session.owner)) { explains = 'operator'; content = `<p>${statuses.operator}</p>`; }
       else if (config.EIGOS_SIGNUP === 'invite') {
         const application = await accounts.applicationStatus(session);
-        const apply = application === 'invited' ? '<p>申请已通过。收到运营提供的邀请码后，请填写下方表单。</p>'
-          : application === 'pending' ? '<p>已收到申请，等待运营审核。</p>'
+        const apply = application === 'invited' ? '<p>申请已通过。可以使用此前收到的有效邀请码，或等待运营直接开通。</p>'
+          : application === 'pending' ? '<p>已加入候补名单，等待运营审核。通过后在此页面接入你的 Agent。</p>'
           : `<form method="post" action="/account/apply">
               <p><label>已验证的登录邮箱 <input type="email" name="email" autocomplete="email" maxlength="254" required></label></p>
               <p><label>你计划用 Agent 做什么？<br><textarea name="purpose" maxlength="300" rows="3" required></textarea></label></p>
-              <p>运营审核后会单独提供邀请码。</p><button>申请使用 Agent</button>
+              <p>运营审核通过后会直接开通账号。</p><button>加入 Beta 候补名单</button>
             </form>`;
-        content = apply + '<form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form>';
+        content = apply + '<details><summary>使用此前收到的邀请码</summary><form method="post" action="/account/activate"><label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label> <button>开通账号</button></form></details>';
       } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
       else content = '<p>账号还没有开通，请重新登录。</p>';
     } else if (account.status === 'suspended') content = '<p>这个账号已停用，请联系 EIGOS 支持。</p>';
@@ -314,7 +314,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const opened = await accounts.provision(result.owner, emailDigest(result.email));
     const session = await accounts.startSession(result.owner, result.email, previous);
     res.cookie(sessionCookie, session, { ...cookieOptions, maxAge: sessionAge });
-    // An invitation-only deployment opens the account on the page, so `invite_required` needs no status.
+    // The account page shows the review status for applicants in invite mode.
     redirect(res, opened === 'signup_closed' ? 'closed' : opened === 'operator_account' ? 'operator' : undefined);
   });
   // Unlike the forms below, this one has no session: the sign-in ended at an unverified email, and only the verify cookie names the user.

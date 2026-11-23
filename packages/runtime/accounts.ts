@@ -12,6 +12,7 @@ export type SignupMode = 'open' | 'invite' | 'closed';
 export interface Account {
   owner: string; status: 'active' | 'suspended'; activated_at: Date; approved_at: Date | null; revoked_at: Date | null;
   suspended_at: Date | null; suspended_reason: string | null; email_hash: string | null; has_agent_token: boolean;
+  waitlist_approved_at: Date | null;
 }
 type VerifiedSession = { owner: string; email_hash: string };
 export interface AccountApplication { owner: string; email: string; purpose: string; applied_at: Date; invited_until: Date | null }
@@ -20,7 +21,7 @@ export type Denial = ProvisionRefusal | 'account_suspended' | 'client_not_allowe
 export type Authorization = { kind: 'account' } | { kind: 'existing' } | { kind: 'denied'; reason: Denial };
 export const newAccountSecret = () => randomBytes(32).toString('base64url');
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
-const accountColumns = 'owner,status,activated_at,approved_at,revoked_at,suspended_at,suspended_reason,email_hash,(agent_token_hash IS NOT NULL) AS has_agent_token';
+const accountColumns = 'owner,status,activated_at,approved_at,revoked_at,suspended_at,suspended_reason,email_hash,waitlist_approved_at,(agent_token_hash IS NOT NULL) AS has_agent_token';
 const denied = (reason: Denial): Authorization => ({ kind: 'denied', reason });
 
 export async function initializeAccounts(db: Database) {
@@ -35,7 +36,8 @@ export async function initializeAccounts(db: Database) {
       owner text PRIMARY KEY, activated_at timestamptz NOT NULL DEFAULT now(), approved_at timestamptz, revoked_at timestamptz);
     ALTER TABLE ${s}.accounts ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active',
       ADD COLUMN IF NOT EXISTS suspended_at timestamptz, ADD COLUMN IF NOT EXISTS suspended_reason text,
-      ADD COLUMN IF NOT EXISTS email_hash text, ADD COLUMN IF NOT EXISTS agent_token_hash text;
+      ADD COLUMN IF NOT EXISTS email_hash text, ADD COLUMN IF NOT EXISTS agent_token_hash text,
+      ADD COLUMN IF NOT EXISTS waitlist_approved_at timestamptz;
     CREATE UNIQUE INDEX IF NOT EXISTS accounts_agent_token ON ${s}.accounts(agent_token_hash) WHERE agent_token_hash IS NOT NULL;
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='accounts_status_check' AND conrelid='${s}.accounts'::regclass) THEN
@@ -63,12 +65,13 @@ export async function initializeAccounts(db: Database) {
   `);
 }
 
-/** Default supplier reads are available to verified, currently authorized invite recipients. */
+/** Shared supplier reads require verified admission and current Agent authorization. */
 export async function hasBetaReadAccess(db: Database, owner: string) {
   const result = await db.query(`SELECT 1 FROM ${db.schema}.accounts a
     WHERE a.owner=$1 AND a.status='active' AND a.email_hash IS NOT NULL
       AND a.approved_at IS NOT NULL AND a.revoked_at IS NULL
-      AND EXISTS (SELECT 1 FROM ${db.schema}.member_invitations i WHERE i.redeemed_by=a.owner)`, [owner]);
+      AND (a.waitlist_approved_at IS NOT NULL OR
+        EXISTS (SELECT 1 FROM ${db.schema}.member_invitations i WHERE i.redeemed_by=a.owner))`, [owner]);
   return Boolean(result.rowCount);
 }
 
@@ -107,6 +110,25 @@ export class Accounts {
         AND i.redeemed_by IS NULL AND i.expires_at>now()) AS invited_until
       FROM ${s}.account_applications a WHERE NOT EXISTS (SELECT 1 FROM ${s}.accounts b WHERE b.owner=a.owner)
       ORDER BY a.applied_at,a.owner LIMIT 100 OFFSET $1`, [offset])).rows;
+  }
+
+  /** The deployment operator approves the verified owner from the waiting list. */
+  async approveApplication(owner: string) {
+    if (this.signup !== 'invite') throw new InvalidInput('Waitlist approval requires invite sign-up mode');
+    if (!/^[a-f0-9]{64}$/.test(owner)) throw new InvalidInput('Use the applicant owner from account applications');
+    const s = this.db.schema;
+    return this.db.transaction(async client => {
+      await this.lockApplication(owner, client);
+      if (await this.isOperator(owner, client)) throw new InvalidInput('Operators do not enter the waitlist');
+      const existing = await this.account(owner, client);
+      if (existing?.waitlist_approved_at) return existing;
+      if (existing) throw new InvalidInput('This applicant already has an account');
+      const { rows: [approved] } = await this.db.query<Account>(`INSERT INTO ${s}.accounts(owner,email_hash,waitlist_approved_at)
+        SELECT owner,email_hash,now() FROM ${s}.account_applications WHERE owner=$1
+        ON CONFLICT(owner) DO NOTHING RETURNING ${accountColumns}`, [owner], client);
+      if (!approved) throw new InvalidInput('No pending application for this owner');
+      return approved;
+    });
   }
 
   private async invitationOwner(target: string) {
