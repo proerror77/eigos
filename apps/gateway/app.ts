@@ -15,6 +15,7 @@ import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visi
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema, type ActionCall } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
+import { discoverOntology, discoveryOptions } from '../../packages/runtime/agent-catalogue.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata, type PublishedOntology } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
@@ -35,6 +36,8 @@ import { startMcpTiming } from './mcp-timing.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
+const mcpDescription = 'Use query to find up to 16 resources by name or description, then names to read exact contracts. Omit both for the full published definition.';
+const discoverySchema = discoveryOptions.extend({ ontology: z.string().optional() });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
 const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
   ontology: z.literal('Eigos').optional(),
@@ -303,6 +306,19 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         };
       }
     };
+    const describe = async ({ ontology, query, names }: z.infer<typeof discoverySchema>) => {
+      const readScope = p.scopes.includes('ontology:read');
+      if (!member && !readScope) {
+        const operatorCatalog = !p.memberAudience && p.clientId && (ontology ?? 'Eigos') === 'Eigos' &&
+          config.EIGOS_MCP_OPERATOR_CATALOG === `${p.clientId}:${p.owner}` && p.scopes.includes('tasks:read');
+        if (!operatorCatalog) requireScope(p, 'ontology:read');
+      }
+      if (query && names) throw new InvalidInput('Provide either query or names');
+      const access = await Access.load(db, p), model = await metadata.active(ontology);
+      if (!member && !readScope) access.require('Eigos', 'view_definition', 'Eigos');
+      const document = access.describe(model, member);
+      return query || names ? discoverOntology(model, document, { query, names }) : document;
+    };
     const serve = async () => {
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
@@ -370,9 +386,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         }));
       };
       server.registerTool('describe_ontology', {
-        description: 'Discover the published business Actions available to this account.',
-        inputSchema: z.strictObject({ ontology: z.literal('Eigos').optional() }),
-      }, () => response(async () => (await Access.load(db, p)).describe(await metadata.active('Eigos'), true)));
+        description: 'Discover the published business capabilities available to this account. ' + mcpDescription,
+        inputSchema: discoverySchema.extend({ ontology: z.literal('Eigos').optional() }),
+      }, input => response(() => describe(input)));
       server.registerTool('apply_ontology_action', {
         description: 'Start a task for a published Action. Use the returned task ID for status and authorization.',
         inputSchema: actionInput,
@@ -445,17 +461,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: completeWithActionRequestSchema,
     }, input => response(() => completeWithAction(req, input)));
     server.registerTool('describe_ontology', {
-      description: 'Read published types, properties, interfaces, links, functions and actions.',
-      inputSchema: z.strictObject({ ontology: z.string().optional() }),
-    }, input => response(async () => {
-      const readScope = p.scopes.includes('ontology:read');
-      const operatorCatalog = !p.memberAudience && p.clientId && (input.ontology ?? 'Eigos') === 'Eigos' &&
-        config.EIGOS_MCP_OPERATOR_CATALOG === `${p.clientId}:${p.owner}` && p.scopes.includes('tasks:read');
-      if (!readScope && !operatorCatalog) requireScope(p, 'ontology:read');
-      const access = await Access.load(db, p), model = await metadata.active(input.ontology);
-      if (!readScope) access.require('Eigos', 'view_definition', 'Eigos');
-      return access.describe(model);
-    }));
+      description: 'Discover published Ontology resources. ' + mcpDescription,
+      inputSchema: discoverySchema,
+    }, input => response(() => describe(input)));
     await serve();
   });
   app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req), agentTokenHashes.has(req) ? authorizeMemberSubmission(req) : undefined) }));

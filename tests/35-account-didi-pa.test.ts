@@ -45,6 +45,10 @@ test('the original invited PA directly reads DiDi and completes the same Action 
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
     const catalogue = await call('describe_ontology');
     assert(!catalogue.actionTypes.some((x: { apiName: string }) => ['BookDidiImmediateRide', 'BookDidiRideWithEndpoints'].includes(x.apiName)));
+    const search = await call('describe_ontology', { query: 'EstimateRide' });
+    assert(search.resources.some((x: { apiName: string }) => x.apiName === 'EstimateRide'));
+    const targeted = await call('describe_ontology', { names: ['EstimateRide', 'BookDidiImmediateRide'] });
+    assert.deepEqual(targeted.resources.map((x: { apiName: string }) => x.apiName), ['EstimateRide']);
     const args = { requestId: randomUUID(),
       action: { interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: route },
       read: { function: 'readRideEstimates', resultParameter: 'request' },

@@ -65,6 +65,11 @@ test('a verified operator can use the scoped catalog and TableCheck tools withou
     assert((await describe(client, { ontology: 'Other' })).isError);
     assert((await describe(noScope)).isError);
     assert((await describe(other)).isError);
+    const names = { names: ['RestaurantDiscovery'] };
+    assert(!(await describe(client, names)).isError);
+    assert((await describe(client, { ...names, ontology: 'Other' })).isError);
+    assert((await describe(other, { query: 'TableCheck' })).isError);
+    assert((await describe(noScope, names)).isError);
     const blocked = await client.callTool({ name: 'evaluate_ontology', arguments: {
       function: 'readRestaurantSearch', input: { search: { type: 'RestaurantSearchResult', id: 'unused' } },
     } });
