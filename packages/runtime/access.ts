@@ -2,6 +2,7 @@ import { accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
+import { betaQueries } from '../ontology/beta-queries.js';
 import { allowsClassification, classificationSchema, combineClassification, internalClassification, marksClassification, sensitivityRank, type Classification } from '../ontology/classification.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
 import type { Ontology } from '../ontology/model.js';
@@ -25,18 +26,12 @@ export const resource = (ontology: string, kind: string, name: string) => `${ont
 export { PermissionDenied } from '../core/identity.js';
 
 const businessOntology = 'Eigos';
-const accountSearchActions = new Map([
-  ['SearchFliggyFlights', 'searchFliggyFlights'],
-  ['SearchFliggyHotels', 'searchFliggyHotels'],
-  ['FindRestaurants', 'findRestaurants'],
-]);
+const accountSearchActions = new Map<string, string>(betaQueries.actions);
 const accountGrantKeys = new Set([
   'view_definition:Eigos',
-  ...['Amap', 'Fliggy'].map(name => `read_source:Eigos/source/${name}`),
-  ...['FliggyFlightOffer', 'FliggyFlightSearch', 'FliggyHotelOffer', 'FliggyHotelSearch',
-    'RestaurantSearchResult', 'RestaurantSourceVenue'].map(name => `view_objects:Eigos/object/${name}`),
-  ...['readFliggyFlights', 'readFliggyHotels', 'readServiceSearch', 'readServiceSearchPages',
-    'readWeather', 'searchMapPlaces', 'readMapPlace', 'readRestaurantSearch',
+  ...betaQueries.sources.map(name => `read_source:Eigos/source/${name}`),
+  ...betaQueries.objects.map(name => `view_objects:Eigos/object/${name}`),
+  ...[...betaQueries.functions,
     ...accountSearchActions.values()].map(name => `execute_function:Eigos/function/${name}`),
   ...[...accountSearchActions.keys()].map(name => `apply_action:Eigos/action/${name}`),
 ]);
