@@ -157,7 +157,7 @@ export function createCapabilities(
   ]);
   const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
-      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]) },
+      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources },
     new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
   sources = capabilities.sources;
   return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
