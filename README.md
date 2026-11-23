@@ -66,6 +66,35 @@ Key 文件由运行用户拥有，权限为 `0600`。查询连接器调用滴滴
 
 MCP 位于 `/mcp`，提供 `describe_ontology`、`query_ontology`、`evaluate_ontology`、`apply_ontology_action`、`submit_task`、`get_task`、`select_task_places`，以及 PA 的 `list_pa_requests`、`respond_to_task` 和 Scenario 生命周期工具。
 
+外部 Agent 可用 `describe_ontology({ query: "TableCheck" })` 查找当前身份可见的资源摘要，再用 `describe_ontology({ names: ["TableCheckReservation"] })` 只读取指定契约。两种查询返回发布版本和定义摘要，均沿用现有目录权限。不传 `query` 或 `names` 时返回原有完整描述。
+
+具有 `ontology:read` 的外部 Agent 可用 `execute_ontology` 组合多次只读查询。传入一个函数表达式 `async ({ query }) => { ... }`，其中 `query` 接收 `query_ontology` 的内部查询对象。一次调用固定在当前 Eigos 发布版本，最多执行 12 次查询。脚本在 WebAssembly 沙箱内处理分页、关联和筛选，只返回最终 JSON。单项查询和失败回退可调用 `query_ontology`，需要业务变更时走已发布的 Action 和原有确认流程。
+
+例如，在同一次调用中读取订座对象和它的状态日志：
+
+```js
+async ({ query }) => {
+  const page = await query({
+    type: "TableCheckReservation",
+    where: { state: "unknown" },
+    select: ["state"],
+    limit: 1,
+  });
+  const reservation = page.items[0];
+  if (!reservation) return null;
+  const history = await query({
+    type: "TableCheckReservationStateLog",
+    from: { object: reservation.ref, link: "stateLogs" },
+    orderBy: [{ property: "recordedAt", direction: "desc" }],
+    select: ["newState", "recordedAt", "action"],
+    limit: 1,
+  });
+  return { reservation: reservation.ref, lastTransition: history.items[0]?.properties ?? null };
+}
+```
+
+具有 `ontology:read`、`ontology:write`、`tasks:read` 和 `tasks:write` 的调用者还可用 `execute_ontology_action({ requestId, code })`。脚本通过 `async ({ query, applyAction }) => { … }` 在读取后暂存一项已发布的 Action。调用 `await applyAction({ action, input })` 时也可用原 MCP 的 `interface` 对象来选 Action。脚本成功返回 JSON 后，Gateway 校验提交条件并返回 `{ value, task }`。重试沿用同一个 `requestId` 和 Action 参数。后续用 `get_task` 读取这个 `task.id`，需要 PA 响应或确认时，在沙箱外处理原任务。
+
 对于无需补充信息的请求，外部 Agent 可用 `complete_with_action` 在一次 MCP 工具调用中运行 Interface Action 并通过发布的 Function 返回结果。滴滴实时询价的本机入口为 `node scripts/ontology-agent.mjs 示例城市 '示例起点' '示例目的地'`。入口复用已授权的本机 Ontology 操作员 OAuth 配置，按需续期，并只调用询价组合。
 
 已有 OAuth 操作员可用 `node scripts/ontology-worker-client.mjs submit "从示例起点到示例目的地，只查实时价格"` 将原话提交给 Worker。`read TASK_ID` 读取原任务；只有任务返回地点候选时，用 `confirm TASK_ID PLACES_JSON` 提交原候选中的起终点 ObjectRef。如果地点不在原候选中，使用 MCP 的 `amend_task_place` 提交一个端点的地址或地标，仍沿原任务继续。遇到 Action 请求城市时，用 `supply_task_input` 提交 `{taskId,answer:{kind:"city",city}}`。客户端使用本机已有的操作员身份，快到期时续期。入口使用已认证的任务 HTTP 接口，Worker Agent 仍通过任务专用 MCP 选择已发布能力。

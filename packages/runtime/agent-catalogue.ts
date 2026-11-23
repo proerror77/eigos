@@ -1,8 +1,10 @@
+import { z } from 'zod';
 import { PermissionDenied } from '../core/identity.js';
 import { businessAgentProfiles, type AgentProfile } from '../ontology/agent-profiles.js';
 import { isSandboxResource } from '../ontology/sandbox.js';
 import type { Ontology } from '../ontology/model.js';
 import { resourceGroups } from '../ontology/resource-mapping.js';
+import type { OntologyDocument } from '../ontology/schema.js';
 import type { Task } from './tasks.js';
 import type { Access } from './access.js';
 
@@ -85,6 +87,39 @@ function rank(item: Candidate, message: string, terms: ReadonlySet<string>) {
   let score = 0;
   for (const term of terms) score += name.includes(term) ? 2 : Number(description.includes(term));
   return score;
+}
+
+export const discoveryOptions = z.strictObject({
+  query: z.string().trim().min(1).max(200).optional(),
+  names: z.array(z.string().trim().min(1).max(160)).min(1).max(16).optional(),
+});
+
+export function discoverOntology(model: Ontology, document: OntologyDocument,
+  { query, names }: z.infer<typeof discoveryOptions>) {
+  const resources = Object.entries(resourceGroups).flatMap(([kind, field]) =>
+    (document[field] ?? []).map(definition => ({
+      kind, apiName: definition.apiName, definition,
+    })));
+  const publication = { ontology: document.id, version: document.version, definition: model.digest };
+  if (names) {
+    const selected = new Set(names);
+    return { ...publication, resources: resources.filter(({ apiName }) => selected.has(apiName)) };
+  }
+  const message = normalize(query ?? '');
+  const terms = new Set([...wordSegmenter.segment(message)]
+    .filter(({ isWordLike }) => isWordLike)
+    .map(({ segment }) => segment));
+  return {
+    ...publication,
+    resources: resources.map(({ kind, apiName, definition }) => ({
+      kind, apiName,
+      description: 'description' in definition ? definition.description?.slice(0, 220) : undefined,
+      score: rank(definition, message, terms),
+    })).filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 16)
+      .map(({ kind, apiName, description }) => ({ kind, apiName, description })),
+  };
 }
 
 export function catalogue(model: Ontology, access: Access, sandbox: boolean,

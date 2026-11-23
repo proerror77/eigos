@@ -162,6 +162,13 @@ test('separate Gateway and Worker complete inquiries and PA calendar scenarios o
       const registrationLogs=await call('query_ontology',{query:{type:'EventRegistrationStateLog',where:{processId:registration.id}}});
       assert.deepEqual(registrationLogs.items.map((item:{properties:{newState:string}})=>item.properties.newState),['proposed','authorized','confirmed']);
       assert.equal(registrationLogs.items[2].properties.action,'ExecuteEventRegistration');assert.equal(registrationLogs.items[2].properties.taskId,request.taskId);
+      const compactRegistration = await call('execute_ontology', { code: `async ({ query }) => {
+        const reservations = await query({ type: 'EventRegistration', where: { id: ${JSON.stringify(registration.id)} }, select: ['state'] });
+        const item = reservations.items[0];
+        const history = await query({ type: 'EventRegistrationStateLog', from: { object: item.ref, link: 'stateLogs' }, orderBy: [{ property: 'recordedAt', direction: 'asc' }], select: ['newState'] });
+        return { state: item.properties.state, history: history.items.map(row => row.properties.newState) };
+      }` });
+      assert.deepEqual(compactRegistration, { state: 'confirmed', history: ['proposed', 'authorized', 'confirmed'] });
       const processes = await call('ontology_machinery_processes', {});
       assert(processes.items.some((item: { type: string }) => item.type === 'EventTripStateLog'));
       const analysisInput = { type: 'EventRegistrationStateLog', object: registration,

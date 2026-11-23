@@ -283,6 +283,23 @@ test('Agent MCP discovers map and weather Functions in the same published model 
     const manifest = JSON.parse((r.content[0] as {text: string}).text);
     for (const name of ['geocodeAddress', 'searchNearbyPlaces', 'estimateMapRoute', 'readWeather'])
       assert(manifest.functionTypes.some((fn: {apiName: string; source: string}) => fn.apiName === name && fn.source === 'Amap'));
+    const search = await send('describe_ontology', { query: 'readWeather' });
+    assert(!search.isError);
+    const matches = JSON.parse((search.content[0] as { text: string }).text);
+    assert.equal(matches.definition, f.model.digest);
+    assert.equal(matches.version, manifest.version);
+    assert.equal(matches.resources[0].apiName, 'readWeather');
+    assert.equal(matches.resources[0].kind, 'function');
+    assert(!('definition' in matches.resources[0]));
+    assert(matches.resources.length <= 16);
+    const details = await send('describe_ontology', { names: ['readWeather', 'UnknownResource'] });
+    assert(!details.isError);
+    assert.deepEqual(JSON.parse((details.content[0] as { text: string }).text).resources, [{
+      kind: 'function', apiName: 'readWeather',
+      definition: manifest.functionTypes.find((fn: { apiName: string }) => fn.apiName === 'readWeather'),
+    }]);
+    const ambiguous = await send('describe_ontology', { query: 'readWeather', names: ['readWeather'] });
+    assert.deepEqual(ambiguous.structuredContent, { status: 400, error: 'Provide either query or names' });
     const failed = await send('evaluate_ontology', { function: 'readWeather', input: { city: '上海' } });
     assert(failed.isError);
     assert.deepEqual(failed.structuredContent, { status: 503, error: 'Source temporarily unavailable' });

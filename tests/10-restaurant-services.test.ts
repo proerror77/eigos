@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createApp } from '../apps/gateway/app.js';
+import { readConfig } from '../packages/core/config.js';
 import { createDecipheriv, createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -149,8 +153,79 @@ test('restaurant Interface actions link source venues and record TableCheck hold
     const invalid = resolve('confirm', { approval: { termsDigest: '0'.repeat(64), approvedAt: iso() }, contact });
     await assert.rejects(apply(invalid.action, invalid.input, 'not-approved'), /current exact TableCheck terms/);
     assert.equal(holdCount, 0);
-    const confirm = resolve('confirm', { approval: { termsDigest: (await booking()).termsDigest, approvedAt: iso() }, contact });
-    await apply(confirm.action, confirm.input, 'approved-once');
+    const approvedAt = iso();
+    const confirm = resolve('confirm', { approval: { termsDigest: (await booking()).termsDigest, approvedAt }, contact });
+    const token = 'tablecheck-codemode-synthetic-test-token';
+    const gateway = createApp(readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL,
+      EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token }), d.db, d.source).app.listen(0, '127.0.0.1');
+    const mcp = new Client({ name: 'synthetic-tablecheck-code-mode', version: '1' });
+    try {
+      await once(gateway, 'listening');
+      const address = gateway.address();
+      assert(address && typeof address === 'object');
+      await mcp.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`),
+        { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
+      const execute = (requestId: string, code: string) => mcp.callTool({
+        name: 'execute_ontology_action', arguments: { requestId, code },
+      });
+      const body = (result: { isError?: boolean; content?: unknown }) => {
+        assert(!result.isError, JSON.stringify(result));
+        return JSON.parse((result.content as { text: string }[])[0]!.text);
+      };
+      const ready = body(await execute('code-mode-tablecheck-prepare', `async ({ query, applyAction }) => {
+        const page = await query({ type: ${JSON.stringify(restaurantVisitType)}, where: { id: ${JSON.stringify(visit.id)} }, limit: 1 });
+        const original = page.items[0].ref;
+        await applyAction({ interface: { type: 'RestaurantReservationOffer', action: 'prepare', implementation: 'TableCheckReservation' },
+          input: { visit: original, startsAt: ${JSON.stringify(alternate)} } });
+        return original;
+      }`));
+      assert.deepEqual(ready.value, visit);
+      assert(await d.worker.runOne('interactive'));
+      const offered = body(await mcp.callTool({ name: 'get_task', arguments: { taskId: ready.task.id } }));
+      assert.equal(offered.state, 'completed', JSON.stringify(offered));
+      assert.equal((await objects.read(offered.result)).properties.state, 'offered');
+      assert.notDeepEqual(offered.result, reservation);
+
+      const stage = `
+        const page = await query({ type: 'TableCheckReservation', where: { id: ${JSON.stringify(reservation.id)} }, select: ['termsDigest'] });
+        const { ref, properties } = page.items[0];
+        await applyAction({ interface: { type: 'NetTableReservation', action: 'confirm', object: ref },
+          input: { commitment: ref, approval: { termsDigest: properties.termsDigest, approvedAt: ${JSON.stringify(approvedAt)} },
+            contact: ${JSON.stringify(contact)} } });
+      `;
+      const failed = await execute('code-mode-tablecheck-failed', `async ({ query, applyAction }) => { ${stage} throw new Error('script failed'); }`);
+      assert.equal(failed.isError, true);
+      assert.equal((await d.db.query(`SELECT 1 FROM ${d.db.schema}.tasks WHERE request_id=$1`, ['code-mode-tablecheck-failed'])).rowCount, 0);
+      const requestId = 'code-mode-tablecheck-confirm';
+      const code = `async ({ query, applyAction }) => { ${stage} return ref; }`;
+      const submitted = body(await execute(requestId, code));
+      assert.equal(submitted.task.state, 'submitted');
+      assert.deepEqual(submitted.value, reservation);
+      assert.equal(body(await execute(requestId, code)).task.id, submitted.task.id);
+      assert(await d.worker.runOne('interactive'));
+      const pending = body(await mcp.callTool({ name: 'get_task', arguments: { taskId: submitted.task.id } }));
+      assert.equal(pending.state, 'input-required');
+      assert.equal(pending.result.capability, 'dining.tablecheck.confirm.approval');
+      assert.equal(pending.result.taskId, submitted.task.id);
+      const replay = body(await execute(requestId, code));
+      assert.equal(replay.task.id, submitted.task.id);
+      assert.equal(replay.task.state, 'input-required');
+      assert.deepEqual([holdCount, createCount, cancelCount], [0, 0, 0]);
+      const confirmed = body(await mcp.callTool({ name: 'respond_to_task', arguments: {
+        taskId: submitted.task.id, requestId: pending.result.requestId,
+        response: { approved: true, termsDigest: pending.result.input.termsDigest },
+      } }));
+      assert.equal(confirmed.id, submitted.task.id);
+      assert(await d.worker.runOne('interactive'));
+      const completed = body(await mcp.callTool({ name: 'get_task', arguments: { taskId: submitted.task.id } }));
+      assert.equal(completed.state, 'completed', JSON.stringify(completed));
+      assert.equal(completed.result.id, reservation.id);
+      assert.equal(body(await execute(requestId, code)).task.id, submitted.task.id);
+    } finally {
+      await mcp.close();
+      gateway.closeAllConnections();
+      await new Promise<void>(resolve => gateway.close(() => resolve()));
+    }
     assert.equal((await booking()).state, 'unknown');
     assert((await booking()).holdExpiresAt);
     await apply('ExpireTableCheckReservation', { commitment: reservation }, 'expiry-after-dispatch');

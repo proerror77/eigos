@@ -15,6 +15,7 @@ import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visi
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema, type ActionCall } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
+import { checkAgentCapability, discoverOntology, discoveryOptions } from '../../packages/runtime/agent-catalogue.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata, type PublishedOntology } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
@@ -31,10 +32,13 @@ import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { Accounts, accountTaskScopes, agentTokenPattern, type Denial } from '../../packages/runtime/accounts.js';
 import { A2A, AgentUser, agentCard } from './a2a.js';
 import { publicError } from './public-error.js';
+import { CodeMode, codeModeInput } from './code-mode.js';
 import { startMcpTiming } from './mcp-timing.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
+const mcpDescription = 'Use query to find up to 16 resources by name or description, then names to read exact contracts. Omit both for the full published definition.';
+const discoverySchema = discoveryOptions.extend({ ontology: z.string().optional() });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
 const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
   ontology: z.literal('Eigos').optional(),
@@ -168,6 +172,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         throw new PermissionDenied('This EIGOS account is suspended or its client authorization was revoked');
     };
   const services=ontologyServices(db,metadata,capabilities,capabilities.functions,capabilities.effects,capabilities.actions);
+  const codeMode = new CodeMode();
   app.post('/ontology/services/:operation',async(req,res)=>{
     const {_ontology,...input}=z.record(z.string(),z.unknown()).parse(req.body);
     const name=_ontology===undefined?'Eigos':z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).parse(_ontology);
@@ -180,10 +185,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active(ontology));
     return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
   };
+  const confirmReadAccess = async (access: Access) => {
+    if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Result permissions changed');
+  };
   const query = async (p: Principal, raw: unknown) => {
     requireScope(p, 'ontology:read'); const input = queryInput.parse(raw);
     const access = await Access.load(db, p), result = await new Objects(db, await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access).query(input.query);
-    if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
+    await confirmReadAccess(access);
     return result;
   };
   const evaluate = async (p: Principal, raw: unknown) => {
@@ -287,7 +295,14 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
     const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
-    const instructions = quoteOnly ? `${rideQuoteInstructions} ${taskInstructions}` : taskInstructions;
+    const canExecuteCode = !member && !p.memberAudience && readScope;
+    const canSubmitCode = canExecuteCode && ['ontology:write', ...accountTaskScopes].every(scope => p.scopes.includes(scope));
+    const instructions = [
+      quoteOnly ? rideQuoteInstructions : '',
+      taskInstructions,
+      canExecuteCode ? 'For multiple Ontology reads with joins, pagination, or filtering, use execute_ontology and return a compact result. Discover exact contracts with describe_ontology. Use query_ontology for a single read or as a fallback.' : '',
+      canSubmitCode ? 'To combine reads and submit one published Action, use execute_ontology_action with a stable requestId. Follow its original task with get_task and respond to any PA request outside the script.' : '',
+    ].filter(Boolean).join(' ');
     const server = new McpServer({ name: 'eigos', version: '0.2.0' }, { instructions });
     const timing = mcpTiming.get(req)?.(req.body, p.clientId);
     const response = async (operation: () => Promise<unknown>) => {
@@ -305,6 +320,17 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
           structuredContent: { status, error: message, ...(requestId ? { requestId } : {}) },
         };
       }
+    };
+    const describe = async ({ ontology, query, names }: z.infer<typeof discoverySchema>) => {
+      if (!member && !readScope) {
+        const operatorCatalog = (ontology ?? 'Eigos') === 'Eigos' && matchesOperator(config.EIGOS_MCP_OPERATOR_CATALOG);
+        if (!operatorCatalog) requireScope(p, 'ontology:read');
+      }
+      if (query && names) throw new InvalidInput('Provide either query or names');
+      const access = await Access.load(db, p), model = await metadata.active(ontology);
+      if (!member && !readScope) access.require('Eigos', 'view_definition', 'Eigos');
+      const document = access.describe(model, member);
+      return query || names ? discoverOntology(model, document, { query, names }) : document;
     };
     const serve = async () => {
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -373,9 +399,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
         }));
       };
       server.registerTool('describe_ontology', {
-        description: 'Discover the published business Actions available to this account.',
-        inputSchema: z.strictObject({ ontology: z.literal('Eigos').optional() }),
-      }, () => response(async () => (await Access.load(db, p)).describe(await metadata.active('Eigos'), true)));
+        description: 'Discover the published business capabilities available to this account. ' + mcpDescription,
+        inputSchema: discoverySchema.extend({ ontology: z.literal('Eigos').optional() }),
+      }, input => response(() => describe(input)));
       server.registerTool('apply_ontology_action', {
         description: 'Start a task for a published Action. Use the returned task ID for status and authorization.',
         inputSchema: actionInput,
@@ -443,6 +469,55 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
+    const runCode = async (code: string, requestId?: string) => {
+      requireScope(p, 'ontology:read');
+      if (requestId !== undefined)
+        for (const scope of ['ontology:write', ...accountTaskScopes]) requireScope(p, scope);
+      const cancel = new AbortController();
+      const disconnected = () => cancel.abort(new InvalidInput('Code Mode request ended'));
+      res.once('close', disconnected);
+      if (res.destroyed) disconnected();
+      try {
+        cancel.signal.throwIfAborted();
+        const access = await Access.load(db, p), model = await metadata.active();
+        const graph = new Objects(db, model, access);
+        let stagedAction: ActionCall | undefined;
+        const value = await codeMode.execute(code, async input => {
+          const page = await graph.query(input);
+          await confirmReadAccess(access);
+          return page;
+        }, cancel.signal, requestId === undefined ? undefined : input => { stagedAction = input; });
+        await confirmReadAccess(access);
+        if (requestId === undefined) return value;
+        const action = stagedAction;
+        if (!action) throw new InvalidInput('Call and await applyAction() to submit a published Action');
+        const task = await tasks.submit(p, { requestId, message: 'Execute the selected published Action' }, {
+          actionInvocation: { action }, expectedRelease: model.release,
+          authorize: async client => {
+            cancel.signal.throwIfAborted();
+            if (!await access.canReturn(access.dataRequirements(), client)) throw new PermissionDenied('Result permissions changed');
+          },
+          admit: async (client, release) => {
+            cancel.signal.throwIfAborted();
+            const signal = AbortSignal.any([cancel.signal, AbortSignal.timeout(30_000)]);
+            const selected = await capabilities.actions.validateSubmission(access, release, action, client, signal);
+            checkAgentCapability(release, db.sandboxEnabled, 'action', selected);
+            if (!await access.canReturn(access.dataRequirements(), client)) throw new PermissionDenied('Result permissions changed');
+          },
+        });
+        return { value, task: publicTask(task) };
+      } finally { res.removeListener('close', disconnected); }
+    };
+    if (canExecuteCode) server.registerTool('execute_ontology', {
+      description: 'Run an async JavaScript function for read-only composition against the live Eigos Ontology. Supply one function expression such as async ({ query }) => { const page = await query({ type: "TableCheckReservation", select: ["state"], limit: 20 }); return page.items.length; }. query accepts the inner query_ontology object directly and returns { items, cursor }. Await every query and return a compact JSON value. Supports up to 12 reads against one live release.',
+      inputSchema: codeModeInput,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    }, ({ code }) => response(() => runCode(code)));
+    if (canSubmitCode) server.registerTool('execute_ontology_action', {
+      description: 'Use async ({ query, applyAction }) => { ... } to compose reads and stage one published Eigos Action. Pass {action, input} or {interface, input} as in apply_ontology_action. Await applyAction and return a JSON value. The Action task is submitted only after the script succeeds. Keep requestId stable on retry and read task.id with get_task. Follow user confirmation outside the script.',
+      inputSchema: codeModeInput.extend({ requestId: submitSchema.shape.requestId }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    }, ({ code, requestId }) => response(() => runCode(code, requestId)));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function. A PA managing travel reminders reads readCalendarJourney, readFlightWatch or readDidiRideWatch with the original object reference.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
     if (!quoteOnly) server.registerTool('complete_with_action', {
@@ -450,15 +525,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: completeWithActionRequestSchema,
     }, input => response(() => completeWithAction(req, input)));
     server.registerTool('describe_ontology', {
-      description: 'Read published types, properties, interfaces, links, functions and actions.',
-      inputSchema: z.strictObject({ ontology: z.string().optional() }),
-    }, input => response(async () => {
-      const operatorCatalog = (input.ontology ?? 'Eigos') === 'Eigos' && matchesOperator(config.EIGOS_MCP_OPERATOR_CATALOG);
-      if (!readScope && !operatorCatalog) requireScope(p, 'ontology:read');
-      const access = await Access.load(db, p), model = await metadata.active(input.ontology);
-      if (!readScope) access.require('Eigos', 'view_definition', 'Eigos');
-      return access.describe(model);
-    }));
+      description: 'Discover published Ontology resources. ' + mcpDescription,
+      inputSchema: discoverySchema,
+    }, input => response(() => describe(input)));
     await serve();
   });
   app.use('/a2a', jsonRpcHandler({ requestHandler: new A2A(tasks, card, capabilities.projectTaskResult), userBuilder: async req => new AgentUser(principal(req), agentTokenHashes.has(req) ? authorizeMemberSubmission(req) : undefined) }));

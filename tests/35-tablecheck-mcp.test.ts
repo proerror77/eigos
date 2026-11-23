@@ -65,6 +65,22 @@ test('a verified operator can use the scoped catalog and TableCheck tools withou
     assert((await describe(client, { ontology: 'Other' })).isError);
     assert((await describe(noScope)).isError);
     assert((await describe(other)).isError);
+    assert(!(await client.listTools()).tools.some(tool => tool.name === 'execute_ontology'));
+    await assert.rejects(client.callTool({ name: 'execute_ontology', arguments: { code: 'async () => null' } }), /Tool .* not found/);
+    const reader = await authorizedClient('operator', 'tasks:read tasks:write ontology:read');
+    const codeTool = (await reader.listTools()).tools.find(tool => tool.name === 'execute_ontology');
+    assert.deepEqual(Object.keys(codeTool?.inputSchema.properties ?? {}), ['code']);
+    assert(!(await reader.listTools()).tools.some(tool => tool.name === 'execute_ontology_action'));
+    const execution = await reader.callTool({ name: 'execute_ontology', arguments: {
+      code: 'async ({ query }) => (await query({ type: "TableCheckReservation", select: ["state"] })).items.length',
+    } });
+    assert(!execution.isError, JSON.stringify(execution));
+    assert.deepEqual(execution.content, [{ type: 'text', text: '0' }]);
+    const names = { names: ['RestaurantDiscovery'] };
+    assert(!(await describe(client, names)).isError);
+    assert((await describe(client, { ...names, ontology: 'Other' })).isError);
+    assert((await describe(other, { query: 'TableCheck' })).isError);
+    assert((await describe(noScope, names)).isError);
     const machinery = await client.callTool({ name: 'ontology_machinery_processes', arguments: {} });
     assert.deepEqual(machinery.structuredContent, { status: 403, error: 'Permission required: ontology:read' });
     const blocked = await client.callTool({ name: 'evaluate_ontology', arguments: {

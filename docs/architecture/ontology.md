@@ -120,6 +120,8 @@ Agent 可在一次 `complete_with_action` 调用中选择 Interface Action 与�
 
 外部 MCP 也发布 `complete_with_action`。调用者提供 `requestId`、Interface Action 和结果 Function 的参数绑定。Gateway 和 Worker 共用 Action Engine。通用组合需要 Ontology 读写 scopes。只有任务 scopes 的 PA 可直接调用限定的 `RideInquiry.estimate` 与 `readRideEstimates` 组合，仍须具备原有 Action、Function 和来源授权。Gateway 在输出前复核数据权限。使用相同请求 ID 重试时复用已提交的 Action，重新读取并核验结果。需要补充信息的请求可通过下述 Worker 任务流程处理。这里沿用 [Interface Action](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints)、[Function-backed Action](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) 和 [Ontology MCP 授权](https://www.palantir.com/docs/foundry/ontology-mcp/authentication-and-authorization) 的约束。组合响应由 EIGOS MCP 提供，Action 提交和结果读取各自保留原有权限及事务边界。
 
+MCP 的 `execute_ontology_action` 允许在同一 Eigos 发布版本中组合查询并暂存一个 Action 选择。脚本成功后，Gateway 使用现有 Action 验证和任务提交逻辑，向调用者返回原任务 ID。Worker 通过原 Action Engine 执行、审批、续接及读回。授权使用调用者的 Ontology 读写与任务 scopes，Task 入口保持原有幂等和结果访问校验。[Ontology MCP 授权](https://www.palantir.com/docs/foundry/ontology-mcp/authentication-and-authorization) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
 如果 Action 在准备阶段返回地点候选，Action Engine 保存已选 Action、参数、结果 Function 和来源回执，绑定原任务、发布版本和请求 ID。Machinery 通过 `ActionConfirmation.state` 及 `stateLogs` 显示等待、确认、完成或终止。确认由原任务入口接受，只接受对应侧候选内的 ObjectRef。Worker 唤醒原执行后直接进入 Action Engine，沿用原请求 ID、租约、权限检查和提交事务。仍属当前来源绑定且新鲜的地点回执可以复用；变旧或变化的那一侧重新读取。唯一匹配的询价直接完成，无需确认过程对象。
 
 裸地名匹配保留当前地点回执中的精确名称和全名仅补齐常见楼宇后缀的候选（`大厦`、`大楼`），不把含该名称的商铺、楼号、停车场或入口算作相同建筑。这样同名地点不会挤掉正式楼宇名。多个候选或只有一个由简称推得的候选时展示正式名称和地址，用户选择后沿原 Action 询价。沿用 [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria) 与现有任务续接；筛选仅使用当次来源候选。
