@@ -156,7 +156,10 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       if (result.kind === 'account' && (req.path === '/mcp' || req.path === '/identity')) {
         verified = { ...verified, scopes: accountTaskScopes, memberAccess: true };
         memberRequests.add(req);
-      } else if (result.kind !== 'existing') {
+      } else if (result.kind === 'existing' && verified.memberAudience && ['/mcp', '/identity'].includes(req.path)) {
+        // An established PA can renew against the advertised MCP resource. Its token stays task-scoped.
+        verified = { ...verified, scopes: accountTaskScopes };
+      } else if (result.kind !== 'existing' || verified.memberAudience) {
         const reason: Denial = result.kind === 'denied' ? result.reason : 'client_not_allowed';
         if (reason === 'insufficient_scope') res.setHeader('WWW-Authenticate', insufficientScope);
         res.status(403).json({ error: refusal[reason], reason, account: '/account' }); return;
@@ -294,11 +297,11 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const readScope = p.scopes.includes('ontology:read');
     const quoteOnly = !member && accountTaskScopes.every(scope => p.scopes.includes(scope)) &&
       !(p.scopes.includes('ontology:read') && p.scopes.includes('ontology:write'));
-    const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
+    const taskInstructions = `Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For provider.authorize, help the user connect the provider privately and report only the connection status. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}`;
     const canExecuteCode = member || (!p.memberAudience && readScope);
     const canSubmitCode = !member && canExecuteCode && ['ontology:write', ...accountTaskScopes].every(scope => p.scopes.includes(scope));
     const instructions = [
-      quoteOnly ? rideQuoteInstructions : '',
+      quoteOnly ? (p.memberAudience ? 'Call complete_with_action for a fare estimate and poll its original task with get_task.' : rideQuoteInstructions) : '',
       taskInstructions,
       canExecuteCode ? 'For multiple Ontology reads with joins, pagination, or filtering, use execute_ontology and return a compact result. Discover exact contracts with describe_ontology. Use query_ontology for a single read or as a fallback.' : '',
       canSubmitCode ? 'To combine reads and submit one published Action, use execute_ontology_action with a stable requestId. Follow its original task with get_task and respond to any PA request outside the script.' : '',
@@ -388,7 +391,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if (quoteOnly) server.registerTool('complete_with_action', {
       description: 'Return a DiDi fare estimate in one call when both venues and the city are known. This call uses RideInquiry.estimate and reads its verified result.',
       inputSchema: rideQuoteRequestSchema,
-    }, input => response(() => completeWithAction(req, input, true)));
+    }, input => response(() => {
+      if (!p.memberAudience) return completeWithAction(req, input, true);
+      return tasks.submit(p, { requestId: input.requestId, message: 'Get a DiDi fare estimate' }, {
+        actionInvocation: { action: input.action, read: input.read },
+      }).then(publicTask);
+    }));
     const runCode = async (code: string, requestId?: string) => {
       requireScope(p, member ? 'tasks:read' : 'ontology:read');
       if (requestId !== undefined)

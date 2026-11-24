@@ -1,7 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import { flightNumberKey, flightSource, flightStatusRead, searchFlight, type flightStatus } from '../../ontology/flight.js';
 import type { FunctionContext } from '../../runtime/functions.js';
@@ -138,7 +138,7 @@ export function configuredVariFlight(path?: string, fetcher: typeof fetch = fetc
           throw new Error('Changed credential');
         return { key, authorityId: digest(config) };
       } catch {
-        throw new Conflict('此账号尚未配置有效的飞常准 Aviation MCP 连接。');
+        throw new ProviderAuthorizationRequired('VariFlight', '此账号尚未配置有效的飞常准 Aviation MCP 连接。');
       }
     };
     const { key, authorityId } = await configured();

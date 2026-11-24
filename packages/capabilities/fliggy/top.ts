@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { Conflict, ProviderAuthorizationRequired, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 
 const endpoint = 'https://eco.taobao.com/router/rest';
@@ -57,12 +57,12 @@ export function topNumber(id: string) {
   const raw = (JSON as typeof JSON & { rawJSON(value: string): unknown }).rawJSON;
   return raw(decimal);
 }
-function configureTop<T extends z.infer<typeof credentials>>(path: string | undefined, schema: z.ZodType<T>, testFetch?: typeof fetch) {
+function configureTop<T extends z.infer<typeof credentials>>(provider: string, path: string | undefined, schema: z.ZodType<T>, testFetch?: typeof fetch) {
   const load = async (owner: string) => {
-    if (!path) throw new Conflict('Configure the owner’s Fliggy TOP partner connection');
+    if (!path) throw new ProviderAuthorizationRequired(provider, 'Configure the owner’s Fliggy TOP partner connection');
     const config = schema.parse(JSON.parse(await readPrivateSourceFile(path)));
     if (!config.enabled || config.owner !== owner || Date.parse(config.expiresAt) <= Date.now())
-      throw new Conflict('The Fliggy TOP connection is unavailable for this owner');
+      throw new ProviderAuthorizationRequired(provider, 'The Fliggy TOP connection is unavailable for this owner');
     return config;
   };
   return async (owner: string) => {
@@ -101,7 +101,7 @@ function configureTop<T extends z.infer<typeof credentials>>(path: string | unde
 }
 
 export function configuredFliggyHotel(path?: string, testFetch?: typeof fetch) {
-  const connect = configureTop(path, hotelCredentials, testFetch);
+  const connect = configureTop('FliggyHotelDistribution', path, hotelCredentials, testFetch);
   return async (owner: string) => {
     const { config, request, assertCurrent, evidence } = await connect(owner);
     return {
@@ -122,7 +122,7 @@ export function configuredFliggyHotel(path?: string, testFetch?: typeof fetch) {
 export type FliggyHotelResolver = ReturnType<typeof configuredFliggyHotel>;
 
 export function configuredFliggyFlight(path?: string, testFetch?: typeof fetch) {
-  const connect = configureTop(path, flightCredentials, testFetch);
+  const connect = configureTop('FliggyFlightJinghang', path, flightCredentials, testFetch);
   return async (owner: string) => {
     const { config, request, assertCurrent, evidence } = await connect(owner);
     return {

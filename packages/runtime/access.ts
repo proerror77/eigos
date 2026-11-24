@@ -2,10 +2,11 @@ import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
-import { betaQueries } from '../ontology/beta-queries.js';
+import { betaQueryActions } from '../ontology/beta-queries.js';
 import { allowsClassification, classificationSchema, combineClassification, internalClassification, marksClassification, sensitivityRank, type Classification } from '../ontology/classification.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
-import type { Ontology } from '../ontology/model.js';
+import { businessDefinition } from '../ontology/definition.js';
+import { Ontology } from '../ontology/model.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { isSandboxResource } from '../ontology/sandbox.js';
 import { ModelEgressDenied } from './model-egress.js';
@@ -26,14 +27,18 @@ export const resource = (ontology: string, kind: string, name: string) => `${ont
 export { PermissionDenied } from '../core/identity.js';
 
 const businessOntology = 'Eigos';
-const accountSearchActions = new Map<string, string>(betaQueries.actions);
-const accountGrantKeys = new Set([
-  'view_definition:Eigos',
-  ...betaQueries.sources.map(name => `read_source:Eigos/source/${name}`),
-  ...betaQueries.objects.map(name => `view_objects:Eigos/object/${name}`),
-  ...[...betaQueries.functions,
-    ...accountSearchActions.values()].map(name => `execute_function:Eigos/function/${name}`),
-  ...[...accountSearchActions.keys()].map(name => `apply_action:Eigos/action/${name}`),
+const accountSearchActions = new Map<string, string>(betaQueryActions);
+// The reviewed, shipped service catalogue bounds grants even when a live definition is edited.
+let accountGrantKeys: ReadonlySet<string> | undefined;
+function accountServiceGrantKeys() {
+  return accountGrantKeys ??= new Set(businessGrants(new Ontology(businessDefinition))
+    .filter(grant => !operatorResources.has(grant.resource)).map(grantKey));
+}
+const operatorResources = new Set([
+  'Eigos/object/OntologyScenario',
+  'Eigos/action/RegisterGeometry', 'Eigos/action/AnnotateGeometry', 'Eigos/function/annotateGeometry',
+  'Eigos/source/DidiPetRideSandbox', 'Eigos/action/PreparePetRideHandoff', 'Eigos/action/RecordPetRideReceipt',
+  'Eigos/function/preparePetRideHandoff', 'Eigos/function/recordPetRideReceipt',
 ]);
 
 const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
@@ -144,7 +149,7 @@ export class Access {
       (SELECT coalesce(jsonb_agg(jsonb_build_object('ontology',ontology,'resource',resource,'project',project)),'[]') FROM ${this.db.schema}.ontology_resource_projects) AS projects`, subjects, client);
     const grants = result.rows[0]!.grants as (Grant & { subject: string })[];
     this.grants = new Set(grants.filter(grant => !this.principal.memberAccess || (grant.subject === defaultGroup
-      ? accountGrantKeys.has(grantKey(grant))
+      ? accountServiceGrantKeys().has(grantKey(grant))
       : grant.resource.startsWith(businessOntology + '/') && accountActionPermissions.has(grant.permission))).map(grantKey));
     for (const assignment of result.rows[0]!.projects as {ontology:string;resource:string;project:string}[]) {
       for (const permission of ['view_definition','edit_definition','manage_definition']) {
@@ -575,10 +580,10 @@ export function businessGrants(model: Ontology, sandboxEnabled = false): Grant[]
     ...[...new Set(functions.flatMap(fn => fn.source ? [fn.source] : []))].map(name => ({ resource: resource(model.document.id, 'source', name), permission: 'read_source' as const })),
   ];
 }
-/** Replace legacy group grants with the fixed subset supported by this release. */
+/** Synchronize the approved account group to the published, shipped services. */
 export async function syncAccountGrants(db: Database, model: Ontology, client?: Sql): Promise<void> {
   if (model.document.id !== businessOntology) throw new Error('Expected the published business Ontology');
-  await setGrants(db, 'group:' + accountGroup, businessGrants(model).filter(grant => accountGrantKeys.has(grantKey(grant))), client);
+  await setGrants(db, 'group:' + accountGroup, businessGrants(model).filter(grant => accountServiceGrantKeys().has(grantKey(grant))), client);
 }
 
 export async function syncAccountGrantsAfterActivation(db: Database, activated: Ontology): Promise<void> {

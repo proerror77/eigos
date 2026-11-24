@@ -1,4 +1,4 @@
-import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
+import { ProviderAuthorizationRequired, ProviderReadAuthorizationRequired, digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
 import { validator } from '../ontology/model.js';
 import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
@@ -16,6 +16,7 @@ import { JournalObjects, compensate, type ObjectChange, type LinkChange } from '
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
 import { validateCognitive } from './cognitive-workflow.js';
 import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
+import { requestProviderAuthorization } from './provider-authorization.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 import { appendTrace } from './execution-trace.js';
 
@@ -280,8 +281,11 @@ export class Actions {
     try {
       reference = await timeOperation('action_apply',
         () => this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal), selected.action);
-    } catch (error) {
-      if (!execution || !options.allowPause || model.scenario) throw error;
+    } catch (failure) {
+      if (!execution || !options.allowPause || model.scenario) throw failure;
+      const error = failure instanceof ProviderAuthorizationRequired || failure instanceof ProviderReadAuthorizationRequired
+        ? await requestProviderAuthorization(failure, selected.action, execution)
+        : failure;
       const original = { ...selected, requestId, read };
       if (error instanceof CityConfirmationRequired) {
         throw new Clarification(error.message, error.choices, error.permissions, { ...original, waitingFor: 'city' });

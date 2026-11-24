@@ -24,7 +24,8 @@ export class PARequests {
       FROM ${db.schema}.pa_requests r JOIN ${db.schema}.tasks t ON t.id=r.task_id AND t.owner=r.owner
       LEFT JOIN ${db.schema}.scheduled_actions s ON s.task_id=t.id AND s.owner=t.owner
       WHERE r.owner=$1 AND r.response IS NULL AND t.state='input-required' AND t.result->>'requestId'=r.id::text
-        AND ($2::timestamptz IS NULL OR (r.created_at,r.id)>($2::timestamptz,$3::uuid)) ORDER BY r.created_at,r.id LIMIT $4`,[principal.owner,after?.created_at??null,after?.id??null,input.limit+1])).rows;
+        AND (t.input->>'paClient' IS NULL OR t.input->>'paClient'=$5)
+        AND ($2::timestamptz IS NULL OR (r.created_at,r.id)>($2::timestamptz,$3::uuid)) ORDER BY r.created_at,r.id LIMIT $4`,[principal.owner,after?.created_at??null,after?.id??null,input.limit+1,principal.clientId??null])).rows;
     const page=rows.slice(0,input.limit);
     await access.refresh();
     const items=[];

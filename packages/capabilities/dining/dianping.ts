@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
+import { ProviderReadAuthorizationRequired, Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import {
   dianpingSearch, dianpingSearchResult, dianpingShopRead, dianpingShopResult, dianpingSource,
@@ -95,12 +95,12 @@ export function dianpingFunctions(path?: string, mockedFetch?: typeof fetch): Re
       const { access, model } = context.objects;
       await access.refresh();
       access.source(model, dianpingSource);
-      if (!path) throw new SourceReadFailure('此账号尚未配置大众点评来源。', { unavailable: true });
+      if (!path) throw new ProviderReadAuthorizationRequired('Dianping', '此账号尚未配置大众点评来源。');
       let binding;
       try { binding = connection.parse(JSON.parse(await readPrivateSourceFile(path))); }
       catch { throw new SourceReadFailure('大众点评连接配置无效。', { unavailable: true }); }
       if (!binding.active || binding.owner !== context.principal.owner || Date.parse(binding.expiresAt) <= Date.now())
-        throw new SourceReadFailure('当前账号的大众点评连接不可用或已过期。', { unavailable: true });
+        throw new ProviderReadAuthorizationRequired('Dianping', '当前账号的大众点评连接不可用或已过期。');
       const session = binding.sessions[operation];
       if (!session) throw new SourceReadFailure(operation === 'search' ? '大众点评 POI 搜索授权尚未配置。' : '大众点评 POI 详情授权尚未配置。', { unavailable: true });
       return { binding, session };

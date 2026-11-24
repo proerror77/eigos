@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
+import { Conflict, ProviderReadAuthorizationRequired, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import type { FunctionContext } from '../../runtime/functions.js';
 
@@ -147,7 +147,7 @@ export function configuredAmap(path?: string, fetcher: typeof fetch = fetch, bet
       return { key, binding: config === own ? digest(config) : digest([owner, config]) };
     };
     const read = () => connection().catch(() => {
-      throw new SourceReadFailure('此账号尚未配置有效的高德 Web 服务连接。', { unavailable: true });
+      throw new ProviderReadAuthorizationRequired('Amap', '此账号尚未配置有效的高德 Web 服务连接。');
     });
     const { key, binding } = await read();
     return new AmapClient(key, fetcher, async () => {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
+import { ProviderReadAuthorizationRequired, Conflict, InvalidInput, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
 import { marketplaceComparisonType, marketplaceOfferType, marketplaceServiceCatalog, serviceCatalog, travelOfferSearchType, travelOfferSources } from '../../ontology/services.js';
 import {
@@ -29,7 +29,7 @@ import { compareMarketplacePrices } from '../marketplace/comparison.js';
 
 function marketplaceSourceFailure(error: unknown, signal: AbortSignal) {
   signal.throwIfAborted();
-  return error instanceof PermissionDenied || error instanceof ServiceAuthorizationRequired
+  return error instanceof PermissionDenied || error instanceof ProviderReadAuthorizationRequired
     ? 'authorization_required' as const : 'unavailable' as const;
 }
 
@@ -39,7 +39,6 @@ async function currentSource(resolve: ServiceResolver, owner: string, provider: 
   } catch (error) {
     if (error instanceof ServiceAuthorizationRequired) {
       if (provider === 'Luma') return;
-      if (provider === 'Taobao' || provider === 'JD') throw new PermissionDenied(error.message);
     }
     throw error;
   }
@@ -299,7 +298,7 @@ export function serviceFunctions(db: Database, resolve: ServiceResolver, getSour
         return { service, status: 'searched' as const, query, result };
       } catch (error) {
         context.signal.throwIfAborted();
-        const status = error instanceof PermissionDenied || error instanceof ServiceAuthorizationRequired
+        const status = error instanceof PermissionDenied || error instanceof ProviderReadAuthorizationRequired
           ? 'authorization_required' : 'unavailable';
         return { service, status } as const;
       }

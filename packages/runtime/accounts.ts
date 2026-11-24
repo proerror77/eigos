@@ -301,6 +301,11 @@ export class Accounts {
       if (typeof provisioned === 'string') return denied(provisioned);
       account = provisioned;
     }
+    if (!account && principal.clientId && legacyClientIds.includes(principal.clientId) && await this.isOperator(principal.owner)) {
+      if (principal.memberAudience && !accountTaskScopes.every(scope => principal.scopes.includes(scope)))
+        return denied('insufficient_scope');
+      return { kind: 'existing' };
+    }
     if (account || principal.memberAudience || principal.clientId === clientId) {
       if (account?.status === 'suspended') return denied('account_suspended');
       if (!forAccounts) return denied('client_not_allowed');
@@ -309,8 +314,6 @@ export class Accounts {
       if (!accountTaskScopes.every(scope => principal.scopes.includes(scope))) return denied('insufficient_scope');
       return { kind: 'account' };
     }
-    // Existing operator identities retain their grants. Unprovisioned subjects cannot use a legacy client to bypass onboarding.
-    if (principal.clientId && legacyClientIds.includes(principal.clientId) && await this.isOperator(principal.owner)) return { kind: 'existing' };
     return denied('client_not_allowed');
   }
 }

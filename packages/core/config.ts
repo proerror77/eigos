@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { DidiMcpConnector } from '../capabilities/didi/connector.js';
 import { didiBindingSchema } from '../capabilities/didi/contracts.js';
 import type { SourceResolver } from '../capabilities/didi/functions.js';
-import { Conflict, digest, SourceReadFailure } from './identity.js';
+import { Conflict, digest, ProviderReadAuthorizationRequired, SourceReadFailure } from './identity.js';
 import { readPrivateSourceFile } from './private-source.js';
 import { DidiOperations } from '../capabilities/didi/operations.js';
 
@@ -139,7 +139,7 @@ export function configuredSource(primaryPath?: string, sandboxWatchPath?: string
   const cache = new Map<boolean, { hash: string; connector: DidiMcpConnector }>();
   const read = async (path?: string) => {
     if (!path || !isAbsolute(path))
-      throw new SourceReadFailure('Configure an absolute DiDi connection file', { unavailable: true });
+      throw new ProviderReadAuthorizationRequired('Didi', 'Configure an owner-bound DiDi connection');
     try {
       return connectionSchema.parse(JSON.parse(await readFile(path, 'utf8')));
     } catch (cause) {
@@ -167,7 +167,7 @@ export function configuredSource(primaryPath?: string, sandboxWatchPath?: string
       throw new Conflict('Original sandbox order identity changed');
     const hash = digest(connection);
     if (!connection.active || connection.owner !== owner || connection.expiresAt && Date.parse(connection.expiresAt) <= Date.now())
-      throw new SourceReadFailure('DiDi source is unavailable for this owner', { unavailable: true });
+      throw new ProviderReadAuthorizationRequired('Didi', 'DiDi source is unavailable for this owner');
     const cached = cache.get(sandbox);
     const connector = cached?.hash === hash ? cached.connector : new DidiMcpConnector(connection.binding);
     cache.set(sandbox, { hash, connector });

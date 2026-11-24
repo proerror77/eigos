@@ -130,6 +130,13 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/identity', await g.token('legacy', { azp: 'existing-client', aud: publicUrl }))).status, 403);
     await setGrants(f.db, g.owner('legacy'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.equal((await g.call('/identity', await g.token('legacy', { azp: 'existing-client', aud: publicUrl }))).status, 200);
+    const renewedLegacy = await g.token('legacy', { azp: 'existing-client',
+      scope: 'tasks:read tasks:write ontology:read ontology:write' });
+    assert.deepEqual((await (await g.call('/identity', renewedLegacy)).json()).scopes, ['tasks:read', 'tasks:write']);
+    assert.equal((await g.call('/ontology', renewedLegacy)).status, 403);
+    assert.equal((await g.call('/a2a', renewedLegacy)).status, 403);
+    const limitedLegacy = await g.token('legacy', { azp: 'existing-client', scope: 'tasks:read' });
+    assert.equal((await (await g.call('/identity', limitedLegacy)).json()).reason, 'insufficient_scope');
     const readResult = (result: { content?: unknown }) => JSON.parse((result.content as { text: string }[])[0]!.text);
     const args = { requestId: 'grok-original-request', message: '只查询明天上海到北京的航班' };
     const submission = await aliceMcp.callTool({ name: 'submit_task', arguments: args });
@@ -393,7 +400,7 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', alice.token)).status, 403);
     const catalogue = body(await alice.client.callTool({ name: 'describe_ontology', arguments: {} }));
-    assert(!catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
+    assert(catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
     await assert.rejects(alice.client.callTool({ name: 'check_restaurant_availability', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);

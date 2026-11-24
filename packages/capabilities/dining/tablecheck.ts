@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import { restaurantName, type venueFacts } from '../../ontology/restaurant-services.js';
 import { time } from '../../ontology/service-contracts.js';
@@ -74,7 +74,7 @@ export async function configuredTableCheck(path: string | undefined, ctx: Functi
         throw new Error();
       return candidate;
     } catch {
-      throw new Conflict('Configure authorized TableCheck access for this owner');
+      throw new ProviderAuthorizationRequired('TableCheck', 'Configure authorized TableCheck access for this owner');
     }
   };
   const config = await read(), binding = digest(config);
@@ -92,7 +92,7 @@ export async function configuredTableCheck(path: string | undefined, ctx: Functi
       const value = (await readPrivateSourceFile(file)).trim();
       if (!/^[\x21-\x7e]{8,2048}$/.test(value) || createHash('sha256').update(value).digest('hex') !== hash) throw new Error();
       return value;
-    } catch { throw new Conflict('TableCheck credential unavailable for this capability'); }
+    } catch { throw new ProviderAuthorizationRequired('TableCheck', 'TableCheck credential unavailable for this capability'); }
   }
   async function request<S extends z.ZodType>(api: 'availability' | 'distribution', route: string, schema: S,
     options: { query?: Record<string, string>; method?: 'POST' | 'PUT'; body?: Record<string, unknown>; missing?: boolean } = {}) {
