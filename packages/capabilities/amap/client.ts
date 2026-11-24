@@ -56,7 +56,12 @@ export class AmapClient {
 
   async mcp(name: Tool, args: Record<string, string>, outer: AbortSignal): Promise<unknown> {
     if (!toolNames.includes(name)) throw new Conflict('This Amap MCP tool is outside the published read contract');
-    const url = new URL(amapMcpEndpoint);
+    return this.readMcp(amapMcpEndpoint, name, args, outer);
+  }
+
+  protected async readMcp(endpoint: string, name: string, args: Record<string, unknown>, outer: AbortSignal,
+    allowPlainText = false): Promise<unknown> {
+    const url = new URL(endpoint);
     url.searchParams.set('key', this.key);
     const signal = AbortSignal.any([outer, AbortSignal.timeout(16000)]);
     let sent = false, guardFailure: { error: unknown } | undefined, transportFailure: SourceReadFailure | undefined;
@@ -93,7 +98,10 @@ export class AmapClient {
       if (!result.structuredContent && content.length !== 1) throw new Error('Expected a single Amap MCP result');
       try { await this.guard(); }
       catch (error) { guardFailure = { error }; throw error; }
-      return result.structuredContent ?? JSON.parse((content[0] as { text: string }).text);
+      if (result.structuredContent) return result.structuredContent;
+      const text = (content[0] as { text: string }).text;
+      try { return JSON.parse(text); }
+      catch (error) { if (allowPlainText) return text; throw error; }
     } catch {
       outer.throwIfAborted();
       if (guardFailure) throw guardFailure.error;
@@ -128,12 +136,12 @@ export class AmapClient {
   }
 }
 
-export function configuredAmap(path?: string, fetcher: typeof fetch = fetch, beta?: BetaAmap) {
+function configuredAmapSource(path: string | undefined, source: 'Amap' | 'AmapRide', beta?: BetaAmap) {
   return async (ctx: FunctionContext) => {
     const { access, model } = ctx.objects;
     const { owner, memberAccess } = ctx.principal;
     await access.refresh();
-    access.source(model, 'Amap');
+    access.source(model, source);
     const connection = async () => {
       const own = path ? setup.parse(JSON.parse(await readPrivateSourceFile(path))) : undefined;
       const config = own?.owner === owner ? own
@@ -147,15 +155,43 @@ export function configuredAmap(path?: string, fetcher: typeof fetch = fetch, bet
       return { key, binding: config === own ? digest(config) : digest([owner, config]) };
     };
     const read = () => connection().catch(() => {
-      throw new SourceReadFailure('此账号尚未配置有效的高德 Web 服务连接。', { unavailable: true });
+      throw new SourceReadFailure(source === 'AmapRide' ? '此账号尚未绑定有效的高德打车 Web 服务 Key。'
+        : '此账号尚未配置有效的高德 Web 服务连接。', { unavailable: true });
     });
     const { key, binding } = await read();
-    return new AmapClient(key, fetcher, async () => {
+    const guard = async () => {
       ctx.signal.throwIfAborted();
       await ctx.assertCurrent?.();
       await access.refresh();
+      access.source(model, source);
       if ((await read()).binding !== binding) throw new Conflict('高德来源权限已变化。');
-    }, binding);
+    };
+    return { key, guard, binding };
+  };
+}
+
+export function configuredAmap(path?: string, fetcher: typeof fetch = fetch, beta?: BetaAmap) {
+  const source = configuredAmapSource(path, 'Amap', beta);
+  return async (ctx: FunctionContext) => {
+    const { key, guard, binding } = await source(ctx);
+    return new AmapClient(key, fetcher, guard, binding);
+  };
+}
+
+export const amapRideMcpEndpoint = 'https://mcp.amap.com/rest/amap_car/dev/mcp';
+
+class AmapRideClient extends AmapClient {
+  plan(args: Record<string, unknown>, signal: AbortSignal) {
+    return this.readMcp(amapRideMcpEndpoint, 'get_taxi_service', args, signal, true);
+  }
+}
+
+export function configuredAmapRide(path?: string, fetcher: typeof fetch = fetch) {
+  const source = configuredAmapSource(path, 'AmapRide');
+  return async (ctx: FunctionContext) => {
+    const { key, guard, binding } = await source(ctx);
+    const client = new AmapRideClient(key, fetcher, guard, binding);
+    return { plan: client.plan.bind(client), assertCurrent: guard };
   };
 }
 

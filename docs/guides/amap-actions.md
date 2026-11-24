@@ -14,3 +14,11 @@
 这组 Action 使用现有高德 Web 服务凭据。路线使用路径规划 2.0，测距支持直线、驾车和步行，路况是对角线在 10 公里内的矩形区域。读回保留米、秒、观察时间和来源摘要。已有的地图 MCP Function 可以继续单独调用。[高德 Web 服务](https://lbs.amap.com/api/webservice/summary) · [路径规划 2.0](https://lbs.amap.com/api/webservice/guide/api/newroute) · [测距](https://lbs.amap.com/api/webservice/guide/api/direction/#distance) · [交通态势](https://lbs.amap.com/api/webservice/guide/api-advanced/traffic-situation-inquiry)
 
 受邀账号需要独立的地图业务授权。激活包含这四个 Action 的 Ontology 后，可由管理角色运行 `npm run account -- grant-amap-observations` 明确开通。共享高德连接使用已有有效期和账号验证。底层建模沿用 [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)、[Interface Link](https://www.palantir.com/docs/foundry/interfaces/interface-link-types-overview) 和 [Link Types](https://www.palantir.com/docs/foundry/object-link-types/create-link-type)。
+
+## 高德打车估价
+
+以乘客本人的高德账号申请 Web 服务 Key。Gateway 和 Worker 使用 `EIGOS_AMAP_RIDE_CONNECTION_FILE` 指向单独的私有连接文件，格式沿用高德地图连接的 `owner`、`active`、`expiresAt`、`keyFile` 和 `keySha256`。发布后可以用 `npm run account -- grant-amap-ride <owner|email>` 给已批准的乘客账号授权。绑定与授权均按账号验证。 [创建 Web 服务 Key](https://developer.amap.com/api/webservice/create-project-and-key) · [高德打车 MCP](https://developer.amap.com/api/skill/ready-to-use/amap-ride-hailing-skill)
+
+用 `complete_with_action` 调用 `AmapRideInquiry.estimate`，实现类型为 `AmapRidePlan`。输入 `origin`、`originCity`、`destination`、`destinationCity`，城市使用行政区全称。读回用 `readAmapRideEstimate`，结果参数为 `plan`。高德返回多候选时展示候选名称和地址，请用户给出具体地点后重新询价。报价金额以人民币分保存，展示时使用供应商给出的价格区间以及观察时间。同一个 `requestId` 读回同一次观察，重新询价使用新的请求 ID。
+
+该 Action 使用 `get_taxi_service` 做行前询价，读取有效规划的实际起终点和车型价格，保存来源类型和观察时间。供应商的确认令牌不会进入可读结果。 [高德打车工具契约](https://github.com/AMap-Web/amap-ride-hailing-skill/blob/main/references/tool-contracts.md) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview)

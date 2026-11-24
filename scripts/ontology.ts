@@ -22,6 +22,7 @@ import { provisionPublicPlaceCatalogue } from '../packages/capabilities/public-p
 import { publicPlacesOntology } from '../packages/ontology/public-places.js';
 import { ontologyName } from '../packages/ontology/schema.js';
 import { accountCommand } from './account-command.js';
+import { amapRideAccountResources } from '../packages/ontology/amap-ride.js';
 import { amapObservationAccountResources } from '../packages/ontology/amap-observations.js';
 
 const command = process.argv[2];
@@ -68,11 +69,14 @@ else {
         const active = await metadata.active('Eigos');
         await syncAccountGrants(db, active);
         console.log(JSON.stringify({ release: active.release }));
-      } else if (args[0] === 'grant-didi-pa' || args[0] === 'grant-didi-pa-orders') {
+      } else if (args[0] === 'grant-didi-pa' || args[0] === 'grant-didi-pa-orders' || args[0] === 'grant-amap-ride') {
         const active = await metadata.active('Eigos');
-        const resources = args[0] === 'grant-didi-pa-orders' ? didiPAOrderAccountResources : didiPAAccountResources;
+        const amap = args[0] === 'grant-amap-ride';
+        const resources = amap ? amapRideAccountResources
+          : args[0] === 'grant-didi-pa-orders' ? didiPAOrderAccountResources : didiPAAccountResources;
         const grants = businessGrants(active).filter(grant => resources.has(grant.resource));
-        if (grants.length !== resources.size) throw new Error('The published DiDi pilot contract is incomplete');
+        if (grants.length !== resources.size) throw new Error('The published ride contract is incomplete');
+        if (amap && !args[1]) throw new Error('Provide the approved Amap rider account');
         let subject = 'group:' + accountActionsGroup;
         if (args[1]) {
           const account = await new Accounts(db, signupMode()).find(z.union([z.email(), z.string().regex(/^[a-f0-9]{64}$/)]).parse(args[1]));

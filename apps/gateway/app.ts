@@ -11,6 +11,7 @@ import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { Conflict, digest, InvalidInput, NotFound, PermissionDenied, requireScope, type Principal } from '../../packages/core/identity.js';
 import type { Config } from '../../packages/core/config.js';
+import { amapRide, amapRideInput } from '../../packages/ontology/amap-ride.js';
 import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visitInput } from '../../packages/ontology/restaurant-services.js';
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema, type ActionCall } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
@@ -40,15 +41,25 @@ const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uu
 const mcpDescription = 'Use query to find up to 16 resources by name or description, then names to read exact contracts. Omit both for the full published definition.';
 const discoverySchema = discoveryOptions.extend({ ontology: z.string().optional() });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
+const didiQuote = {
+  action: 'EstimateRide', prepare: 'prepareRideInquiry', read: 'readRideEstimates', parameter: 'request',
+} as const;
+const amapQuote = { ...amapRide, parameter: 'plan' } as const;
 const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
   ontology: z.literal('Eigos').optional(),
-  action: z.strictObject({
+  action: z.union([z.strictObject({
     interface: z.strictObject({ type: z.literal('RideInquiry'), action: z.literal('estimate'), implementation: z.literal('RideRequest') }),
     input: routeInputSchema,
-  }),
-  read: z.strictObject({ function: z.literal('readRideEstimates'), resultParameter: z.literal('request') }),
+  }), z.strictObject({
+    interface: z.strictObject({ type: z.literal(amapRide.interface), action: z.literal('estimate'), implementation: z.literal(amapRide.object) }),
+    input: amapRideInput,
+  })]),
+  read: z.union([
+    z.strictObject({ function: z.literal(didiQuote.read), resultParameter: z.literal(didiQuote.parameter) }),
+    z.strictObject({ function: z.literal(amapQuote.read), resultParameter: z.literal(amapQuote.parameter) }),
+  ]),
 });
-const rideQuoteInstructions = 'For fare-only queries with a known city and confirmed pickup and destination, call complete_with_action directly in the current conversation and deliver the quote as soon as it returns. Pass the confirmed venue names. If the Action needs a more specific place, ask for it before retrying. Use submit_task for general or incomplete travel requests.';
+const rideQuoteInstructions = 'For fare-only queries with known pickup, destination and city, use complete_with_action in the current conversation. Use DiDi for an unspecified provider and AmapRideInquiry.estimate when the user requests Amap. Pass the confirmed venue names and report the provider result. If the Action needs a more specific place, ask for it before retrying. Use submit_task for general or incomplete travel requests.';
 
 const paTravelInstructions = [
   'For user-authorized travel reminders, keep the object reference from StartCalendarJourney or StartFlightWatch.',
@@ -72,7 +83,7 @@ const refusal: Record<Denial, string> = {
 };
 
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
-  providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
+  providerFetch: { amapFetch?: typeof fetch; amapRideFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; tableCheckFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
     accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
   if (db.sandboxEnabled && !developmentSandboxEnabled({ ...config, NODE_ENV: process.env.NODE_ENV }))
@@ -219,7 +230,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const selected = capabilities.actions.resolve(access, model, input.action);
     if (quoteOnly) {
       const action = model.action(selected.action);
-      if (selected.action !== 'EstimateRide' || action.function !== 'prepareRideInquiry' || action.rules?.length || action.effects?.length)
+      const quote = selected.action === amapQuote.action ? amapQuote : didiQuote;
+      if (selected.action !== quote.action || action.function !== quote.prepare || action.rules?.length || action.effects?.length ||
+          input.read.function !== quote.read || input.read.resultParameter !== quote.parameter)
         throw new PermissionDenied('The published quote-only Action is unavailable');
     }
     const complete = () => capabilities.actions.complete(
@@ -386,7 +399,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       return completeRestaurantRead(access, model, requestId, 'availability', { ...input, venue, channel: 'provider' });
     }));
     if (quoteOnly) server.registerTool('complete_with_action', {
-      description: 'Return a DiDi fare estimate in one call when both venues and the city are known. This call uses RideInquiry.estimate and reads its verified result.',
+      description: 'Return a DiDi or Amap fare estimate in one call for named places and known cities. Use RideInquiry for DiDi and AmapRideInquiry for Amap.',
       inputSchema: rideQuoteRequestSchema,
     }, input => response(() => completeWithAction(req, input, true)));
     const runCode = async (code: string, requestId?: string) => {
