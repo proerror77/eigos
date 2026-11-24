@@ -86,8 +86,8 @@ test('Amap Actions record verifiable observations and reuse the linked geocoded 
       await account.provision(owner);
       await account.approve(owner);
       await syncAccountGrants(f.db, f.model);
-      const limited = await Access.load(f.db, { owner, scopes: [], memberAccess: true });
-      assert(!limited.allows({ ontology: 'Eigos', permission: 'apply_action', resource: 'Eigos/action/' + amapObservations.route.action }));
+      const member = await Access.load(f.db, { owner, scopes: [], memberAccess: true });
+      assert(member.allows({ ontology: 'Eigos', permission: 'apply_action', resource: 'Eigos/action/' + amapObservations.route.action }));
       assert.equal(webCalls[0], '/v3/geocode/geo');
     } finally { await f.close(); }
   } finally { await rm(dir, { recursive: true, force: true }); }

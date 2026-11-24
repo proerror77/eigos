@@ -402,6 +402,8 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
           const access = await Access.load(db, p, client);
           const selected = capabilities.actions.resolve(access, model, input.action);
           checkQuoteAction(model, selected.action);
+          access.action(model, selected.action);
+          access.function(model, input.read.function);
         },
       }).then(publicTask);
     }));

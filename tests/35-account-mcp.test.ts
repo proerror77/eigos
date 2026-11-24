@@ -293,6 +293,20 @@ test('an authorized task-scoped operator can complete a ride quote without submi
     assert.partialDeepStrictEqual(ambiguous.structuredContent, { status: 409 });
     assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
 
+    const renewed = new Client({ name: 'test-renewed-grok-quote', version: '1' });
+    try {
+      await renewed.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
+        requestInit: { headers: { Authorization: 'Bearer ' + await g.token('rider', { azp: 'existing-client' }) } },
+      }));
+      const apply = () => renewed.callTool({ name: 'complete_with_action', arguments: { ...args, requestId: 'renewed-fare-only' } });
+      const firstTask = await apply(), duplicate = await apply();
+      assert(!firstTask.isError && !duplicate.isError, JSON.stringify([firstTask, duplicate]));
+      const queued = JSON.parse((firstTask.content[0] as { text: string }).text);
+      assert.equal(queued.state, 'submitted');
+      assert.equal(JSON.parse((duplicate.content[0] as { text: string }).text).id, queued.id);
+      assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
+    } finally { await renewed.close(); }
+
     await setGrants(f.db, owner, grants.filter(grant => grant.resource !== 'Eigos/action/EstimateRide'));
     const denied = await quote({ ...args, requestId: 'grok-quote-without-grant' });
     assert.partialDeepStrictEqual(denied.structuredContent, { status: 403 });
