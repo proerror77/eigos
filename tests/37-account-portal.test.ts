@@ -376,8 +376,9 @@ test('the account page shows where each account stands', async () => {
     const landing = await inviteLanding.text();
     assert.match(landing, /class="button primary" href="\/account\/login">邮箱登录/);
     assert.match(landing, /href="\/account\/login\?signup=1">首次使用，注册<\/a>/);
-    assert.match(landing, /已受邀的邮箱验证后直接开通/);
-    assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>注册并验证邮箱/);
+    assert.match(landing, /预先获准的邮箱验证后直接开通/);
+    assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>验证邮箱并登录/);
+    assert.doesNotMatch(landing, /审核后使用邀请码开通/);
     assert.match(landing, /id="install-prompt"[^>]+readonly>[^<]+https:\/\/127\.0\.0\.1\/mcp/);
     assert.match(landing, /id="query-prompt"[^>]+readonly>[^<]+上海市今天的天气/);
     assert.doesNotMatch(landing, /action="\/account\/(apply|agent-token|approve)"/);

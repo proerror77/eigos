@@ -148,7 +148,7 @@ const copyPromptHash = createHash('sha256').update(copyPrompts).digest('base64')
 function setupGuide(publicUrl: string) {
   const mcpUrl = new URL('/mcp', publicUrl).href, a2aUrl = new URL('/a2a', publicUrl).href;
   const install = `请帮我连接 EIGOS Agent。支持 A2A 时使用 ${a2aUrl}，支持远程 MCP 时使用 ${mcpUrl}。使用接入令牌时，请指导我把 Authorization 请求头保存在客户端凭据设置，值为 Bearer 加一个空格和我的令牌。不要让我把令牌贴到聊天里。如果我用 Grok OAuth，请提示我在 EIGOS 账号页点「授权 Grok」，再回 Grok 完成连接。连好后请发起一次只读测试。`;
-  const tryQuery = '请通过 EIGOS 查询上海市今天的天气，告诉我天气、气温和数据来源。如果查询失败，告诉我客户端或 EIGOS 返回的错误，不要猜测。';
+  const tryQuery = '请通过 EIGOS 查询上海市今天的天气，并查找上海博物馆人民广场馆附近的咖啡店。请分别标注数据来源。如果某项查询失败，告诉我返回的错误，不要猜测。';
   const prompt = (id: string, label: string, value: string) => `<div class="card prompt"><label for="${id}">${label}</label>
     <textarea id="${id}" rows="4" readonly>${attribute(value)}</textarea>
     <div class="actions"><button type="button" data-copy-prompt="${id}" hidden>复制${label}</button>
@@ -259,7 +259,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
           content = `<p class="lead">开通后，用你常用的 AI 助手查询天气、地点、餐厅、机票和酒店。</p>
             <p class="actions"><a class="button primary" href="/account/login">邮箱登录 <span aria-hidden="true">↗</span></a>
             <a class="secondary" href="/account/login?signup=1">首次使用，注册</a></p>
-            <p class="lead">已受邀的邮箱验证后直接开通。其他用户登录后可提交申请。</p>`;
+            <p class="lead">预先获准的邮箱验证后直接开通。其他用户登录后可提交申请。</p>`;
         }
       } else content = '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
     } else if (!account) {
