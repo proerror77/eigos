@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { Conflict, ProviderAuthorizationRequired, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import type { LocalDeliveryProvider } from '../../ontology/local-delivery.js';
 import type { FunctionContext } from '../../runtime/functions.js';
@@ -78,7 +78,7 @@ export async function configuredDelivery(path: string | undefined, provider: Loc
       return { port: binding.port, accountRef: binding.accountRef, token, id: digest(binding),
         allowOrders: binding.allowOrders === true, allowPayment: provider === 'TaobaoInstantDelivery' && binding.allowPayment === true };
     } catch {
-      throw new Conflict('Configure an active owner-bound dsh-waimai connection for ' + provider);
+      throw new ProviderAuthorizationRequired(provider, 'Configure an active owner-bound dsh-waimai connection for ' + provider);
     }
   };
   await grant();

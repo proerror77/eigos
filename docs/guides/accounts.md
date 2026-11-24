@@ -103,7 +103,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 
 邀请制和开放注册都要求开启 owner 隔离。暂时不能开启的部署设置 `EIGOS_SIGNUP=closed`：已有账号照常使用，不开新户。
 
-已有 `/account` 的部署沿用现有 Auth0 应用、回调和密钥。备份 schema 后停掉运行进程，再执行 `npm run db:upgrade` 和下文的 Gateway 运行角色授权。仍有效的旧邀请码可以继续兑换。启动后普通账号按固定 Beta 权限运行。重启后核对 `invite` 模式，并验证自动入队、审核放行和相互隔离的任务。以下完整步骤用于首次配置账号页或从早期 `/members` 版本升级。
+已有 `/account` 的部署沿用现有 Auth0 应用、回调和密钥。备份 schema 后停掉运行进程，再执行 `npm run db:upgrade` 和下文的 Gateway 运行角色授权。仍有效的旧邀请码可以继续兑换。启动后普通账号使用已发布的业务服务。重启后核对 `invite` 模式，并验证自动入队、审核放行和相互隔离的任务。以下完整步骤用于首次配置账号页或从早期 `/members` 版本升级。
 
 全新部署没有旧版本：跳过第 4 步，第 5 步用 `npm run db:init`，其余相同。
 
@@ -124,7 +124,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 切换：
 
 9. 部署 Action 并放进登录流程，见「Post-Login Action」。要在新 Gateway 运行之后部署，因为 Action 会把有重复用户的登录转到 `/account/link`。
-10. 用管理角色运行 `npm run account -- sync-beta-grants`，按当前 Eigos 发布将账号组同步到固定 Beta 权限，见「账号组」。
+10. 用管理角色运行 `npm run account -- sync-beta-grants`，同步当前 Eigos 发布的业务服务权限，见「账号组」。
 11. 按「验收」验证。通过后，从门户应用删除原回调。
 
 ### 需要授权的操作
@@ -142,7 +142,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 
 同时让用户确认这些后果：
 
-- **旧账号组授权会收窄。** Gateway 和 Worker 在读取旧授权时只接受固定的 Beta 权限。同步命令会清除多余的授权记录。
+- **账号组按当前发布同步。** Gateway 和 Worker 根据软件交付的业务服务目录校验组权限。已有的定向扩展权限仍由其原授权记录管理。
 - **合并不能撤销，而且对整个租户生效**，见「Action 的行为」。
 - **部署前没处理的重复用户**，较新用户名下的 EIGOS 数据在合并后访问不到。会员同邮箱下还有一个较早创建、没验证的用户时也一样：那个用户一验证，会员就可能被并入它。
 - **合并之后要重新授权 Grok。** 账号页确认原来那个账号时撤销它的 Grok 授权，用户在账号页重新授权，再在 Grok 里重新连接。
@@ -398,18 +398,15 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 
 ### 账号组
 
-普通账号通过 `group:eigos-accounts` 使用固定的 Beta 共享查询权限。Gateway 和 Worker 在读取这组授权时按固定清单筛选。可用 `access:configure` 将业务资源授权显式加到 `group:eigos-account-actions`，或加到 `account-actions:<owner>` 供指定账号使用。两处业务授权允许应用 Action、执行 Function、读取对象与读取来源。Ontology 发布只同步共享查询组。普通账号的数据仍按 owner 隔离。
+账号通过审核并启用 Agent 接入后，可使用 `group:eigos-accounts` 中当前发布的业务 Action、Function、对象和来源。组权限以仓库随软件交付的服务目录为上限。管理员可继续通过 `group:eigos-account-actions` 或 `account-actions:<owner>` 管理单独审核的扩展。任务、对象和结果都按 owner 隔离。定义管理与沙箱能力有各自的授权。
 
-运营者使用 `npm run account -- sync-beta-grants` 将组授权整组替换为当前 Eigos 发布中存在的固定权限。`npm run ontology:publish` 和 `npm run ontology:activate -- <release>` 对业务 Ontology 做同样的同步。其他 Ontology 的发布和 `ontology:prepare` 跳过同步。分支提案合并继续保留授权记录，必要时可以在合并后运行同步命令。新增 Function、Action、来源或对象不会进入 Beta 权限。以前的 `grant-restaurant-search` 命令是同步命令的兼容别名。
+部署时使用管理角色运行 `npm run account -- sync-beta-grants` 同步现有账号的服务权限。`npm run ontology:publish` 和 `npm run ontology:activate -- <release>` 同步业务 Ontology 的组权限。运行中的账号撤销或停用仍立即移除组权限。五项平台查询继续使用其发布的只读约束。[Palantir Ontology 权限](https://www.palantir.com/docs/foundry/object-permissioning/ontology-permissions/)
 
-可从 `resource_grants` 核对组的逐项权限。
+### 请求供应商授权
 
-```sql
-SELECT permission, resource FROM <schema>.resource_grants
-WHERE subject='group:eigos-accounts' ORDER BY permission, resource;
-```
+需要专属连接的业务 Action 通过 MCP 或 A2A 创建任务。原 PA 读取任务的 `provider.authorize` 请求，在用户自己的环境协助连接指定供应商，保持原任务等待。PA 通过原请求返回 `connected`、`declined` 或 `unavailable`。凭据由 PA 或受控的供应商连接保管。EIGOS 重新检查该 owner 的连接，成功后沿原 Action 继续。PA 专用连接还须实现供应商工具与回执的映射。滴滴与 Luma 已使用各自的 PA 回执契约。组合搜索可以返回当前能取得的结果，并指出哪些可选来源需要授权。
 
-共享查询组包含飞猪和高德的来源读取权限、五项查询用到的 Function、结果对象和三个保存查询结果的 Action。查询 Action 在执行时检查对应 Function，拒绝附带声明规则或外部效果的定义。使用其他 Action 时照常检查业务资源权限、提交条件及供应商授权。部署带外部效果的账号 Action 时，为 Indexer 的运行角色提供读取账号状态所需的最小 SELECT 权限。参见 [Palantir 应用权限](https://www.palantir.com/docs/foundry/developer-console/permissions)。
+已列入允许名单的运营 OAuth 客户端重新登录时，可以为 `/mcp` 资源取得任务令牌。Gateway 继续核对运营者身份、客户端和任务范围。[Ontology MCP 授权](https://www.palantir.com/docs/foundry/ontology-mcp/authentication-and-authorization/)
 
 ### Beta 默认只读服务
 
@@ -420,9 +417,9 @@ Gateway 和 Worker 由运营统一配置：
 - `EIGOS_BETA_FLYAI_TRIAL_UNTIL` 填写 UTC ISO 截止时间。到期后试用查询关闭。
 - `EIGOS_BETA_AMAP_CONNECTION_FILE` 指向平台的私有高德查询配置，字段为 `active`、`expiresAt`、`keyFile` 和 `keySha256`。该配置由服务端持有。
 - 运行角色需读取 `accounts`（现有权限）及 `member_invitations.redeemed_by`。由管理角色授予最小范围的 `GRANT SELECT (redeemed_by) ON <schema>.member_invitations TO <gateway_role>, <worker_role>;`。
-- 用管理角色运行 `npm run account -- sync-beta-grants`，同步五项查询和读回权限。
+- 用管理角色运行 `npm run account -- sync-beta-grants`，同步已发布业务服务权限。
 
-MCP 的 `search_restaurants` 用高德查询门店和地址。A2A 用户也可以用文本任务查询。滴滴 PA 试点使用单独启用的业务授权。见 [原 PA 的滴滴连接](didi-ride-followup.md#原-pa-的滴滴连接)。
+MCP 的 `search_restaurants` 用高德查询门店和地址。A2A 用户也可以用文本任务查询。滴滴使用原 PA 的专属连接。见 [原 PA 的滴滴连接](didi-ride-followup.md#原-pa-的滴滴连接)。
 
 ## 账号页和 Gateway 的提示
 
@@ -509,7 +506,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 
 ## 验收
 
-验收做真实查询和 synthetic 执行。用没有专属飞猪或高德连接的受邀账号，核对机票、酒店、天气、地点和餐厅五项查询。用通用 Action 提交滴滴业务时，核对未获业务授权的账号被拒绝，获授权的账号由原 PA 提供连接引用并续接。用合成供应商验证独立的叫车确认和读回。记录结果和标识，凭据、邮箱和验证链接留在原系统。
+验收做真实查询和 synthetic 执行。用没有专属飞猪或高德连接的受邀账号，核对机票、酒店、天气、地点和餐厅五项查询。用通用 Action 提交滴滴业务时，核对未开通账号被拒绝，已开通账号由原 PA 提供连接引用并续接。用合成供应商验证独立的叫车确认和读回。记录结果和标识，凭据、邮箱和验证链接留在原系统。
 
 全程使用 `invite`。每个测试账号独立进入 Waiting List，通过审核后授权 Grok。
 

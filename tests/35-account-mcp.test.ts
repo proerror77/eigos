@@ -24,8 +24,8 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
   let g: AccountGateway;
   const f = await fixture({ model: 'synthetic-flight-agent', async run(prompt, tools) {
     assert.deepEqual([...tools.keys()].sort(), ['apply_action', 'complete_with_action', 'complete_with_function', 'complete_with_functions', 'describe_ontology', 'evaluate_function']);
-    await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'readDidiRideWatch', input: {} }), /Permission required: execute_function/);
-    await assert.rejects(tools.get('apply_action')!.invoke({ action: 'EstimateRide', input: route }), /Permission required: apply_action/);
+    await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'annotateGeometry', input: {} }), /Permission required: execute_function/);
+    await assert.rejects(tools.get('apply_action')!.invoke({ action: 'RegisterGeometry', input: {} }), /Permission required: apply_action/);
     if (prompt.includes('组合查航班')) {
       compositionPrompts.push(prompt);
       await tools.get('complete_with_functions')!.invoke({
@@ -130,6 +130,13 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.call('/identity', await g.token('legacy', { azp: 'existing-client', aud: publicUrl }))).status, 403);
     await setGrants(f.db, g.owner('legacy'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.equal((await g.call('/identity', await g.token('legacy', { azp: 'existing-client', aud: publicUrl }))).status, 200);
+    const renewedLegacy = await g.token('legacy', { azp: 'existing-client',
+      scope: 'tasks:read tasks:write ontology:read ontology:write' });
+    assert.deepEqual((await (await g.call('/identity', renewedLegacy)).json()).scopes, ['tasks:read', 'tasks:write']);
+    assert.equal((await g.call('/ontology', renewedLegacy)).status, 403);
+    assert.equal((await g.call('/a2a', renewedLegacy)).status, 403);
+    const limitedLegacy = await g.token('legacy', { azp: 'existing-client', scope: 'tasks:read' });
+    assert.equal((await (await g.call('/identity', limitedLegacy)).json()).reason, 'insufficient_scope');
     const readResult = (result: { content?: unknown }) => JSON.parse((result.content as { text: string }[])[0]!.text);
     const args = { requestId: 'grok-original-request', message: '只查询明天上海到北京的航班' };
     const submission = await aliceMcp.callTool({ name: 'submit_task', arguments: args });
@@ -286,6 +293,20 @@ test('an authorized task-scoped operator can complete a ride quote without submi
     assert.partialDeepStrictEqual(ambiguous.structuredContent, { status: 409 });
     assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
 
+    const renewed = new Client({ name: 'test-renewed-grok-quote', version: '1' });
+    try {
+      await renewed.connect(new StreamableHTTPClientTransport(new URL(g.url + '/mcp'), {
+        requestInit: { headers: { Authorization: 'Bearer ' + await g.token('rider', { azp: 'existing-client' }) } },
+      }));
+      const apply = () => renewed.callTool({ name: 'complete_with_action', arguments: { ...args, requestId: 'renewed-fare-only' } });
+      const firstTask = await apply(), duplicate = await apply();
+      assert(!firstTask.isError && !duplicate.isError, JSON.stringify([firstTask, duplicate]));
+      const queued = JSON.parse((firstTask.content[0] as { text: string }).text);
+      assert.equal(queued.state, 'submitted');
+      assert.equal(JSON.parse((duplicate.content[0] as { text: string }).text).id, queued.id);
+      assert.equal(f.provider.calls.filter(name => name === 'taxi_estimate').length, 1);
+    } finally { await renewed.close(); }
+
     await setGrants(f.db, owner, grants.filter(grant => grant.resource !== 'Eigos/action/EstimateRide'));
     const denied = await quote({ ...args, requestId: 'grok-quote-without-grant' });
     assert.partialDeepStrictEqual(denied.structuredContent, { status: 403 });
@@ -393,7 +414,7 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', alice.token)).status, 403);
     const catalogue = body(await alice.client.callTool({ name: 'describe_ontology', arguments: {} }));
-    assert(!catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
+    assert(catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
     await assert.rejects(alice.client.callTool({ name: 'check_restaurant_availability', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);

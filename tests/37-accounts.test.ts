@@ -276,19 +276,23 @@ test('upgrading the legacy member schema keeps accounts and invitations, and can
   } finally { await f.close(); }
 });
 
-test('account grants cover only the five queries and their result readback', async () => {
+test('the account group exposes shipped business services with no definition administration', async () => {
   const f = await fixture();
   try {
     await syncAccountGrants(f.db, f.model);
     const rows = (await f.db.query(`SELECT resource,permission FROM ${f.db.schema}.resource_grants WHERE subject=$1`, ['group:' + accountGroup])).rows;
     const names = (permission: string) => rows.filter(r => r.permission === permission).map(r => r.resource.split('/').at(-1)!).sort();
-    assert.deepEqual(names('execute_function'), ['findRestaurants', 'readFliggyFlights', 'readFliggyHotels', 'readMapPlace', 'readRestaurantSearch',
-      'readServiceSearch', 'readServiceSearchPages', 'readWeather', 'searchFliggyFlights', 'searchFliggyHotels', 'searchMapPlaces']);
-    assert.deepEqual(names('apply_action'), ['FindRestaurants', 'SearchFliggyFlights', 'SearchFliggyHotels']);
-    assert.deepEqual(names('read_source'), ['Amap', 'Fliggy']);
-    assert.deepEqual(names('view_objects'), ['FliggyFlightOffer', 'FliggyFlightSearch', 'FliggyHotelOffer', 'FliggyHotelSearch', 'RestaurantSearchResult', 'RestaurantSourceVenue']);
+    for (const action of ['FindRestaurants', 'SearchFliggyFlights', 'SearchRollingGoHotels',
+      'BookDidiImmediateRide', 'PlanAmapRoute', 'PrepareTableCheckReservation', 'SearchHemaProducts'])
+      assert.ok(names('apply_action').includes(action), action);
+    assert.ok(names('execute_function').includes('readDidiImmediateRide'));
+    assert.ok(names('view_objects').includes('ActionConfirmation'));
+    assert.ok(names('read_source').includes('Didi'));
     assert.deepEqual(names('view_definition'), ['Eigos']);
-    assert.equal(rows.length, 23);
+    for (const permission of ['edit_definition', 'manage_definition', 'ingest_source', 'migrate_objects'])
+      assert.deepEqual(names(permission), []);
+    assert.ok(!names('apply_action').includes('RegisterGeometry'));
+    assert.ok(!names('read_source').includes('StripeSandbox'));
   } finally { await f.close(); }
 });
 
@@ -302,9 +306,10 @@ test('syncing the account group replaces broad legacy grants and joins a caller 
     assert.deepEqual(await accountGroupGrants(f.db), new Set(broad.map(grantKey)));
     await syncAccountGrants(f.db, f.model);
     const fixed = await accountGroupGrants(f.db);
-    assert.equal(fixed.size, 23);
-    assert(!fixed.has('apply_action:Eigos/action/EstimateRide'));
-    assert(!fixed.has('read_source:Eigos/source/Didi'));
+    assert(fixed.has('apply_action:Eigos/action/EstimateRide'));
+    assert(fixed.has('read_source:Eigos/source/Didi'));
+    assert(!fixed.has('read_source:Eigos/source/StripeSandbox'));
+    assert(!fixed.has('apply_action:Eigos/action/RegisterGeometry'));
   } finally { await f.close(); }
 });
 
@@ -324,7 +329,7 @@ test('after an activation only the business Ontology feeds the account group', a
     assert.deepEqual(await accountGroupGrants(f.db), new Set([grantKey(retired)]));
     // The business Ontology does sync.
     await syncAccountGrantsAfterActivation(f.db, await f.metadata.activate(f.model.release, f.capabilities, deployer));
-    assert.equal((await accountGroupGrants(f.db)).size, 23);
+    assert((await accountGroupGrants(f.db)).has('apply_action:Eigos/action/BookDidiImmediateRide'));
   } finally { await f.close(); }
 });
 

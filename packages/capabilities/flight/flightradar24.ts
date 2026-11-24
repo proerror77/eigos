@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import { flightNumberKey, flightPositionSource, searchFlight } from '../../ontology/flight.js';
 import { flightPositionInput, flightPositionResult } from '../../ontology/flight-position.js';
@@ -57,7 +57,7 @@ export function configuredFlightradar24(path?: string, entrypoint?: string) {
         if (key.length < 16 || key.length > 4096 || /\s/.test(key) || createHash('sha256').update(key).digest('hex') !== binding.keySha256)
           throw new Error('Changed Flightradar24 key');
         return { key, identity: digest(binding) };
-      } catch { throw new Conflict('此账号尚未配置有效的 Flightradar24 连接。'); }
+      } catch { throw new ProviderAuthorizationRequired('Flightradar24', '此账号尚未配置有效的 Flightradar24 连接。'); }
     };
     const { key, identity } = await credentials();
     const server = await serverEntrypoint(entrypoint).catch(() => {

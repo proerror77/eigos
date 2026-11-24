@@ -1,6 +1,6 @@
 import { createCipheriv } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest, SourceReadFailure } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest, SourceReadFailure } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import { gcjPoint } from '../../ontology/maps.js';
 import { restaurantName, type venueFacts } from '../../ontology/restaurant-services.js';
@@ -34,7 +34,7 @@ export async function meituanDining(path: string | undefined, ctx: FunctionConte
       const config = binding.parse(JSON.parse(await readPrivateSourceFile(path)));
       if (!config.active || config.owner !== ctx.principal.owner || Date.parse(config.expiresAt) <= Date.now()) throw new Error();
       return config;
-    } catch { throw new Conflict('Configure authorized Meituan Enterprise dining access for this owner'); }
+    } catch { throw new ProviderAuthorizationRequired('MeituanDining', 'Configure authorized Meituan Enterprise dining access for this owner'); }
   };
   const config = await read(), fingerprint = digest(config), key = Buffer.from(config.aesKey, 'base64url');
   if (key.length !== 16) throw new Conflict('Meituan Enterprise dining requires the issued AES-128 key');

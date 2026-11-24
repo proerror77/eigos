@@ -8,7 +8,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { didiPAReadCapability, didiPAReadTool, didiMcpConsole, didiPAAuthorizeCapability, withDidiPAReads } from '../packages/capabilities/didi/pa-read.js';
-import { didiPAOrderAccountResources, didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
+import { didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
 import { didiPAOrderCapability } from '../packages/capabilities/didi/pa-order.js';
 import { didiEndpoint } from '../packages/capabilities/didi/contracts.js';
 import { DidiPA } from '../packages/sdk/didi-pa.js';
@@ -19,7 +19,7 @@ import { PARequests } from '../packages/runtime/pa.js';
 import { accountGateway } from './account-harness.js';
 import { internalClassification } from '../packages/ontology/classification.js';
 import { privateLocation } from '../packages/ontology/personal-places.js';
-import { digest } from '../packages/core/identity.js';
+import { ProviderAuthorizationRequired, digest } from '../packages/core/identity.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, route } from './fixture.js';
@@ -83,10 +83,7 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
   try {
     f.provider.flags.related = false;
     await syncAccountGrants(f.db, f.model);
-    const grants = businessGrants(f.model).filter(grant => didiPAOrderAccountResources.has(grant.resource));
-    assert.equal(grants.length, didiPAOrderAccountResources.size);
     const user = 'rides', email = 'rides@example.test', owner = g.owner(user);
-    await setGrants(f.db, 'account-actions:' + owner, grants);
     const { cookie } = await g.login(user, email);
     assert(await g.accounts.approveApplication(owner, email));
     const token = (await (await g.form('agent-token', cookie)).text()).match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/)?.[1];
@@ -183,11 +180,11 @@ test('the original invited PA directly reads DiDi and completes the same Action 
     const token = await g.token('pa-ride', { issuedAt: Math.ceil(Date.now() / 1000) });
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url), { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
     const catalogue = await call('describe_ontology');
-    assert(!catalogue.actionTypes.some((x: { apiName: string }) => ['BookDidiImmediateRide', 'BookDidiRideWithEndpoints'].includes(x.apiName)));
+    assert(catalogue.actionTypes.some((x: { apiName: string }) => x.apiName === 'BookDidiImmediateRide'));
     const search = await call('describe_ontology', { query: 'EstimateRide' });
     assert(search.resources.some((x: { apiName: string }) => x.apiName === 'EstimateRide'));
     const targeted = await call('describe_ontology', { names: ['EstimateRide', 'BookDidiImmediateRide'] });
-    assert.deepEqual(targeted.resources.map((x: { apiName: string }) => x.apiName), ['EstimateRide']);
+    assert.deepEqual(targeted.resources.map((x: { apiName: string }) => x.apiName), ['EstimateRide', 'BookDidiImmediateRide']);
     const args = { requestId: randomUUID(),
       action: { interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: route },
       read: { function: 'readRideEstimates', resultParameter: 'request' },
@@ -310,7 +307,7 @@ test('the read-only pilot follows a privately routed original order across two t
       { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
     const access = await Access.load(f.db, { owner, memberAccess: true, scopes: ['tasks:read', 'tasks:write'] });
     const graph = new Objects(f.db, f.model, access);
-    assert(!access.canRead(f.model, 'DidiImmediateRide'));
+    assert(access.canRead(f.model, 'DidiImmediateRide'));
     const orderRead = await access.measureEgress(() => capabilities.functions.invoke(f.model, 'readDidiRideOrder', { order },
       { principal: access.principal, objects: graph, signal: AbortSignal.timeout(5000) }), internalClassification);
     assert.equal((orderRead.result as { orderId: string }).orderId, sourceOrderId);
@@ -341,6 +338,74 @@ test('the read-only pilot follows a privately routed original order across two t
     assert.equal(f.provider.flags.orderCreates, 0);
   } finally {
     await client.close();
+    await g.close();
+    await f.close();
+  }
+});
+
+test('approved accounts can request a provider connection and continue the original Action without sending its key', async () => {
+  let connectedOwner: string | undefined;
+  const f = await fixture(undefined, async (owner, provider) => {
+    if (owner !== connectedOwner || provider !== 'RollingGo')
+      throw new ProviderAuthorizationRequired(provider, 'No owner connection');
+    return {
+      provider, bindingId: 'synthetic-owner-connection', async assertCurrent() {},
+      async read(input) {
+        const page = { items: [], complete: true, cursor: null };
+        return { ...page, provider, bindingId: 'synthetic-owner-connection',
+          observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(),
+          evidence: 'synthetic', inputDigest: digest(input), contentDigest: digest(page) };
+      },
+    };
+  });
+  const g = await accountGateway(f, { signup: 'invite' });
+  const clients: Client[] = [];
+  try {
+    await syncAccountGrants(f.db, f.model);
+    const connect = async (sub: string) => {
+      const email = sub + '@example.test';
+      const { cookie } = await g.login(sub, email);
+      assert(await g.accounts.approveApplication(g.owner(sub), email));
+      const token = (await (await g.form('agent-token', cookie)).text()).match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/)?.[1];
+      assert(token);
+      const client = new Client({ name: sub, version: '1' });
+      clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url), {
+        requestInit: { headers: { Authorization: 'Bearer ' + token } },
+      }));
+      return client;
+    };
+    const original = await connect('hotel-customer'), other = await connect('different-customer');
+    const call = (client: Client, name: string, args: Record<string, unknown>) =>
+      client.callTool({ name, arguments: args });
+    const body = (result: Awaited<ReturnType<typeof call>>) => {
+      assert(!result.isError, JSON.stringify(result));
+      return JSON.parse((result.content[0] as { text: string }).text);
+    };
+    const args = { requestId: 'hotel-authorization-original', action: 'SearchRollingGoHotels',
+      input: { place: '上海', checkIn: '2026-12-30', nights: 1, adults: 1, currency: 'CNY', limit: 5 } };
+    const task = body(await call(original, 'apply_ontology_action', args));
+    assert(await f.worker.runOne('interactive'));
+    const paused = body(await call(original, 'get_task', { taskId: task.id }));
+    assert.equal(paused.state, 'input-required', JSON.stringify(paused));
+    assert.equal(paused.result.capability, 'provider.authorize');
+    assert.equal(paused.result.input.provider, 'RollingGo');
+    assert.equal(paused.result.taskId, task.id);
+    assert.equal(paused.result.responseSchema.additionalProperties, false);
+    const reply = { taskId: task.id, requestId: paused.result.requestId, response: { status: 'connected' } };
+    assert((await call(other, 'respond_to_task', reply)).isError);
+    assert((await call(original, 'respond_to_task', { ...reply, response: { status: 'connected', apiKey: 'test-private-key' } })).isError);
+    connectedOwner = g.owner('hotel-customer');
+    body(await call(original, 'respond_to_task', reply));
+    assert(await f.worker.runOne('interactive'));
+    const done = body(await call(original, 'get_task', { taskId: task.id }));
+    assert.equal(done.state, 'completed', JSON.stringify(done));
+    assert.equal(done.id, task.id);
+    assert.equal(body(await call(original, 'apply_ontology_action', args)).id, task.id);
+    assert((await call(other, 'get_task', { taskId: task.id })).isError);
+    assert.equal((await f.db.query(`SELECT 1 FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id])).rowCount, 0);
+  } finally {
+    for (const client of clients) await client.close();
     await g.close();
     await f.close();
   }

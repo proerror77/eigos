@@ -1,6 +1,6 @@
 import { createCipheriv } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest } from '../../core/identity.js';
 import { waimaiArrival, waimaiArrivalInput, waimaiShops, waimaiShopsInput } from '../../ontology/delivery.js';
 import { locationForService } from '../location.js';
 import { toAmapPoint } from '../amap/functions.js';
@@ -46,10 +46,10 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
       ? async (point, signal) => toAmapPoint(await amap(ctx), point, signal) : undefined);
   };
   const invoke = async (route: keyof typeof routes, input: Record<string, unknown>, ctx: FunctionContext) => {
-    if (!filepath) throw new Conflict('Meituan Enterprise Waimai access is not configured for this owner');
+    if (!filepath) throw new ProviderAuthorizationRequired('MeituanWaimai', 'Meituan Enterprise Waimai access is not configured for this owner');
     const readConfig = async () => configuration.parse(JSON.parse(await readPrivateSourceFile(filepath)));
     const config = await readConfig();
-    if (!config.active || config.owner !== ctx.principal.owner) throw new Conflict('Meituan Waimai connection is unavailable for this owner');
+    if (!config.active || config.owner !== ctx.principal.owner) throw new ProviderAuthorizationRequired('MeituanWaimai', 'Meituan Waimai connection is unavailable for this owner');
     const key = Buffer.from(config.aesKey, 'base64url');
     if (key.length !== 16) throw new Conflict('Meituan Enterprise Waimai requires the supplied AES-128 key');
     const host = config.environment === 'production' ? 'https://api-sqt.meituan.com' : 'https://sqt-api.test.meituan.com';
@@ -74,7 +74,7 @@ export function waimaiFunctions(filepath?: string, fetcher: typeof fetch = fetch
   };
   return new Map<string, FunctionHandler>([
     ['findMeituanWaimaiShops', async (raw, context) => {
-      if (!filepath) throw new Conflict('Meituan Enterprise Waimai access is not configured for this owner');
+      if (!filepath) throw new ProviderAuthorizationRequired('MeituanWaimai', 'Meituan Enterprise Waimai access is not configured for this owner');
       const input = waimaiShopsInput.parse(raw);
       const located = 'latitude' in input
         ? { position: input, requestId: undefined }

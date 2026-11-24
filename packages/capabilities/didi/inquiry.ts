@@ -1,4 +1,4 @@
-import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
+import { Conflict, NotFound, ProviderReadAuthorizationRequired, SourceReadFailure, digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../../ontology/schema.js';
 import { ActionPARequestRequired, CityConfirmationRequired, Clarification, PARequestRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired } from '../../runtime/clarification.js';
 import { privateLocation } from '../../ontology/personal-places.js';
@@ -317,7 +317,7 @@ export function prepareRideInquiry(getSources: () => Sources, getFunctions: () =
       if (typeof name === 'string' && name.trim()) return { name, receipt: await lookup(name.trim()) };
     };
     const sourceFailed = async (error: unknown, stage: 'places' | 'estimate', receipts = saved): Promise<never> => {
-      if (!(error instanceof SourceReadFailure)) throw error;
+      if (!(error instanceof SourceReadFailure) || error instanceof ProviderReadAuthorizationRequired) throw error;
       context.signal.throwIfAborted();
       await context.objects.access.refresh();
       throw new SourceRetryRequired(stage, receipts);

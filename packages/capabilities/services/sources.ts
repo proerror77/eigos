@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { digest, SourceReadFailure } from '../../core/identity.js';
+import { digest, ProviderReadAuthorizationRequired, SourceReadFailure } from '../../core/identity.js';
 import {
   serviceObservation,
   fliggyFlightObservation,
@@ -27,12 +27,10 @@ export interface ServiceSource {
   assertCurrent(): Promise<void>;
 }
 export type ServiceResolver = (owner: string, provider: ServiceName) => Promise<ServiceSource>;
-export class ServiceAuthorizationRequired extends SourceReadFailure {
-  constructor(message: string) { super(message, { unavailable: true }); }
-}
-export const unavailableServices: ServiceResolver = async () => {
+export class ServiceAuthorizationRequired extends ProviderReadAuthorizationRequired {}
+export const unavailableServices: ServiceResolver = async (_owner, provider) => {
   throw new ServiceAuthorizationRequired(
-    'SERVICE_AUTHORIZATION_REQUIRED: configure the owner-scoped service connection',
+    provider, 'SERVICE_AUTHORIZATION_REQUIRED: configure the owner-scoped service connection',
   );
 };
 
@@ -113,7 +111,7 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalog
     if (provider === 'Fliggy' && beta && Date.parse(beta.trialUntil) > Date.now() && await beta.eligible(owner)) {
       return { owner, provider, mode: 'trial', bindingId: 'beta-flyai-trial', active: true, expiresAt: beta.trialUntil };
     }
-    throw new ServiceAuthorizationRequired('SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
+    throw new ServiceAuthorizationRequired(provider, 'SERVICE_AUTHORIZATION_REQUIRED: no owner connection');
   };
   return async (owner, provider) => {
     const binding = await select(owner, provider), fingerprint = digest(binding);
@@ -125,16 +123,16 @@ export function configuredServices(path?: string, flyAIRead?: FlyAIRead, catalog
       if (!('credentialFile' in binding))
         throw new SourceReadFailure('Service connection has no private credential', { unavailable: true });
       const text = await privateFile(binding.credentialFile).catch(() => {
-        throw new SourceReadFailure('Service credential is unavailable', { unavailable: true });
+        throw new ProviderReadAuthorizationRequired(provider, 'Service credential is unavailable');
       });
       if (createHash('sha256').update(text.trim()).digest('hex') !== binding.credentialSha256)
-        throw new SourceReadFailure('Service credential changed', { unavailable: true });
+        throw new ProviderReadAuthorizationRequired(provider, 'Service credential changed');
       return text.trim();
     };
     const assertCurrent = async () => {
       const now = await select(owner, provider);
       if (!binding.active || Date.parse(binding.expiresAt) <= Date.now() || digest(now) !== fingerprint)
-        throw new SourceReadFailure('Service connection expired or was revoked', { unavailable: true });
+        throw new ProviderReadAuthorizationRequired(provider, 'Service connection expired or was revoked');
       if ('credentialFile' in binding) await credential();
     };
     await assertCurrent();

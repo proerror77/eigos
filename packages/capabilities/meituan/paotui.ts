@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest } from '../../core/identity.js';
 import { paotuiAddresses, paotuiInput, paotuiQuote } from '../../ontology/delivery.js';
 import type { FunctionHandler } from '../../runtime/functions.js';
 import { readPrivateSourceFile, yuanToFen } from '../../core/private-source.js';
@@ -32,10 +32,10 @@ type ReadOperation = 'get_address_list' | 'get_address_info' | 'delivery_preview
 
 async function withPaotui<T>(filepath: string | undefined, owner: string, signal: AbortSignal,
   read: (call: (operation: ReadOperation, args?: string[]) => Promise<unknown>) => Promise<T>) {
-  if (!filepath) throw new Conflict('Meituan Paotui requires the owner’s local account connection');
+  if (!filepath) throw new ProviderAuthorizationRequired('MeituanPaotui', 'Meituan Paotui requires the owner’s local account connection');
   const readConnection = async () => connection.parse(JSON.parse(await readPrivateSourceFile(filepath)));
   const config = await readConnection(), fingerprint = digest(config);
-  if (!config.active || config.owner !== owner) throw new Conflict('Meituan Paotui connection is unavailable for this owner');
+  if (!config.active || config.owner !== owner) throw new ProviderAuthorizationRequired('MeituanPaotui', 'Meituan Paotui connection is unavailable for this owner');
   const assertCurrent = async () => {
     signal.throwIfAborted();
     if (digest(await readConnection()) !== fingerprint) throw new Conflict('Meituan Paotui connection changed');

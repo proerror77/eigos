@@ -46,7 +46,8 @@ export class Tasks {
     const input = parseSubmission(raw);
     const invocation = actionInvocation && taskActionSchema.parse(actionInvocation);
     const fingerprint = digest(invocation ? { ...input, actionInvocation: invocation } : input);
-    const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true, paClient: principal.clientId } : {}),
+    const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true } : {}),
+      ...(principal.clientId ? { paClient: principal.clientId } : {}),
       ...(invocation ? { actionInvocation: invocation } : {}) };
     const task = await this.db.transaction(async client => {
       await authorize?.(client);

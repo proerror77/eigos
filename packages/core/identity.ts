@@ -24,6 +24,10 @@ export function requireScope(principal: Principal, scope: string): void {
 export class InvalidInput extends Error {}
 export class PermissionDenied extends Error {}
 export class Conflict extends Error {}
+/** An owner-bound supplier connection is missing, expired, or unauthorized. */
+export class ProviderAuthorizationRequired extends Conflict {
+  constructor(readonly provider: string, message: string) { super(message); }
+}
 export class NotFound extends Error {}
 /** A local runtime dependency is temporarily saturated. The same request can be retried later. */
 export class ServiceUnavailable extends Error {}
@@ -33,4 +37,9 @@ export class SourceReadFailure extends Error {
     super(message, options);
     this.unavailable = options?.unavailable ?? false;
   }
+}
+
+/** Preserve the source-unavailable contract while identifying an authorization requirement. */
+export class ProviderReadAuthorizationRequired extends SourceReadFailure {
+  constructor(readonly provider: string, message: string) { super(message, { unavailable: true }); }
 }

@@ -1,6 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { Conflict, digest } from '../../core/identity.js';
+import { ProviderAuthorizationRequired, Conflict, digest } from '../../core/identity.js';
 import { readPrivateSourceFile } from '../../core/private-source.js';
 import { noteSearch, noteSource, notesResult } from '../../ontology/dining.js';
 import type { FunctionContext } from '../../runtime/functions.js';
@@ -49,7 +49,7 @@ export function configuredNoteSearch(path: string, fetcher: typeof fetch = fetch
         if (token !== undefined && !/^[A-Za-z0-9_.~+/=-]{16,1024}$/.test(token)) throw new Error('Invalid credential');
         return { endpoint: url.href, token, authority: digest([config, token]) };
       } catch {
-        throw new Conflict('The authorized Xiaohongshu search connection is unavailable');
+        throw new ProviderAuthorizationRequired('Xiaohongshu', 'The authorized Xiaohongshu search connection is unavailable');
       }
     };
     const configured = await authorize();
