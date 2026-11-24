@@ -145,8 +145,9 @@ const copyPrompts = `for (const button of document.querySelectorAll('[data-copy-
 }`;
 const copyPromptHash = createHash('sha256').update(copyPrompts).digest('base64');
 
-function setupGuide(mcpUrl: string) {
-  const install = `请帮我在当前客户端添加名为 EIGOS 的远程 MCP 连接器。服务器地址是 ${mcpUrl}。如果我用的是 Grok，请提示我先在 EIGOS 账号页点「授权 Grok」，再回 Grok 完成登录授权。如果使用接入令牌，请指导我在连接器的凭据设置中填写 Authorization，值为 Bearer 加一个空格和我的接入令牌。不要让我把令牌贴到聊天里。如果你无法直接配置，请给我手动操作步骤。连好后请确认 EIGOS 工具是否可用。`;
+function setupGuide(publicUrl: string) {
+  const mcpUrl = new URL('/mcp', publicUrl).href, a2aUrl = new URL('/a2a', publicUrl).href;
+  const install = `请帮我连接 EIGOS Agent。支持 A2A 时使用 ${a2aUrl}，支持远程 MCP 时使用 ${mcpUrl}。使用接入令牌时，请指导我把 Authorization 请求头保存在客户端凭据设置，值为 Bearer 加一个空格和我的令牌。不要让我把令牌贴到聊天里。如果我用 Grok OAuth，请提示我在 EIGOS 账号页点「授权 Grok」，再回 Grok 完成连接。连好后请发起一次只读测试。`;
   const tryQuery = '请通过 EIGOS 查询上海市今天的天气，告诉我天气、气温和数据来源。如果查询失败，告诉我客户端或 EIGOS 返回的错误，不要猜测。';
   const prompt = (id: string, label: string, value: string) => `<div class="card prompt"><label for="${id}">${label}</label>
     <textarea id="${id}" rows="4" readonly>${attribute(value)}</textarea>
@@ -154,16 +155,16 @@ function setupGuide(mcpUrl: string) {
     <span class="copy-status" aria-live="polite"></span></div></div>`;
   return `<section class="setup" aria-labelledby="setup-heading">
     <h2 id="setup-heading">安装 EIGOS</h2>
-    <p>开通后选择一种方式，将 <code>${attribute(mcpUrl)}</code> 添加为远程 MCP。</p>
+    <p>选择你的客户端，连接一次后可在原对话查询和跟进任务。</p>
     <div class="guide-grid">
       <article class="card"><h3>Grok</h3><ol>
         <li>在本页点击「授权 Grok」。</li>
-        <li>打开 <a href="https://grok.com/connectors">Grok 连接器</a>，选择新建自定义连接器，填入上面的地址。</li>
+        <li>打开 <a href="https://grok.com/connectors">Grok 连接器</a>，选择新建自定义连接器，填入 <code>${attribute(mcpUrl)}</code>。</li>
         <li>如果需要 OAuth Client ID，使用授权后本页显示的值。用同一个 EIGOS 账号登录。</li>
       </ol></article>
-      <article class="card"><h3>支持自定义请求头的客户端</h3><ol>
+      <article class="card"><h3>A2A 或支持自定义请求头的 MCP</h3><ol>
         <li>在本页点击「生成接入令牌」。</li>
-        <li>添加远程 HTTP MCP，填入上面的地址。</li>
+        <li>A2A 使用 <code>${attribute(a2aUrl)}</code>。远程 MCP 使用 <code>${attribute(mcpUrl)}</code>。</li>
         <li>在凭据设置中添加请求头 <code>Authorization</code>，值为 <code>Bearer &lt;接入令牌&gt;</code>。</li>
       </ol></article>
     </div>
@@ -254,11 +255,11 @@ export function mountAccountPortal(app: express.Express, config: Config, account
           heading = '验证你的邮箱';
           content = '<p class="actions"><a class="button primary" href="/account/login">已验证，继续登录</a></p>';
         } else {
-          heading = '申请 EIGOS Beta';
+          heading = '接入 EIGOS Beta';
           content = `<p class="lead">开通后，用你常用的 AI 助手查询天气、地点、餐厅、机票和酒店。</p>
-            <p class="actions"><a class="button primary" href="/account/login?signup=1">注册并申请 <span aria-hidden="true">↗</span></a>
-            <a class="secondary" href="/account/login">已有账号，登录</a></p>
-            <p class="lead">用邮箱或 Google 注册。验证邮箱后，回到本页提交申请。</p>`;
+            <p class="actions"><a class="button primary" href="/account/login">邮箱登录 <span aria-hidden="true">↗</span></a>
+            <a class="secondary" href="/account/login?signup=1">首次使用，注册</a></p>
+            <p class="lead">已受邀的邮箱验证后直接开通。其他用户登录后可提交申请。</p>`;
         }
       } else content = '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
     } else if (!account) {
@@ -293,8 +294,8 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       heading = '连接你的 AI 助手';
       const connection = account.has_agent_token
         ? '<p>重新生成后，旧的接入令牌立即失效。</p><button>重新生成接入令牌</button>'
-        : '<button>生成接入令牌</button>';
-      const direct = `<h3>MCP 或 A2A</h3><p>把接入令牌配置到客户端。</p>
+        : '<button class="primary">生成接入令牌</button>';
+      const direct = `<h3>A2A 或 MCP</h3><p>把接入令牌保存到自己 Agent 的客户端凭据设置。</p>
         <form method="post" action="/account/agent-token">${connection}</form>`;
       const oauth = account.revoked_at
         ? '<p>已撤销 Agent 接入。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>'
@@ -304,7 +305,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       const revoke = account.approved_at && !account.revoked_at
         ? '<form method="post" action="/account/revoke"><button>撤销 Agent 接入</button></form>' : '';
       content = `<p class="lead">Beta 账号已开通。</p><div class="connections">
-        <section><h3>Grok OAuth</h3>${oauth}${revoke}</section><section>${direct}</section></div>`;
+        <section>${direct}</section><section><h3>Grok OAuth</h3>${oauth}${revoke}</section></div>`;
     }
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
@@ -318,7 +319,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
     const body = banner + content + resend;
     res.set('Referrer-Policy', 'same-origin').type('html').send(step
-      ? betaAccountPage(heading, body, step, setupGuide(new URL('/mcp', config.PUBLIC_URL).href), footer)
+      ? betaAccountPage(heading, body, step, setupGuide(config.PUBLIC_URL), footer)
       : page(heading, body + footer));
   });
   app.get('/account/login', flowLimit, (req, res) => {
@@ -399,7 +400,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const opened = await accounts.provision(result.owner, emailDigest(result.email));
     const session = await accounts.startSession(result.owner, result.email, previous);
     res.cookie(sessionCookie, session, { ...cookieOptions, maxAge: sessionAge });
-    // An invitation-only deployment opens the account on the page, so `invite_required` needs no status.
+    // Applicants without an email approval continue at the same account page.
     redirect(res, opened === 'signup_closed' ? 'closed' : opened === 'operator_account' ? 'operator' : undefined);
   });
   // Unlike the forms below, this one has no session: the sign-in ended at an unverified email, and only the verify cookie names the user.

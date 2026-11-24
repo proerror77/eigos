@@ -2,6 +2,8 @@ import { AgentCard, Task as A2ATask, type SendMessageRequest, type GetTaskReques
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
 import { UnsupportedOperationError, PushNotificationNotSupportedError, ExtendedAgentCardNotConfiguredError, RequestMalformedError, TaskNotFoundError, TaskNotCancelableError, A2AError } from '@a2a-js/sdk/errors';
 import type { Principal } from '../../packages/core/identity.js';
+import { z } from 'zod';
+import { actionCallSchema, actionResultReadSchema } from '../../packages/ontology/invocation.js';
 import type { Sql } from '../../packages/runtime/database.js';
 import { PARequests } from '../../packages/runtime/pa.js';
 import { Tasks, type Task, type TaskResultProjection } from '../../packages/runtime/tasks.js';
@@ -13,6 +15,10 @@ export class AgentUser implements User {
   get userName() { return this.principal.owner; }
 }
 const states: Record<string, string> = { submitted: 'TASK_STATE_SUBMITTED', working: 'TASK_STATE_WORKING', completed: 'TASK_STATE_COMPLETED', failed: 'TASK_STATE_FAILED', canceled: 'TASK_STATE_CANCELED', 'input-required': 'TASK_STATE_INPUT_REQUIRED' };
+const memberAction = z.strictObject({
+  action: actionCallSchema.safeExtend({ scenarioId: z.never().optional() }),
+  read: actionResultReadSchema.optional(),
+});
 const taskView = (task: Task, projectResult: TaskResultProjection) => {
   const result = projectResult(task.result);
   return A2ATask.fromJSON({ id: task.id, contextId: task.conversation_id ?? task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
@@ -57,8 +63,16 @@ export class A2A implements A2ARequestHandler {
         return new PARequests(this.tasks).respond(principal, message.taskId, data.paResponse, message.contextId || undefined, authorizeSubmission);
       }
       if (principal.memberAccess) {
+        if (message.parts.length === 1 && data) {
+          const invocation = memberAction.safeParse(data);
+          if (!invocation.success) throw new RequestMalformedError('Provide a published Eigos Action and optional result Function');
+          return this.tasks.submit(principal, { requestId: message.messageId, message: 'Execute the selected published Action',
+            conversationId: message.contextId || undefined }, {
+            actionInvocation: invocation.data, authorize: authorizeSubmission,
+          });
+        }
         if (!text.trim() || message.parts.some(part => part.content?.$case !== 'text'))
-          throw new RequestMalformedError('Send a new text request or respond to the existing task');
+          throw new RequestMalformedError('Send a text request, a published Action, or a response to the original task');
         return this.tasks.submit(principal, { requestId: message.messageId, message: text,
           conversationId: message.contextId || undefined }, { assignConversation: true, authorize: authorizeSubmission });
       }

@@ -1,6 +1,8 @@
 # Beta 账号申请与 Agent 接入
 
-用户用 Google 或邮箱密码在 Auth0 注册。账号页只接受带 `email_verified: true` 的签名 ID Token。用户在 `https://<gateway>/account` 提交申请，运营审核后单独提供邀请码。用户兑换邀请码开通 Beta 账号，随后在账号页接入自己的 Agent。开通后的普通账号共用五项 Beta 查询权限。
+用户用 Google 或邮箱密码在 Auth0 登录。账号页只接受带 `email_verified: true` 的签名 ID Token。运营预先批准的邮箱在首次验证登录后自动开通，随后在账号页连接自己的 Agent。其他用户仍可提交申请并兑换邀请码。开通后的普通账号获得五项 Beta 查询权限。
+
+运营先执行 `npm run db:upgrade`，再使用管理角色运行 `npm run account -- approve-email tester@example.test 48`。批准只绑定已验证邮箱，默认 48 小时，最多 168 小时。邮箱匹配时，开户和批准核销同时提交。一个批准只能由一个用户身份核销。待开通的批准可延长。账号建立后照常使用停用和撤销入口。
 
 ## 连接 MCP 或 A2A
 
@@ -8,7 +10,11 @@
 2. 支持自定义 HTTP 请求头的客户端使用 `Authorization: Bearer <接入令牌>`。MCP 地址为 `https://<gateway>/mcp`，A2A 地址为 `https://<gateway>/a2a`，A2A Agent Card 位于 `/.well-known/agent-card.json`。客户端在每次请求自动带上令牌。
 3. MCP 使用 `submit_task` 提交自然语言请求，或用 `apply_ontology_action`、`complete_with_action` 提交已选的已发布业务 Action。两个 Action 入口返回任务，使用 `get_task` 跟进。A2A 使用 `SendMessage` 提交新的文本任务，用 `GetTask` 读取原任务。原 PA 用 `respond_to_task` 或带 `taskId` 和 `paResponse` 的 A2A `SendMessage` 提交原请求要求的响应。账号页可替换或撤销接入令牌。客户端可用 `GET /identity` 核对接入身份。
 
-Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OAuth。账号会话 Cookie 用于账号页。供应商授权和需要用户确认的业务操作沿用原有流程。
+4. A2A 的 `SendMessage` 也可使用单个 `parts[].data`，传入 `{ action: { action: "PublishedAction", input: {...} }, read?: { function, resultParameter } }`。也可在 `action` 内使用 `interface` 选择能力。EIGOS 按账户权限在原任务上执行已发布 Action，调用方复用 `messageId` 可回读同一任务。
+
+组合查询可以直接用 A2A 的文本任务，例如比较两条航线并返回各自结果。EIGOS Agent 在同一任务内并行运行独立的已授权 Function，再把来源结果一并交给调用 Agent。MCP 客户端也可用 `query_ontology` 与 `execute_ontology` 组合读取自己的 EIGOS 对象。业务 Action 在原任务上单独处理授权和确认。[Ontology MCP 授权](https://www.palantir.com/docs/foundry/ontology-mcp/authentication-and-authorization) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+
+Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OAuth。账号会话 Cookie 用于账号页。用户的 Agent 保管自己的 Ontology、模型和供应商连接。EIGOS 的服务连接只接收当前请求所需的数据，任务、会话批次、对象和结果按认证 owner 隔离。EIGOS Worker 自己发起的模型请求使用 EIGOS 服务端凭据，每个任务启动新的模型会话。供应商账号及订单费用按该用户的授权和条款处理。
 
 旧地址 `/members`、其子路径和已配置账号页的站点根路径会转到 `/account`。
 
@@ -36,7 +42,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 | 值 | 新用户 |
 | --- | --- |
 | `open` | 第一次登录账号页，或第一次带着有效的 Grok 令牌访问 Gateway（例如 `/mcp`）时，自动开通账号。 |
-| `invite` | 用户用已验证邮箱提交申请，运营审核并逐个发码。新邀请码绑定申请身份和已验证的邮箱，只能兑换一次。 |
+| `invite` | 预先批准的邮箱验证登录后自动开通。其他用户提交申请，经运营审核后兑换单次邀请码。 |
 | `closed` | 不开新户。 |
 
 `open` 和 `invite` 要求 `EIGOS_ENFORCE_OWNER_RLS=true`。任何模式下，已有的账号都照常使用。
@@ -396,7 +402,7 @@ WHERE subject='group:eigos-accounts' ORDER BY permission, resource;
 
 ### Beta 默认只读服务
 
-兑换邀请码、验证邮箱并启用 Agent 接入后，账号可使用平台启用的默认查询。飞猪默认模式是 FlyAI trial，支持航班和酒店查询。高德应用凭据仅用于天气、地点和餐厅搜索涉及的只读地图接口。已配置给该账号的专属连接优先，专属连接失效时要求恢复该连接。停用账号或撤销 Agent 接入会关闭默认查询。
+获准的邮箱验证登录并启用 Agent 接入后，账号可使用平台启用的默认查询。通过邀请码开通的账号同样适用。飞猪默认模式是 FlyAI trial，支持航班和酒店查询。高德应用凭据仅用于天气、地点和餐厅搜索涉及的只读地图接口。已配置给该账号的专属连接优先，专属连接失效时要求恢复该连接。停用账号或撤销 Agent 接入会关闭默认查询。
 
 Gateway 和 Worker 由运营统一配置：
 
