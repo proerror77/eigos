@@ -24,8 +24,8 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
   let g: AccountGateway;
   const f = await fixture({ model: 'synthetic-flight-agent', async run(prompt, tools) {
     assert.deepEqual([...tools.keys()].sort(), ['apply_action', 'complete_with_action', 'complete_with_function', 'complete_with_functions', 'describe_ontology', 'evaluate_function']);
-    await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'readDidiRideWatch', input: {} }), /Permission required: execute_function/);
-    await assert.rejects(tools.get('apply_action')!.invoke({ action: 'EstimateRide', input: route }), /Permission required: apply_action/);
+    await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'annotateGeometry', input: {} }), /Permission required: execute_function/);
+    await assert.rejects(tools.get('apply_action')!.invoke({ action: 'RegisterGeometry', input: {} }), /Permission required: apply_action/);
     if (prompt.includes('组合查航班')) {
       compositionPrompts.push(prompt);
       await tools.get('complete_with_functions')!.invoke({
