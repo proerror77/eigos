@@ -1,8 +1,8 @@
-# Beta 账号申请与 Agent 接入
+# Beta Waiting List 与 Agent 接入
 
-用户用 Google 或邮箱密码在 Auth0 登录。账号页只接受带 `email_verified: true` 的签名 ID Token。运营预先批准的邮箱在首次验证登录后自动开通，随后在账号页连接自己的 Agent。其他用户仍可提交申请并兑换邀请码。开通后的普通账号获得五项 Beta 查询权限。
+用户用 Google 或邮箱密码在 Auth0 登录。账号页仅接受带 `email_verified: true` 的签名 ID Token。首次验证登录后自动加入 Waiting List，客户在账号页查看审核状态。审核通过后，刷新同一页即可连接 Agent。
 
-运营先执行 `npm run db:upgrade`，再使用管理角色运行 `npm run account -- approve-email tester@example.test 48`。批准只绑定已验证邮箱，默认 48 小时，最多 168 小时。邮箱匹配时，开户和批准核销同时提交。一个批准只能由一个用户身份核销。待开通的批准可延长。账号建立后照常使用停用和撤销入口。
+运营用管理角色运行 `npm run account -- applications` 查看待审核名单。审核原记录后执行 `npm run account -- approve-waitlist <owner> <verified-email>`。开户与审核记录在同一事务提交并绑定已审核的身份和邮箱。重复批准同一账号可安全重试。已发出且有效的旧邀请码仍可兑换。
 
 ## 连接 MCP 或 A2A
 
@@ -42,7 +42,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 | 值 | 新用户 |
 | --- | --- |
 | `open` | 第一次登录账号页，或第一次带着有效的 Grok 令牌访问 Gateway（例如 `/mcp`）时，自动开通账号。 |
-| `invite` | 预先批准的邮箱验证登录后自动开通。其他用户提交申请，经运营审核后兑换单次邀请码。 |
+| `invite` | 验证登录后自动进入 Waiting List。运营审核对应的账号和邮箱后开通。 |
 | `closed` | 不开新户。 |
 
 `open` 和 `invite` 要求 `EIGOS_ENFORCE_OWNER_RLS=true`。任何模式下，已有的账号都照常使用。
@@ -93,7 +93,7 @@ Grok 等支持现有 Auth0 OAuth 客户端配置的 MCP 客户端仍可使用 OA
 
 邀请制和开放注册都要求开启 owner 隔离。暂时不能开启的部署设置 `EIGOS_SIGNUP=closed`：已有账号照常使用，不开新户。
 
-已有 `/account` 的部署沿用现有 Auth0 应用、回调和密钥。备份 schema 后停掉运行进程，再执行 `npm run db:upgrade` 和下文的 Gateway 运行角色授权。仍有效的旧邀请码可以继续兑换。启动后普通账号按固定 Beta 权限运行。重启后核对 `invite` 模式，并验证申请、发码和相互隔离的任务。以下完整步骤用于首次配置账号页或从早期 `/members` 版本升级。
+已有 `/account` 的部署沿用现有 Auth0 应用、回调和密钥。备份 schema 后停掉运行进程，再执行 `npm run db:upgrade` 和下文的 Gateway 运行角色授权。仍有效的旧邀请码可以继续兑换。启动后普通账号按固定 Beta 权限运行。重启后核对 `invite` 模式，并验证自动入队、审核放行和相互隔离的任务。以下完整步骤用于首次配置账号页或从早期 `/members` 版本升级。
 
 全新部署没有旧版本：跳过第 4 步，第 5 步用 `npm run db:init`，其余相同。
 
@@ -370,6 +370,7 @@ Gateway 角色不授予 `status`、`suspended_at` 和 `suspended_reason` 的 UPD
 | `npm run account -- suspend <owner\|email> <理由…>` | 停用账号。理由 1 至 200 个字符，可以写多个词。 |
 | `npm run account -- restore <owner\|email>` | 恢复停用的账号。 |
 | `npm run account -- applications [offset]` | 查看申请的邮箱、用途、owner 和邀请有效期，每次最多 100 条。 |
+| `npm run account -- approve-waitlist <owner> <verified-email>` | 开通已审核的申请人，核对身份和邮箱。 |
 | `npm run account:invite -- <owner\|email> [小时]` | 为该申请签发一次性邀请码，默认 48 小时，可设 1 至 168 小时。 |
 | `npm run access:grant-business -- <owner>` | 把指定 owner 名下的全部授权，整体替换成当前定义的业务授权，不是追加。以后新增的能力不会自动加上。只对不走账号路径的 owner 有意义，例如运营者或本地开发身份 `local-developer`；账号的授权由 `group:eigos-accounts` 决定。对持有 `manage_definition` 的运营者或发布者（默认是 `deployment`，可用 `EIGOS_PUBLISHER_SUBJECT` 改）执行，会撤掉它的 `manage_definition`。 |
 
@@ -402,7 +403,7 @@ WHERE subject='group:eigos-accounts' ORDER BY permission, resource;
 
 ### Beta 默认只读服务
 
-获准的邮箱验证登录并启用 Agent 接入后，账号可使用平台启用的默认查询。通过邀请码开通的账号同样适用。飞猪默认模式是 FlyAI trial，支持航班和酒店查询。高德应用凭据仅用于天气、地点和餐厅搜索涉及的只读地图接口。已配置给该账号的专属连接优先，专属连接失效时要求恢复该连接。停用账号或撤销 Agent 接入会关闭默认查询。
+客户验证登录并通过审核，启用 Agent 接入后，账号可使用平台启用的默认查询。通过邀请码开通的账号同样适用。飞猪默认模式是 FlyAI trial，支持航班和酒店查询。高德应用凭据仅用于天气、地点和餐厅搜索涉及的只读地图接口。已配置给该账号的专属连接优先，专属连接失效时要求恢复该连接。停用账号或撤销 Agent 接入会关闭默认查询。
 
 Gateway 和 Worker 由运营统一配置：
 
@@ -464,7 +465,7 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 | `reason` | `error` | 含义和处理 |
 | --- | --- | --- |
 | `signup_closed` | `EIGOS sign-up is closed` | `closed` 模式，账号不存在。要开放注册，改 `EIGOS_SIGNUP`。 |
-| `invite_required` | `Redeem an EIGOS invitation on the account page first` | `invite` 模式，账号还没开通。发邀请码。 |
+| `invite_required` | `Sign in on the account page to join the EIGOS waiting list. Access opens after review.` | 新账号等待审核。 |
 | `operator_account` | `Operator accounts use their existing client` | 这个 owner 有 `Eigos` 定义授权，是运营者。继续使用原来的客户端令牌。 |
 | `account_suspended` | `This EIGOS account is suspended` | 账号已停用。运营者确认后 `npm run account -- restore`。 |
 | `client_not_allowed` | `This client is not allowed for EIGOS accounts` | 令牌不是 Grok 公共客户端（`OAUTH_MEMBER_MCP_CLIENT_ID`）为 MCP audience 签发的，也不是运营者用原有客户端签发的。令牌本身合格时，访问 `/mcp` 和 `/identity` 以外的路径也是这个原因：Grok OAuth 令牌只能用这两个路径。通用接入令牌只可使用 `/mcp`、`/a2a` 和 `/identity`。 |
@@ -500,9 +501,9 @@ Gateway 按下表的顺序检查，第一个不通过的就是返回的 `reason`
 
 验收做真实查询和 synthetic 执行。用没有专属飞猪或高德连接的受邀账号，核对机票、酒店、天气、地点和餐厅五项查询。用通用 Action 提交滴滴业务时，核对未获业务授权的账号被拒绝，获授权的账号由原 PA 提供连接引用并续接。用合成供应商验证独立的叫车确认和读回。记录结果和标识，凭据、邮箱和验证链接留在原系统。
 
-全程使用 `invite`。每个测试账号独立申请、兑换邀请码和授权 Grok。
+全程使用 `invite`。每个测试账号独立进入 Waiting List，通过审核后授权 Grok。
 
-1. 用新 Google 账号注册并提交申请。运营在 `applications` 查到申请后单独发码。兑换后 `account show` 返回 `active`。
+1. 使用合成身份完成验证登录。账号页显示 Waiting List，运营在 `applications` 查到记录后用 `approve-waitlist` 审核放行。随后 `account show` 返回 `active`。
 2. 用新邮箱加密码注册。验证前只看到验证提示。验证后，使用其他邮箱的申请应被拒绝。使用已验证邮箱申请后，另一个账号无法兑换该申请的码，重发后旧码失效。
 3. 用同一个邮箱换另一种方式登录，按合并页提示用原来的方式登录。合并后仍使用原 owner，原来授权过 Grok 的账号显示「重新授权 Grok」。
 4. 先在账号页授权 Grok，再在 Grok Bot 里添加连接并问一次只读航班查询。用原 `taskId` 读回结果，结果带来源证据，并在同一对话交付。

@@ -12,7 +12,7 @@ import { seal, unseal } from '../apps/gateway/sealed-cookie.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
 import { setGrants } from '../packages/runtime/access.js';
-import { Accounts } from '../packages/runtime/accounts.js';
+import { Accounts, emailDigest, hasBetaReadAccess } from '../packages/runtime/accounts.js';
 import { portalEnv } from './account-env.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture } from './fixture.js';
@@ -230,7 +230,7 @@ test('sign-up modes, operators and identity problems each show their own status'
     assert.equal((await closed.login('bob', 'bob@example.test')).location, '/account?status=closed');
     assert.equal(await closed.accounts.account(closed.owner('bob')), undefined);
     const carol = await invite.login('carol', 'carol@example.test');
-    assert.match(await invite.page(carol.cookie), /开通账号/);
+    assert.match(await invite.page(carol.cookie), /你已加入 Waiting List/);
     assert.equal((await invite.form('activate', carol.cookie, new URLSearchParams({ code: 'x'.repeat(43) }))).headers.get('location'), '/account?status=invite');
     await setGrants(f.db, open.owner('operator'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.equal((await open.login('operator', 'ops@example.test')).location, '/account?status=operator');
@@ -376,7 +376,7 @@ test('the account page shows where each account stands', async () => {
     const landing = await inviteLanding.text();
     assert.match(landing, /class="button primary" href="\/account\/login">邮箱登录/);
     assert.match(landing, /href="\/account\/login\?signup=1">首次使用，注册<\/a>/);
-    assert.match(landing, /预先获准的邮箱验证后直接开通/);
+    assert.match(landing, /验证邮箱后自动加入 Waiting List/);
     assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>验证邮箱并登录/);
     assert.doesNotMatch(landing, /审核后使用邀请码开通/);
     assert.match(landing, /id="install-prompt"[^>]+readonly>[^<]+https:\/\/127\.0\.0\.1\/mcp/);
@@ -391,11 +391,10 @@ test('the account page shows where each account stands', async () => {
     // The same session can be read by gateways with another sign-up mode: it is a login without an account.
     const carol = await invite.login('carol', 'carol@example.test');
     const applicationPage = await invite.page(carol.cookie);
-    assert.match(applicationPage, /id="account-heading">提交 Beta 申请<\/h1>/);
-    assert.match(applicationPage, /aria-current="step">\s*<span[^>]+>02<\/span><span[^>]+>填写用途并提交申请/);
-    assert.match(applicationPage, /action="\/account\/apply"[\s\S]+<button class="primary">提交申请<\/button>/);
-    assert.match(applicationPage, /<summary>我已有邀请码<\/summary>/);
-    assert.match(applicationPage, /复制安装提示词/);
+    assert.match(applicationPage, /id="account-heading">你已加入 Waiting List<\/h1>/);
+    assert.match(applicationPage, /aria-current="step">\s*<span[^>]+>02<\/span><span[^>]+>Waiting List · 等待审核/);
+    assert.doesNotMatch(applicationPage, /action="\/account\/(apply|activate|agent-token|approve)"/);
+    assert.doesNotMatch(applicationPage, /复制安装提示词/);
     assert.match(await open.page(carol.cookie), /账号还没有开通，请重新登录。/);
     assert.match(await closed.page(carol.cookie), /目前暂停注册新账号。/);
     await setGrants(f.db, open.owner('olivia'), [{ resource: 'Eigos', permission: 'view_definition' }]);
@@ -417,25 +416,41 @@ test('the account page shows where each account stands', async () => {
   } finally { await open.close(); await invite.close(); await closed.close(); await f.close(); }
 });
 
-test('an email approval opens a single Beta account on verified login without an application or a code', async () => {
+test('verified sign-in joins the waitlist and opens Agent controls only after the reviewed account is approved', async () => {
   const f = await fixture(), invite = await accountGateway(f, { signup: 'invite' });
   try {
-    const email = 'onboard@example.test';
-    assert.equal(await invite.accounts.approveEmail(email.toUpperCase(), 24), true);
+    const email = 'onboard@example.test', owner = invite.owner('onboard');
+    assert.equal(await invite.accounts.approveApplication(owner, email), false);
+    const hash = emailDigest(email);
+    // An unused approval left by the previous release cannot bypass the new queue.
+    await f.db.query(`INSERT INTO ${f.schema}.member_invitations(code_hash,email_hash,expires_at,automatic)
+      VALUES($1,$2,now()+interval '1 day',true)`, [digest(['verified-email-beta-approval', hash]), hash]);
     const unverified = await invite.login('onboard', email, { verified: false });
     assert.equal(unverified.location, '/account?status=verify');
-    assert.equal(await invite.accounts.account(invite.owner('onboard')), undefined);
-    const wrong = await invite.login('someone-else', 'different@example.test');
-    assert.match(await invite.page(wrong.cookie), /提交 Beta 申请/);
+    assert.deepEqual(await invite.accounts.applications(), []);
+    assert.equal(await invite.accounts.account(owner), undefined);
     const { cookie } = await invite.login('onboard', email);
-    const landing = await invite.page(cookie);
+    assert.match(await invite.page(cookie), /你已加入 Waiting List/);
+    assert.equal((await invite.form('agent-token', cookie)).status, 403);
+    assert.equal((await invite.call('/identity', await invite.token('onboard'))).status, 403);
+    const pending = await invite.accounts.applications();
+    assert.deepEqual(pending.map(application => [application.owner, application.email]), [[owner, email]]);
+    const repeated = await invite.login('onboard', email);
+    assert.deepEqual(await invite.accounts.applications(), pending);
+    assert.equal(await invite.accounts.approveApplication(owner, 'other@example.test'), false);
+    assert.equal(await invite.accounts.approveApplication(owner, email.toUpperCase()), true);
+    const landing = await invite.page(repeated.cookie);
     assert.match(landing, /Beta 账号已开通/);
     assert.doesNotMatch(landing, /action="\/account\/(apply|activate)"/);
-    assert.equal((await invite.form('agent-token', cookie)).status, 200);
-    const duplicate = await invite.login('second-subject', email);
-    assert.match(await invite.page(duplicate.cookie), /提交 Beta 申请/);
-    assert.equal(await invite.accounts.approveEmail(email, 24), false);
+    assert.equal(await hasBetaReadAccess(f.db, owner), false);
+    assert.equal((await invite.form('agent-token', repeated.cookie)).status, 200);
+    assert.equal(await hasBetaReadAccess(f.db, owner), true);
+    assert.equal(await invite.accounts.approveApplication(owner, email), true);
     assert.equal((await invite.accounts.applications()).length, 0);
+    const duplicate = await invite.login('second-subject', email);
+    assert.match(await invite.page(duplicate.cookie), /你已加入 Waiting List/);
+    await assert.rejects(invite.accounts.approveApplication(invite.owner('second-subject'), email), /already approved/);
+    assert.equal(await invite.accounts.account(invite.owner('second-subject')), undefined);
   } finally { await invite.close(); await f.close(); }
 });
 
@@ -467,9 +482,9 @@ test('form posts need the portal origin and a session, and activation reports op
     assert.equal((await invite.accounts.applications()).length, 1);
     const accountPage = () => fetch(invite.url + '/account', { headers: { Cookie: carol.cookie } }).then(res => res.text());
     const pending = await accountPage();
-    assert.match(pending, /申请已提交/);
-    assert.match(pending, /等待运营审核/);
-    assert.match(pending, /aria-current="step">\s*<span[^>]+>03<\/span>/);
+    assert.match(pending, /你已加入 Waiting List/);
+    assert.match(pending, /正在等待审核/);
+    assert.match(pending, /aria-current="step">\s*<span[^>]+>02<\/span>/);
     assert.doesNotMatch(pending, /action="\/account\/apply"/);
     const mine = await invite.accounts.invite('carol@example.test', 1);
     assert.match(await accountPage(), /申请已通过/);
@@ -615,7 +630,7 @@ test('every refusal names its reason and only a missing scope adds a challenge',
   const refusedAs = (error: string, reason: string) => ({ status: 403, challenge: null, body: { error, reason, account: '/account' } });
   try {
     assert.deepEqual(await answer(invite, '/mcp', await invite.token('ivan')),
-      refusedAs('Sign in on the account page with your approved email, or redeem an EIGOS invitation', 'invite_required'));
+      refusedAs('Sign in on the account page to join the EIGOS waiting list. Access opens after review.', 'invite_required'));
     await setGrants(f.db, open.owner('olga'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.deepEqual(await answer(open, '/mcp', await open.token('olga')), refusedAs('Operator accounts use their existing client', 'operator_account'));
     const notAllowed = refusedAs('This client is not allowed for EIGOS accounts', 'client_not_allowed');

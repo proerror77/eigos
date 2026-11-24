@@ -96,20 +96,18 @@ const styles = `
   }
 `;
 
-const connectionSteps = ['验证邮箱并登录', '连接自己的 Agent', '在对话中使用'] as const;
-const applicationSteps = ['注册并验证邮箱', '填写用途并提交申请', '审核后使用邀请码开通', '连接 AI 助手并试用'] as const;
-export type BetaStep = 1 | 2 | 3 | 4;
+const steps = ['验证邮箱并登录', 'Waiting List · 等待审核', '连接自己的 Agent'] as const;
+export type BetaStep = 1 | 2 | 3;
 
 export function betaAccountPage(heading: string, content: string, step: BetaStep, guide: string, footer: string) {
-  const steps = step === 2 || step === 3 ? applicationSteps : connectionSteps;
-  const currentStep = step === 4 ? 2 : step;
-  const timeline = steps.map((label, index) => `<li${index + 1 === currentStep ? ' aria-current="step"' : ''}>
+  const timeline = steps.map((label, index) => `<li${index + 1 === step ? ' aria-current="step"' : ''}>
     <span class="step-number" aria-hidden="true">0${index + 1}</span><span class="step-label">${label}</span></li>`).join('');
   return `<!doctype html>
   <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>EIGOS 账号</title><style>${styles}</style></head><body>
   <header><div class="shell masthead"><a href="/account" class="brand">EIGOS</a>
-    <nav aria-label="本页导航"><a href="#setup-heading">安装与提示词 <span aria-hidden="true">↘</span></a></nav></div></header>
+    ${guide ? '<nav aria-label="本页导航"><a href="#setup-heading">安装与提示词 <span aria-hidden="true">↘</span></a></nav>' : ''}
+  </div></header>
   <main class="shell">
     <section class="hero" aria-labelledby="account-heading">
       <div class="hero-main"><h1 id="account-heading">${heading}</h1>${content}</div>

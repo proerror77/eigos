@@ -47,10 +47,11 @@ else {
       console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
       const args = process.argv.slice(3);
-      if (args[0] === 'approve-email') {
-        const email = z.email().parse(args[1]);
-        const hours = z.coerce.number().int().min(1).max(168).parse(args[2] ?? 48);
-        const approved = await new Accounts(db, signupMode()).approveEmail(email, hours);
+      if (args[0] === 'approve-waitlist') {
+        const owner = z.string().regex(/^[a-f0-9]{64}$/).parse(args[1]);
+        const email = z.email().parse(args[2]);
+        const approved = await new Accounts(db, signupMode()).approveApplication(owner, email);
+        if (!approved) throw new Error('No matching eligible waitlist application');
         console.log(JSON.stringify({ approved }));
       } else if (args[0] === 'grant-amap-observations') {
         const active = await metadata.active('Eigos');

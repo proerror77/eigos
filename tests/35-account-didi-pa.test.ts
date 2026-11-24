@@ -24,7 +24,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, route } from './fixture.js';
 
-test('an email-approved rider starts a DiDi Action over A2A and confirms one order on the original task', async () => {
+test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one order on the original task', async () => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });
   const client = new Client({ name: 'private-didi-pa', version: '1' });
   const directory = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-fixture-'));
@@ -87,8 +87,8 @@ test('an email-approved rider starts a DiDi Action over A2A and confirms one ord
     assert.equal(grants.length, didiPAOrderAccountResources.size);
     const user = 'rides', email = 'rides@example.test', owner = g.owner(user);
     await setGrants(f.db, 'account-actions:' + owner, grants);
-    assert(await g.accounts.approveEmail(email, 1));
     const { cookie } = await g.login(user, email);
+    assert(await g.accounts.approveApplication(owner, email));
     const token = (await (await g.form('agent-token', cookie)).text()).match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/)?.[1];
     assert(token);
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url),

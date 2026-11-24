@@ -63,7 +63,7 @@ const paTravelInstructions = [
 /** What an agent is told when an account token is refused. English, for machine clients; the reason code is the stable part. */
 const refusal: Record<Denial, string> = {
   signup_closed: 'EIGOS sign-up is closed',
-  invite_required: 'Sign in on the account page with your approved email, or redeem an EIGOS invitation',
+  invite_required: 'Sign in on the account page to join the EIGOS waiting list. Access opens after review.',
   operator_account: 'Operator accounts use their existing client',
   account_suspended: 'This EIGOS account is suspended',
   client_not_allowed: 'This client is not allowed for EIGOS accounts',
