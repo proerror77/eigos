@@ -2,7 +2,7 @@ import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { digest, PermissionDenied, type Principal } from '../core/identity.js';
-import { betaQueryActions } from '../ontology/beta-queries.js';
+import { betaQueryActions, operatorResources } from '../ontology/account-services.js';
 import { allowsClassification, classificationSchema, combineClassification, internalClassification, marksClassification, sensitivityRank, type Classification } from '../ontology/classification.js';
 import { documentChunkType, documentType } from '../ontology/documents.js';
 import { businessDefinition } from '../ontology/definition.js';
@@ -34,12 +34,6 @@ function accountServiceGrantKeys() {
   return accountGrantKeys ??= new Set(businessGrants(new Ontology(businessDefinition))
     .filter(grant => !operatorResources.has(grant.resource)).map(grantKey));
 }
-const operatorResources = new Set([
-  'Eigos/object/OntologyScenario',
-  'Eigos/action/RegisterGeometry', 'Eigos/action/AnnotateGeometry', 'Eigos/function/annotateGeometry',
-  'Eigos/source/DidiPetRideSandbox', 'Eigos/action/PreparePetRideHandoff', 'Eigos/action/RecordPetRideReceipt',
-  'Eigos/function/preparePetRideHandoff', 'Eigos/function/recordPetRideReceipt',
-]);
 
 const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
 const accountActionPermissions = new Set<Permission>(['view_objects', 'apply_action', 'execute_function', 'read_source']);
