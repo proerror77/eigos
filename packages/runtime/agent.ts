@@ -1,7 +1,7 @@
 import { ObjectSets, evaluateSetViewSchema, aggregateSetViewSchema, saveSetSchema } from './object-sets.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, digest, requireScope } from '../core/identity.js';
+import { Conflict, digest, InvalidInput, requireScope } from '../core/identity.js';
 import { bindOperationTiming, timeOperation } from '../core/operation-timing.js';
 import { combineClassification, internalClassification, isProtected } from '../ontology/classification.js';
 import { appendTrace, type TraceEvent } from './execution-trace.js';
