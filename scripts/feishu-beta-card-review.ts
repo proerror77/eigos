@@ -75,7 +75,7 @@ export class FeishuReviewCards {
   private async request(path: string, method: 'POST' | 'PATCH', body: unknown) {
     const response = await this.fetcher(api + path, { method, redirect: 'error', signal: AbortSignal.timeout(10000),
       headers: { Authorization: 'Bearer ' + await this.accessToken(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const result = z.object({ code: z.number(), data: z.unknown() }).parse(await response.json());
+    const result = z.object({ code: z.number(), data: z.unknown().optional() }).parse(await response.json());
     if (!response.ok || result.code !== 0) throw new Error(`Feishu card request failed (HTTP ${response.status}, code ${result.code})`);
     return result.data;
   }
