@@ -4,6 +4,16 @@
 
 运营用管理角色运行 `npm run account -- applications` 查看待审核名单。审核原记录后执行 `npm run account -- approve-waitlist <owner> <verified-email>`。开户与审核记录在同一事务提交并绑定已审核的身份和邮箱。重复批准同一账号可安全重试。已发出且有效的旧邀请码仍可兑换。
 
+### 飞书审批卡片
+
+审批服务用同一个已获准的飞书企业应用发卡和更新原卡片。客户进入 Waiting List 后，待审核卡片会发给配置的单一审批人。卡片回传经过飞书签名和应用身份验证，且必须匹配原消息、申请和审批人的 Open ID。确认点击后先显示「已收到批准，正在开通」，EIGOS 实际开通后才把原卡片改为「已开通」。[飞书回调签名](https://open.feishu.cn/document/event-subscription-guide/callback-subscription/receive-and-handle-callbacks) · [飞书卡片接口](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1)
+
+运行角色沿用受控的候补审核权限。管理角色先运行 `node dist/scripts/feishu-beta-card-review.js --initialize` 建立卡片关联表。向审核运行角色授予该表的 SELECT、INSERT 和 UPDATE，申请及资源权限表的只读权限，以及 `approve-waitlist` 使用的账号建立与邀请核销权限。Gateway 无需授予审核权限。
+
+审核服务使用 `DATABASE_URL`、`EIGOS_PG_SCHEMA`、`EIGOS_SIGNUP=invite` 和 `EIGOS_FEISHU_BETA_CARD_FILE`。配置文件是由服务账号持有的私有绝对路径，字段包括 `appId`、`reviewerOpenId`、`appSecretFile`、`verificationTokenFile`、`encryptKeyFile` 和可选 `port`，默认为 3261。三个凭据文件也须在私有绝对路径。审批人 Open ID 取自同一个飞书应用。
+
+用 `node dist/scripts/feishu-beta-card-review.js` 常驻运行。服务监听 loopback。入口只把 HTTPS 路径 `/callbacks/feishu/beta-review` 转到该监听器。飞书后台在「回调配置」订阅卡片回传交互并填写该 HTTPS 地址，原消息事件仍由原服务收取。将服务放到待命后，通过飞书 URL 验证，再发布应用配置并用合成申请验证「待审核 → 已开通」及原卡更新。同一个 Feishu `uuid` 在提供方允许的去重时间内重试，无法确认早期发卡结果时由运营核对原聊天和关联表。
+
 ## 连接 MCP 或 A2A
 
 1. 登录账号页，点「生成接入令牌」。页面仅这一次显示完整令牌。把它保存到客户端的凭据配置。
