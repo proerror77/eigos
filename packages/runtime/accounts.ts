@@ -95,8 +95,9 @@ export class Accounts {
   async applicationStatus(session: VerifiedSession): Promise<'pending' | 'invited' | undefined> {
     const s = this.db.schema;
     return (await this.db.query<{ status: 'pending' | 'invited' }>(`SELECT CASE WHEN EXISTS (
-      SELECT 1 FROM ${s}.member_invitations i WHERE i.applicant_owner=a.owner AND i.email_hash=a.email_hash
-        AND i.redeemed_by IS NULL AND i.expires_at>now()
+      SELECT 1 FROM ${s}.member_invitations i WHERE i.email_hash=a.email_hash
+        AND (i.applicant_owner=a.owner OR i.applicant_owner IS NULL)
+        AND NOT i.automatic AND i.redeemed_by IS NULL AND i.expires_at>now()
       ) THEN 'invited' ELSE 'pending' END AS status
       FROM ${s}.account_applications a WHERE a.owner=$1 AND a.email_hash=$2`,
     [session.owner, session.email_hash])).rows[0]?.status;
@@ -142,14 +143,25 @@ export class Accounts {
     });
   }
 
-  /** An operator approves an email before its first sign-in. An unused approval may be extended. */
-  async approveEmail(email: string, hours: number) {
-    if (this.signup !== 'invite') throw new InvalidInput('Email approvals require invite sign-up mode');
-    const hash = emailDigest(email), table = `${this.db.schema}.member_invitations`;
-    return Boolean((await this.db.query(`INSERT INTO ${table}(code_hash,email_hash,expires_at,automatic)
-      VALUES($1,$2,now()+$3::int*interval '1 hour',true)
-      ON CONFLICT(code_hash) DO UPDATE SET expires_at=GREATEST(${table}.expires_at,excluded.expires_at)
-      WHERE ${table}.automatic AND ${table}.redeemed_by IS NULL`, [emailApprovalId(hash), hash, hours])).rowCount);
+  /** Open the exact verified account an operator reviewed. The receipt enables the existing Beta grants. */
+  async approveApplication(owner: string, email: string) {
+    if (this.signup !== 'invite') throw new InvalidInput('Waitlist approval requires invite sign-up mode');
+    const hash = emailDigest(email), s = this.db.schema, table = `${s}.member_invitations`;
+    return this.db.transaction(async client => {
+      await this.lockApplication(owner, client);
+      const application = await this.db.query(`SELECT 1 FROM ${s}.account_applications WHERE owner=$1 AND email_hash=$2`,
+        [owner, hash], client);
+      if (!application.rowCount || await this.isOperator(owner, client)) return false;
+      const existing = await this.account(owner, client);
+      if (existing) return existing.status === 'active' && existing.email_hash === hash;
+      await this.db.query(`INSERT INTO ${s}.accounts(owner,email_hash) VALUES($1,$2)`, [owner, hash], client);
+      const approved = await this.db.query(`INSERT INTO ${table}(code_hash,email_hash,expires_at,automatic,applicant_owner,redeemed_by)
+        VALUES($1,$2,now(),true,$3,$3)
+        ON CONFLICT(code_hash) DO UPDATE SET applicant_owner=$3,redeemed_by=$3
+        WHERE ${table}.automatic AND ${table}.redeemed_by IS NULL`, [emailApprovalId(hash), hash, owner], client);
+      if (!approved.rowCount) throw new InvalidInput('This email was already approved for a different account');
+      return true;
+    });
   }
 
   private async lockApplication(owner: string, client: Sql) {
@@ -207,24 +219,7 @@ export class Accounts {
         RETURNING ${accountColumns}`, [owner, emailHash], client)).rows[0] ?? existing;
     }
     if (await this.isOperator(owner, client)) return 'operator_account';
-    if (this.signup === 'invite') {
-      if (!emailHash) return 'invite_required';
-      const redeem = async (connection: Sql): Promise<Account | ProvisionRefusal> => {
-        await this.lockApplication(owner, connection);
-        const current = await this.account(owner, connection);
-        if (current) return current;
-        const approvalId = emailApprovalId(emailHash);
-        const approval = await this.db.query(`SELECT 1 FROM ${s}.member_invitations
-          WHERE code_hash=$1 AND email_hash=$2 AND automatic AND redeemed_by IS NULL AND expires_at>now() FOR UPDATE`,
-        [approvalId, emailHash], connection);
-        if (!approval.rowCount) return 'invite_required';
-        const account = (await this.db.query<Account>(`INSERT INTO ${s}.accounts(owner,email_hash) VALUES($1,$2)
-          RETURNING ${accountColumns}`, [owner, emailHash], connection)).rows[0]!;
-        await this.db.query(`UPDATE ${s}.member_invitations SET redeemed_by=$2 WHERE code_hash=$1`, [approvalId, owner], connection);
-        return account;
-      };
-      return client ? redeem(client) : this.db.transaction(redeem);
-    }
+    if (this.signup === 'invite') return 'invite_required';
     if (this.signup === 'closed') return 'signup_closed';
     // A concurrent first login or first request for the same owner converges on the same row.
     return (await this.db.query<Account>(`INSERT INTO ${s}.accounts(owner,email_hash) VALUES($1,$2)

@@ -259,7 +259,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
           content = `<p class="lead">开通后，用你常用的 AI 助手查询天气、地点、餐厅、机票和酒店。</p>
             <p class="actions"><a class="button primary" href="/account/login">邮箱登录 <span aria-hidden="true">↗</span></a>
             <a class="secondary" href="/account/login?signup=1">首次使用，注册</a></p>
-            <p class="lead">预先获准的邮箱验证后直接开通。其他用户登录后可提交申请。</p>`;
+            <p class="lead">验证邮箱后自动加入 Waiting List。审核通过后，回到本页连接 Agent。</p>`;
         }
       } else content = '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
     } else if (!account) {
@@ -269,28 +269,24 @@ export function mountAccountPortal(app: express.Express, config: Config, account
         const activation = `<form class="beta-form" method="post" action="/account/activate">
           <label>邀请码 <input name="code" autocomplete="off" maxlength="43" required></label>
           <button class="primary">开通账号</button></form>`;
-        const enterCode = `<details${status === 'invite' ? ' open' : ''}><summary>我已有邀请码</summary>${activation}</details>`;
-        step = application ? 3 : 2;
+        step = 2;
         if (application === 'invited') {
           heading = '申请已通过';
-          content = `<p class="lead">输入运营提供的邀请码，开通你的 EIGOS 账号。</p>${activation}`;
+          content = `<p class="lead">使用此前收到的邀请码开通你的 EIGOS 账号。</p>${activation}`;
         } else if (application === 'pending') {
-          heading = '申请已提交';
-          content = `<p class="lead">正在等待运营审核。通过后，用收到的邀请码在本页开通。</p>${enterCode}`;
+          heading = '你已加入 Waiting List';
+          content = '<p class="lead">正在等待审核。通过后，回到本页就可以连接 Agent。</p>' +
+            '<p class="actions"><a class="button primary" href="/account">查看审核状态</a></p>';
         } else {
-          heading = '提交 Beta 申请';
-          content = `<form class="beta-form" method="post" action="/account/apply">
-              <label>已验证的登录邮箱 <input type="email" name="email" autocomplete="email" maxlength="254" required></label>
-              <label>你想用 EIGOS 做什么？<textarea name="purpose" maxlength="300" rows="3" required placeholder="例如，查酒店和附近的餐厅"></textarea></label>
-              <p class="lead">审核通过后，运营会单独提供邀请码。</p>
-              <button class="primary">提交申请</button>
-            </form>${enterCode}`;
+          heading = '加入 Waiting List';
+          content = '<p class="lead">用已验证的邮箱重新登录，即可加入 Waiting List。</p>' +
+            '<p class="actions"><a class="button primary" href="/account/login">继续登录</a></p>';
         }
       } else if (config.EIGOS_SIGNUP === 'closed') { explains = 'closed'; content = `<p>${statuses.closed}</p>`; }
       else content = '<p>账号还没有开通，请重新登录。</p>';
     } else if (account.status === 'suspended') content = '<p>这个账号已停用，请联系 EIGOS 支持。</p>';
     else {
-      step = 4;
+      step = 3;
       heading = '连接你的 AI 助手';
       const connection = account.has_agent_token
         ? '<p>重新生成后，旧的接入令牌立即失效。</p><button>重新生成接入令牌</button>'
@@ -313,13 +309,14 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const resend = status === 'verify' && management
       ? '<form method="post" action="/account/resend-verification"><button>重新发送验证邮件</button></form>' : '';
     const footer = session ? '<form method="post" action="/account/logout"><button>退出登录</button></form>' : '';
-    if (step) {
+    const guide = step === 1 || step === 3 ? setupGuide(config.PUBLIC_URL) : '';
+    if (guide) {
       res.set('Content-Security-Policy', `${portalPolicy}; script-src 'sha256-${copyPromptHash}'`);
     }
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
     const body = banner + content + resend;
     res.set('Referrer-Policy', 'same-origin').type('html').send(step
-      ? betaAccountPage(heading, body, step, setupGuide(config.PUBLIC_URL), footer)
+      ? betaAccountPage(heading, body, step, guide, footer)
       : page(heading, body + footer));
   });
   app.get('/account/login', flowLimit, (req, res) => {
@@ -397,10 +394,14 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       res.cookie(verifyCookie, seal(secret, 'verify', { subject: result.subject }, verifyTtl), { ...cookieOptions, maxAge: verifyTtl });
       redirect(res, 'verify'); return;
     }
-    const opened = await accounts.provision(result.owner, emailDigest(result.email));
+    const emailHash = emailDigest(result.email);
+    const opened = await accounts.provision(result.owner, emailHash);
+    if (opened === 'invite_required') {
+      await accounts.apply({ owner: result.owner, email_hash: emailHash }, result.email, '');
+    }
     const session = await accounts.startSession(result.owner, result.email, previous);
     res.cookie(sessionCookie, session, { ...cookieOptions, maxAge: sessionAge });
-    // Applicants without an email approval continue at the same account page.
+    // Return to the page with the waitlist state or active account controls.
     redirect(res, opened === 'signup_closed' ? 'closed' : opened === 'operator_account' ? 'operator' : undefined);
   });
   // Unlike the forms below, this one has no session: the sign-in ended at an unverified email, and only the verify cookie names the user.
