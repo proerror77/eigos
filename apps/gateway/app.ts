@@ -215,16 +215,17 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     const selected = capabilities.actions.resolve(access, model, input);
     return capabilities.actions.apply(access, model, selected.action, selected.input, input.requestId);
   };
+  const checkQuoteAction = (model: PublishedOntology, name: string) => {
+    const action = model.action(name);
+    if (name !== 'EstimateRide' || action.function !== 'prepareRideInquiry' || action.rules?.length || action.effects?.length)
+      throw new PermissionDenied('The published quote-only Action is unavailable');
+  };
   const completeWithAction = async (req: Request, input: z.infer<typeof completeWithActionRequestSchema>, quoteOnly = false) => {
     const p = principal(req);
     for (const scope of quoteOnly ? accountTaskScopes : ['ontology:read', 'ontology:write']) requireScope(p, scope);
     const access = await Access.load(db, p), model = await modelFor(p, undefined, input.action.scenarioId, access, input.ontology);
     const selected = capabilities.actions.resolve(access, model, input.action);
-    if (quoteOnly) {
-      const action = model.action(selected.action);
-      if (selected.action !== 'EstimateRide' || action.function !== 'prepareRideInquiry' || action.rules?.length || action.effects?.length)
-        throw new PermissionDenied('The published quote-only Action is unavailable');
-    }
+    if (quoteOnly) checkQuoteAction(model, selected.action);
     const complete = () => capabilities.actions.complete(
       access, model, selected, input.requestId, input.read, undefined, AbortSignal.timeout(30000),
     );
@@ -389,12 +390,19 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       return completeRestaurantRead(access, model, requestId, 'availability', { ...input, venue, channel: 'provider' });
     }));
     if (quoteOnly) server.registerTool('complete_with_action', {
-      description: 'Return a DiDi fare estimate in one call when both venues and the city are known. This call uses RideInquiry.estimate and reads its verified result.',
+      description: p.memberAudience
+        ? 'Start the original DiDi fare inquiry. Poll the returned task ID and respond to any PA request.'
+        : 'Return a DiDi fare estimate in one call when both venues and the city are known. This call uses RideInquiry.estimate and reads its verified result.',
       inputSchema: rideQuoteRequestSchema,
     }, input => response(() => {
       if (!p.memberAudience) return completeWithAction(req, input, true);
       return tasks.submit(p, { requestId: input.requestId, message: 'Get a DiDi fare estimate' }, {
         actionInvocation: { action: input.action, read: input.read },
+        admit: async (client, model) => {
+          const access = await Access.load(db, p, client);
+          const selected = capabilities.actions.resolve(access, model, input.action);
+          checkQuoteAction(model, selected.action);
+        },
       }).then(publicTask);
     }));
     const runCode = async (code: string, requestId?: string) => {
