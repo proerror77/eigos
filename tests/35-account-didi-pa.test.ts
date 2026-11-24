@@ -24,7 +24,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, route } from './fixture.js';
 
-test('a Beta rider connects their own DiDi PA and confirms one order on the original MCP task', async () => {
+test('an email-approved rider starts a DiDi Action over A2A and confirms one order on the original task', async () => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });
   const client = new Client({ name: 'private-didi-pa', version: '1' });
   const directory = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-fixture-'));
@@ -87,18 +87,27 @@ test('a Beta rider connects their own DiDi PA and confirms one order on the orig
     assert.equal(grants.length, didiPAOrderAccountResources.size);
     const user = 'rides', email = 'rides@example.test', owner = g.owner(user);
     await setGrants(f.db, 'account-actions:' + owner, grants);
+    assert(await g.accounts.approveEmail(email, 1));
     const { cookie } = await g.login(user, email);
-    await g.form('apply', cookie, new URLSearchParams({ email, purpose: 'Order rides using my PA' }));
-    await g.form('activate', cookie, new URLSearchParams({ code: await g.accounts.invite(owner, 1) }));
-    await g.form('approve', cookie);
-    const token = await g.token(user, { issuedAt: Math.ceil(Date.now() / 1000) });
+    const token = (await (await g.form('agent-token', cookie)).text()).match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/)?.[1];
+    assert(token);
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url),
       { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));
-    const args = { requestId: randomUUID(),
+    const actionRequest = {
       action: { interface: { type: 'ImmediateRideBooking', action: 'book', implementation: 'DidiImmediateRide' }, input: route },
       read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
     };
-    const task = await call('complete_with_action', args);
+    const a2a = async (method: string, params: unknown) => {
+      const response = await fetch(g.url + '/a2a', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      const json = await response.json();
+      assert.equal(response.status, 200);
+      assert(!json.error, JSON.stringify(json.error));
+      return json.result;
+    };
+    const message = { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: actionRequest }] };
+    const { task } = await a2a('SendMessage', { message });
     const auth = await finishResponse(task.id, didiPAAuthorizeCapability);
     const signal = AbortSignal.timeout(20000);
     const noDidi = new DidiPA({ ontology: adapter, privateDirectory: directory });
@@ -136,7 +145,8 @@ test('a Beta rider connects their own DiDi PA and confirms one order on the orig
     assert.equal(done.result.order.orderId, orderId);
     assert.equal(done.result.order.evidence, 'pa_reported');
     assert.equal(done.result.order.independentRead, true);
-    assert.equal((await call('complete_with_action', args)).id, task.id);
+    assert.equal((await a2a('SendMessage', { message })).task.id, task.id);
+    assert.equal((await a2a('GetTask', { id: task.id })).artifacts[0].parts[0].data.order.orderId, orderId);
     assert.equal(await worker.runOne('interactive'), false);
     assert.deepEqual([sent, checked], [1, 1]);
     const recorded = await f.db.query(`SELECT state FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id]);

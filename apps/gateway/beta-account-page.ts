@@ -96,11 +96,14 @@ const styles = `
   }
 `;
 
-const steps = ['注册并验证邮箱', '填写用途并提交申请', '审核后使用邀请码开通', '连接 AI 助手并试用'] as const;
+const connectionSteps = ['验证邮箱并登录', '连接自己的 Agent', '在对话中使用'] as const;
+const applicationSteps = ['注册并验证邮箱', '填写用途并提交申请', '审核后使用邀请码开通', '连接 AI 助手并试用'] as const;
 export type BetaStep = 1 | 2 | 3 | 4;
 
 export function betaAccountPage(heading: string, content: string, step: BetaStep, guide: string, footer: string) {
-  const timeline = steps.map((label, index) => `<li${index + 1 === step ? ' aria-current="step"' : ''}>
+  const steps = step === 2 || step === 3 ? applicationSteps : connectionSteps;
+  const currentStep = step === 4 ? 2 : step;
+  const timeline = steps.map((label, index) => `<li${index + 1 === currentStep ? ' aria-current="step"' : ''}>
     <span class="step-number" aria-hidden="true">0${index + 1}</span><span class="step-label">${label}</span></li>`).join('');
   return `<!doctype html>
   <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

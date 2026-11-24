@@ -351,7 +351,7 @@ test('the account page shows where each account stands', async () => {
     assert.doesNotMatch(session, /Domain=/i);
     const fresh = await open.page(erin.cookie);
     assert.match(fresh, /Beta 账号已开通。/);
-    assert.match(fresh, /<button>生成接入令牌<\/button>/);
+    assert.match(fresh, /<button class="primary">生成接入令牌<\/button>/);
     assert.match(fresh, /<button>授权 Grok<\/button>/);
     assert.match(fresh, /复制安装提示词/);
     assert.match(fresh, /复制首条测试提示词/);
@@ -374,10 +374,11 @@ test('the account page shows where each account stands', async () => {
 
     const inviteLanding = await fetch(invite.url + '/account');
     const landing = await inviteLanding.text();
-    assert.match(landing, /class="button primary" href="\/account\/login\?signup=1">注册并申请/);
-    assert.match(landing, /href="\/account\/login">已有账号，登录<\/a>/);
-    assert.match(landing, /验证邮箱后，回到本页提交申请/);
-    assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>注册并验证邮箱/);
+    assert.match(landing, /class="button primary" href="\/account\/login">邮箱登录/);
+    assert.match(landing, /href="\/account\/login\?signup=1">首次使用，注册<\/a>/);
+    assert.match(landing, /预先获准的邮箱验证后直接开通/);
+    assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>验证邮箱并登录/);
+    assert.doesNotMatch(landing, /审核后使用邀请码开通/);
     assert.match(landing, /id="install-prompt"[^>]+readonly>[^<]+https:\/\/127\.0\.0\.1\/mcp/);
     assert.match(landing, /id="query-prompt"[^>]+readonly>[^<]+上海市今天的天气/);
     assert.doesNotMatch(landing, /action="\/account\/(apply|agent-token|approve)"/);
@@ -414,6 +415,28 @@ test('the account page shows where each account stands', async () => {
     assert.ok(out.headers.getSetCookie().some(value => value.startsWith('__Host-eigos-account=;')));
     assert.doesNotMatch(await open.page(erin.cookie), /退出登录/, 'logging out ends the session on the server');
   } finally { await open.close(); await invite.close(); await closed.close(); await f.close(); }
+});
+
+test('an email approval opens a single Beta account on verified login without an application or a code', async () => {
+  const f = await fixture(), invite = await accountGateway(f, { signup: 'invite' });
+  try {
+    const email = 'onboard@example.test';
+    assert.equal(await invite.accounts.approveEmail(email.toUpperCase(), 24), true);
+    const unverified = await invite.login('onboard', email, { verified: false });
+    assert.equal(unverified.location, '/account?status=verify');
+    assert.equal(await invite.accounts.account(invite.owner('onboard')), undefined);
+    const wrong = await invite.login('someone-else', 'different@example.test');
+    assert.match(await invite.page(wrong.cookie), /提交 Beta 申请/);
+    const { cookie } = await invite.login('onboard', email);
+    const landing = await invite.page(cookie);
+    assert.match(landing, /Beta 账号已开通/);
+    assert.doesNotMatch(landing, /action="\/account\/(apply|activate)"/);
+    assert.equal((await invite.form('agent-token', cookie)).status, 200);
+    const duplicate = await invite.login('second-subject', email);
+    assert.match(await invite.page(duplicate.cookie), /提交 Beta 申请/);
+    assert.equal(await invite.accounts.approveEmail(email, 24), false);
+    assert.equal((await invite.accounts.applications()).length, 0);
+  } finally { await invite.close(); await f.close(); }
 });
 
 test('form posts need the portal origin and a session, and activation reports operators and closed sign-up', async () => {
@@ -592,7 +615,7 @@ test('every refusal names its reason and only a missing scope adds a challenge',
   const refusedAs = (error: string, reason: string) => ({ status: 403, challenge: null, body: { error, reason, account: '/account' } });
   try {
     assert.deepEqual(await answer(invite, '/mcp', await invite.token('ivan')),
-      refusedAs('Redeem an EIGOS invitation on the account page first', 'invite_required'));
+      refusedAs('Sign in on the account page with your approved email, or redeem an EIGOS invitation', 'invite_required'));
     await setGrants(f.db, open.owner('olga'), [{ resource: 'Eigos', permission: 'view_definition' }]);
     assert.deepEqual(await answer(open, '/mcp', await open.token('olga')), refusedAs('Operator accounts use their existing client', 'operator_account'));
     const notAllowed = refusedAs('This client is not allowed for EIGOS accounts', 'client_not_allowed');

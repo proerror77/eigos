@@ -47,7 +47,12 @@ else {
       console.log(await new Accounts(db, signupMode()).invite(target, hours));
     } else if (command === 'account') {
       const args = process.argv.slice(3);
-      if (args[0] === 'grant-amap-observations') {
+      if (args[0] === 'approve-email') {
+        const email = z.email().parse(args[1]);
+        const hours = z.coerce.number().int().min(1).max(168).parse(args[2] ?? 48);
+        const approved = await new Accounts(db, signupMode()).approveEmail(email, hours);
+        console.log(JSON.stringify({ approved }));
+      } else if (args[0] === 'grant-amap-observations') {
         const active = await metadata.active('Eigos');
         const grants = businessGrants(active).filter(grant => amapObservationAccountResources.has(grant.resource));
         if (grants.length !== amapObservationAccountResources.size) throw new Error('The published Amap Action contract is incomplete');
@@ -67,9 +72,15 @@ else {
         const resources = args[0] === 'grant-didi-pa-orders' ? didiPAOrderAccountResources : didiPAAccountResources;
         const grants = businessGrants(active).filter(grant => resources.has(grant.resource));
         if (grants.length !== resources.size) throw new Error('The published DiDi pilot contract is incomplete');
+        let subject = 'group:' + accountActionsGroup;
+        if (args[1]) {
+          const account = await new Accounts(db, signupMode()).find(z.union([z.email(), z.string().regex(/^[a-f0-9]{64}$/)]).parse(args[1]));
+          if (account?.status !== 'active') throw new Error('An active Beta account is required');
+          subject = 'account-actions:' + account.owner;
+        }
         await db.query(`INSERT INTO ${db.schema}.resource_grants(subject,resource,permission)
           SELECT $1,resource,permission FROM jsonb_to_recordset($2::jsonb) AS g(resource text,permission text)
-          ON CONFLICT DO NOTHING`, ['group:' + accountActionsGroup, JSON.stringify(grants)]);
+          ON CONFLICT DO NOTHING`, [subject, JSON.stringify(grants)]);
         console.log(JSON.stringify({ release: active.release, grants: grants.length }));
       } else console.log(JSON.stringify(await accountCommand(db, signupMode(), args)));
     } else if (command === 'provision-public-places') {

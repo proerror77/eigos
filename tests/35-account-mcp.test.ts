@@ -12,24 +12,31 @@ import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-const accountMcpTools = ['apply_ontology_action', 'complete_with_action', 'describe_ontology', 'get_task', 'respond_to_task',
+const accountMcpTools = ['apply_ontology_action', 'complete_with_action', 'describe_ontology', 'execute_ontology', 'get_task', 'query_ontology', 'respond_to_task',
   'search_restaurants', 'select_task_places', 'submit_task', 'supply_task_input'];
 
 test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const flight = { origin: 'SHA', destination: 'PEK', departureDate, limit: 1 };
+  const secondFlight = { ...flight, origin: 'PVG' };
   const sourceReaders: string[] = [];
+  const compositionPrompts: string[] = [];
   let g: AccountGateway;
-  const f = await fixture({ model: 'synthetic-flight-agent', async run(_prompt, tools) {
-    assert.deepEqual([...tools.keys()].sort(), ['apply_action', 'complete_with_action', 'complete_with_function', 'describe_ontology', 'evaluate_function']);
+  const f = await fixture({ model: 'synthetic-flight-agent', async run(prompt, tools) {
+    assert.deepEqual([...tools.keys()].sort(), ['apply_action', 'complete_with_action', 'complete_with_function', 'complete_with_functions', 'describe_ontology', 'evaluate_function']);
     await assert.rejects(tools.get('evaluate_function')!.invoke({ function: 'readDidiRideWatch', input: {} }), /Permission required: execute_function/);
     await assert.rejects(tools.get('apply_action')!.invoke({ action: 'EstimateRide', input: route }), /Permission required: apply_action/);
-    await tools.get('complete_with_function')!.invoke({ function: 'readFliggyFlights', input: flight });
+    if (prompt.includes('组合查航班')) {
+      compositionPrompts.push(prompt);
+      await tools.get('complete_with_functions')!.invoke({
+        reads: [flight, secondFlight].map(input => ({ function: 'readFliggyFlights', input })),
+      });
+    } else await tools.get('complete_with_function')!.invoke({ function: 'readFliggyFlights', input: flight });
   } }, async (actor, provider) => {
     assert([g.owner('alice'), g.owner('bob')].includes(actor));
     assert.equal(provider, 'Fliggy');
     return { provider, bindingId: 'synthetic-fliggy', async assertCurrent() {}, async read(input) {
-      assert.deepEqual(input, flight);
+      assert.deepEqual(input, input.origin === secondFlight.origin ? secondFlight : flight);
       sourceReaders.push(actor);
       const items = [{
         nativeId: 'synthetic-flight', name: 'MU5101', url: 'https://example.test/synthetic-flight', priceDisplay: '500 CNY', adultFareDisplay: null,
@@ -90,15 +97,15 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.form('agent-token', bob.cookie)).status, 403);
     assert.equal((await g.form('activate', bob.cookie, new URLSearchParams({ code: bobCode }))).headers.get('location'), '/account');
     assert.equal((await g.form('agent-token', bob.cookie, new URLSearchParams(), 'https://other.example')).status, 403);
-    const issue = async () => {
-      const response = await g.form('agent-token', bob.cookie);
+    const issue = async (cookie = bob.cookie) => {
+      const response = await g.form('agent-token', cookie);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       const html = await response.text();
       assert.match(html, /<code>https:\/\/127\.0\.0\.1\/a2a<\/code>/);
       const match = html.match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/);
       assert(match?.[1], 'a Beta account receives its credential once');
-      assert(!(await g.page(bob.cookie)).includes(match[1]));
+      assert(!(await g.page(cookie)).includes(match[1]));
       return match[1];
     };
     const bobToken = await issue();
@@ -164,6 +171,33 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal(a2aResult.state, 'completed');
     assert.equal(a2aResult.result.items[0].name, 'MU5101');
     assert.deepEqual(sourceReaders, [g.owner('alice'), g.owner('bob'), g.owner('bob')]);
+    const alicePortable = await issue(alice.cookie);
+    const markers = ['fixture-alpha', 'fixture-bravo'] as const;
+    const ids = await Promise.all(markers.map(async (marker, index) => {
+      const response = await a2a('SendMessage', { message: {
+        contextId: 'same-context-on-two-agents', messageId: 'same-delivery-id', role: 'ROLE_USER',
+        parts: [{ text: '组合查航班 ' + marker }],
+      } }, index === 0 ? alicePortable : bobToken);
+      assert.equal(response.status, 200);
+      return response.body.result.task.id;
+    }));
+    assert.notEqual(ids[0], ids[1]);
+    const compositionDeadline = Date.now() + 5000;
+    for (const _ of ids) {
+      while (!await f.worker.runOne()) {
+        assert(Date.now() < compositionDeadline, 'The A2A composition did not reach the worker');
+        await delay(25);
+      }
+    }
+    const composites = await Promise.all(ids.map((taskId, index) =>
+      a2a('GetTask', { id: taskId }, index === 0 ? alicePortable : bobToken)));
+    for (const { body } of composites) {
+      assert.equal(body.result.status.state, 'TASK_STATE_COMPLETED');
+      assert.equal(body.result.artifacts[0].parts[0].data.results.length, 2);
+    }
+    assert.equal(compositionPrompts.length, 2);
+    assert(compositionPrompts.every(prompt => markers.filter(marker => prompt.includes(marker)).length === 1));
+    assert((await a2a('GetTask', { id: ids[0] })).body.error);
     assert.equal(f.provider.flags.orderCreates, 0);
     assert.equal((await g.form('revoke', alice.cookie)).status, 303);
     for (const [name, args] of [['get_task', { taskId: id }], ['submit_task', { requestId: 'after-revoke', message: '只查航班' }]] as const) {
@@ -339,6 +373,13 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual(result.outcomes, [{ provider: 'Amap', status: 'observed', count: 1 }]);
     assert.equal(result.venues[0].name, '咖啡店');
     assert.equal(result.venues[0].evidence, 'provider_mock');
+    const code = `async ({ query }) => {
+      const [searches, venues] = await Promise.all([query({ type: "RestaurantSearchResult" }), query({ type: "RestaurantSourceVenue" })]);
+      return { searches: searches.items.length, venues: venues.items.length };
+    }`;
+    assert.deepEqual(body(await alice.client.callTool({ name: 'execute_ontology', arguments: { code } })), { searches: 1, venues: 1 });
+    assert.deepEqual(body(await bob.client.callTool({ name: 'execute_ontology', arguments: { code } })), { searches: 0, venues: 0 });
+    assert.deepEqual(body(await alice.client.callTool({ name: 'query_ontology', arguments: { query: { type: 'DidiRideOrder' } } })).items, []);
     assert.deepEqual(body(await search(alice.client)), result);
     assert.equal((await search(alice.client, { ...input, query: '烧烤' })).isError, true);
     assert.equal((await search(alice.client, { ...input, providers: ['TableCheck'] })).isError, true);
