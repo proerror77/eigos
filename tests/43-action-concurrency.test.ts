@@ -9,7 +9,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { withOperationTiming } from '../packages/core/operation-timing.js';
 import { lockEdits, objectLinks } from '../packages/runtime/scenario-store.js';
-import { fixture, principal } from './fixture.js';
+import { fixture, principal, route as rideRoute } from './fixture.js';
 
 const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type', 'id'], additionalProperties: false };
 const route = (id: string): ObjectRef => ({ type: 'Route', id });
@@ -32,8 +32,11 @@ async function concurrency() {
   const swallowed = { ...rename, apiName: 'StageSwallowedRename', description: 'Rename after ignoring a failed set query' };
   const pair = { apiName: 'StageTwoRenames', description: 'Rename two routes in the given order', version: '1', parameters: pairInput,
     returns: reference, edits: true, dependencies: { objectTypes: ['Route'] } };
+  const departure = { apiName: 'StageDepartureIfRoom', description: 'Add a departing route while the place has room', version: '1',
+    parameters: { type: 'object', properties: { route: reference, place: reference }, required: ['route', 'place'], additionalProperties: false },
+    returns: reference, edits: true, dependencies: { objectTypes: ['Route', 'Place'], linkTypes: ['RouteOrigin'] } };
   const document = structuredClone(f.model.document);
-  document.functionTypes.push(rename, claim, origin, raw, swallowed, pair);
+  document.functionTypes.push(rename, claim, origin, raw, swallowed, pair, departure);
   document.actionTypes.push(
     { apiName: 'RenameRouteConcurrently', description: 'Rename one route', parameters: renameInput, objectParameters: { route: 'Route' },
       submissionCriteria: [], function: rename.apiName },
@@ -46,6 +49,8 @@ async function concurrency() {
       objectParameters: { route: 'Route' }, submissionCriteria: [], function: swallowed.apiName },
     { apiName: 'RenameTwoRoutes', description: 'Rename two routes in order', parameters: pairInput, objectParameters: {},
       submissionCriteria: [], function: pair.apiName },
+    { apiName: 'AddDepartureIfRoom', description: 'Depart from a place that takes one route', parameters: departure.parameters,
+      objectParameters: {}, submissionCriteria: [], function: departure.apiName },
   );
   let pairArrivals = 0, releasePair!: () => void;
   const pairBarrier = new Promise<void>(resolve => { releasePair = resolve; });
@@ -77,6 +82,14 @@ async function concurrency() {
       return context.edit!(target, async graph => {
         try { await graph.query({ type: 'Route' }); } catch { /* the commit must still rerun exclusively */ }
         await graph.edit(target, Number(args.revision), { name: String(args.name) });
+      });
+    } },
+    { definition: departure, implementationId: 'stage-departure-if-room-v1', handler: async (args, context) => {
+      const [target, place] = [args.route as ObjectRef, args.place as ObjectRef];
+      return context.edit!(target, async graph => {
+        const departing = await graph.queryStored({ type: 'Route', from: { object: place, link: 'departingRoutes' }, limit: 100 });
+        if (departing.items.length >= 1) throw new Conflict('The place is at capacity');
+        await graph.link({ type: 'RouteOrigin', from: target, to: place });
       });
     } },
     { definition: pair, implementationId: 'stage-two-renames-v1', handler: async (args, context) => {
@@ -352,4 +365,49 @@ test('two commits that lock the same objects in opposite order both commit after
     assert.equal(names[0], names[1], 'the later commit renamed both routes');
     assert.equal((await f.graph.read(route('left'))).revision, 3);
   } finally { await f.close(); }
+});
+
+test('a synchronous ride estimate commits on object locks, including its linked derived properties', async () => {
+  const f = await fixture();
+  try {
+    const selected = f.capabilities.actions.resolve(f.access, f.model, {
+      interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: rideRoute,
+    });
+    let profile!: DatabaseProfile;
+    await profileDatabase(async measured => { profile = measured;
+      await f.capabilities.actions.complete(f.access, f.model, selected, 'object-scoped-quote',
+        { function: 'readRideEstimates', resultParameter: 'request' }, undefined, AbortSignal.timeout(15000)); });
+    assert.equal(profile.commitFallbacks, 0, 'the quote commit must not need the exclusive lock');
+  } finally { await f.close(); }
+});
+
+test('a commit that would lock more objects than its budget reruns with the exclusive lock', async () => {
+  const f = await concurrency();
+  try {
+    const rows = Array.from({ length: 300 }, (_, index) => ({ ref: route('budget-' + index), properties: { id: 'budget-' + index, name: 'bulk' } }));
+    let profile!: DatabaseProfile;
+    await profileDatabase(async measured => { profile = measured;
+      await f.db.objectScopedTransaction(async client => { await new Objects(f.db, f.model, f.access, client).ingestBatch(rows, 'default'); }, 'BulkIngest'); });
+    assert.equal(profile.commitFallbacks, 1);
+    assert.equal((await f.graph.read(route('budget-299'))).properties.name, 'bulk');
+  } finally { await f.close(); }
+});
+
+test('two commits that check one place\'s relationships before adding to it never exceed its capacity', async () => {
+  const f = await concurrency(), holder = holdCommit();
+  try {
+    const place = { type: 'Place', id: 'gate' };
+    await f.graph.create(place, { id: 'gate', name: 'Gate', city: 'Shanghai', address: 'A', coordinates: { lat: 31, lng: 121 },
+      coordinateSystem: 'GCJ02', sourceBinding: 'test', observedAt: new Date().toISOString() });
+    for (const id of ['first-leg', 'second-leg']) await f.graph.create(route(id), { id, name: id });
+    const first = f.apply('AddDepartureIfRoom', { route: route('first-leg'), place }, 'departure-first', holder.beforeCommit);
+    await holder.inside;
+    const second = f.apply('AddDepartureIfRoom', { route: route('second-leg'), place }, 'departure-second');
+    await delay(300);
+    holder.release();
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.match(String((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason), /at capacity/);
+    assert.equal((await f.graph.follow(place, 'departingRoutes')).length, 1);
+  } finally { holder.release(); await f.close(); }
 });

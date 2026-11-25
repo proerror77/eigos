@@ -33,6 +33,11 @@ export class ExclusiveScopeRequired extends Error {
   constructor(readonly reason: string) { super(`Object-scoped commit needs the exclusive edit lock: ${reason}`); }
 }
 interface ObjectScope { held: Map<string, 'shared' | 'exclusive'>; escalated?: string }
+/**
+ * Object locks one object-scoped transaction may hold. Advisory locks share PostgreSQL's lock table with every
+ * session, so a larger commit takes the exclusive owner lock instead of exhausting it.
+ */
+export const objectLockBudget = 128;
 /** Tables whose rows object locks protect; statements on them must come from code that took those locks. */
 const ontologyData = /\.(?:objects|links|source_values|object_edits|edit_history|scenario_objects|scenario_links)\b/;
 
@@ -115,6 +120,8 @@ export class Database {
   }
   /** Whether this transaction shares the owner's Ontology edit lock because it locks the objects it touches. */
   sharesEditLocks(client: Sql) { return this.sharedEditLocks.has(client); }
+  /** Object locks one object-scoped transaction may hold before it reruns with the exclusive owner lock. */
+  get objectLockBudget() { return objectLockBudget; }
   /** Whether this transaction locks the objects it touches instead of the whole owner. */
   objectScoped(client: Sql) { return this.objectScopes.has(client); }
   /** Runs Ontology data statements that the caller has covered with object locks. */
@@ -138,6 +145,8 @@ export class Database {
       return !held || mode === 'exclusive' && held === 'shared';
     }).sort();
     if (!needed.length) return;
+    if (scope.held.size + needed.filter(key => !scope.held.has(key)).length > objectLockBudget)
+      this.requireExclusive(client, 'object lock budget');
     const lock = mode === 'exclusive' ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
     await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
     for (const key of needed) scope.held.set(key, mode);

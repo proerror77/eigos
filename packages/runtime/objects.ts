@@ -68,6 +68,20 @@ export class Objects {
   }
   /** A read whose conflicts object locks cannot bound sends an object-scoped commit to its exclusive rerun. */
   protected requireExclusive(reason: string) { this.db.requireExclusive(this.client, reason); }
+  /**
+   * In an object-scoped commit, a read bounded by one source's relationship locks every target of it before
+   * reading: the source's shared lock fixes the relationship, and the targets' locks fix what filters see.
+   */
+  private async lockRelationshipTargets(source: ObjectRef, link: string, view?: string) {
+    if (!this.db.objectScoped(this.client)) return;
+    const nav = this.model.navigation(source.type, link, view);
+    if (processLogTarget(this.model, nav.target)) this.requireExclusive('process log relationship');
+    const [from, to] = nav.forward ? ['from', 'to'] : ['to', 'from'];
+    const { rows } = await this.db.query(`SELECT l.${to}_type AS type,l.${to}_id AS id FROM ${this.db.schema}.links l
+      WHERE l.projection=$1 AND l.owner=$2 AND l.type=$3 AND l.${from}_type=$4 AND l.${from}_id=$5 LIMIT $6`,
+      [this.model.projection, this.owner, nav.link, source.type, source.id, this.db.objectLockBudget + 1], this.client);
+    await this.lockObjects([source, ...rows.map(row => ({ type: String(row.type), id: String(row.id) }))], 'shared');
+  }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
   private prepareWrite() {
@@ -377,14 +391,17 @@ export class Objects {
     return { objects: records.map(record => this.visible(record)), ordered };
   }
   async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
-    this.requireExclusive('set query');
     if (input.type === scenarioMetadataType) {
+      this.requireExclusive('set query');
       if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
       return scenarioMetadataQuery(this, input);
     }
     const args = querySchema.parse(input);
+    // A read of one source's relationship is bounded by object locks; any other set query is not.
+    if (!args.from) this.requireExclusive('set query');
     const selection = await this.storedSelection(args);
     if (!selection) return { items: [], cursor: undefined };
+    if (args.from) await this.lockRelationshipTargets(args.from.object, args.from.link, args.from.as);
     const { values, bind, clauses, tables, types } = selection;
     const queryDigest = digest({ ...args, cursor: undefined, owner: this.owner, release: this.model.release, scenario: this.model.scenario });
     if (args.cursor) {
@@ -581,15 +598,7 @@ export class Objects {
       this.access.adoptReads(access);return result;
     }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
-    if (this.db.objectScoped(this.client)) {
-      if (processLogTarget(this.model, nav.target)) this.requireExclusive('process log relationship');
-      // The shared lock on ref fixes its relationships; lock the targets before reading them.
-      const side = nav.forward ? ['from', 'to'] : ['to', 'from'];
-      const { rows } = await this.db.query(`SELECT l.${side[1]}_type AS type,l.${side[1]}_id AS id FROM ${this.db.schema}.links l
-        WHERE l.projection=$1 AND l.owner=$2 AND l.type=$3 AND l.${side[0]}_type=$4 AND l.${side[0]}_id=$5 LIMIT $6`,
-        [this.model.projection, this.owner, nav.link, ref.type, ref.id, maximum + 1], this.client);
-      await this.lockObjects(rows.map(row => ({ type: String(row.type), id: String(row.id) })), 'shared');
-    }
+    await this.lockRelationshipTargets(ref, link, view);
     const label = this.model.links.get(nav.link)?.classification;
     if (!this.access.canSeeModelData(label)) return [];
     this.access.observeClassification(label);
