@@ -92,6 +92,23 @@ test('workflow submission and concurrent workers preserve a single authorized Ac
   }finally{await f.close();}
 });
 
+test('a workflow run logs its claim, queue time, stages and database profile under one attempt',async t=>{
+  const f=await setup();try{
+    const run=await f.automation.run(f.access,f.model,{workflow:f.workflow.id,object:f.source,requestId:'profiled-run'});
+    const logger=t.mock.method(console,'info',(_line:string)=>{});
+    assert.equal(await f.automation.runOne(),true);
+    const records=logger.mock.calls.map(call=>JSON.parse(call.arguments[0]));
+    const claim=records.find(row=>row.event==='workflow_claim'),finish=records.find(row=>row.event==='workflow_finish');
+    assert.equal(claim.workflowRunId,run.id);assert.equal(finish.workflowRunId,run.id);assert.equal(finish.attemptId,claim.attemptId);
+    assert.equal(claim.queuedMs,Date.parse(claim.claimedAt)-Date.parse(claim.runAvailableAt));
+    assert(Number.isFinite(Date.parse(claim.runCreatedAt)));
+    assert(finish.durationMs>=0&&finish.db.statements>0&&finish.db.editLockHoldMs>=0);
+    const stages=records.filter(row=>row.event==='stage_timing');
+    assert(stages.some(row=>row.stage==='action_apply'&&row.operation==='CopyRoute'&&row.db.statements>0));
+    assert(stages.every(row=>row.workflowRunId===run.id&&row.attemptId===claim.attemptId));
+  }finally{await f.close();}
+});
+
 test('retry after committed Action and before checkpoint uses its frozen validated input',async()=>{
   const f=await setup();try{
     class CrashAfterCommit extends Actions {
@@ -1639,22 +1656,5 @@ test('a process effect checks its published Action contract before admitting lat
     const current=(await f.automation.processBindings(editor,live,{type:'RouteStateLog'})).items.find(entry=>entry.id===rule.id)!;
     assert.equal(current.enabled,false);assert.match(current.error,/scan failed/i);
     assert.equal(current.latestRun,null);assert.equal((await f.runs()).length,0);
-  }finally{await f.close();}
-});
-
-test('a workflow run logs its claim, queue time, stages and database profile under one attempt',async t=>{
-  const f=await setup();try{
-    const run=await f.automation.run(f.access,f.model,{workflow:f.workflow.id,object:f.source,requestId:'profiled-run'});
-    const logger=t.mock.method(console,'info',(_line:string)=>{});
-    assert.equal(await f.automation.runOne(),true);
-    const records=logger.mock.calls.map(call=>JSON.parse(call.arguments[0]));
-    const claim=records.find(row=>row.event==='workflow_claim'),finish=records.find(row=>row.event==='workflow_finish');
-    assert.equal(claim.workflowRunId,run.id);assert.equal(finish.workflowRunId,run.id);assert.equal(finish.attemptId,claim.attemptId);
-    assert.equal(claim.queuedMs,Date.parse(claim.claimedAt)-Date.parse(claim.runAvailableAt));
-    assert(Number.isFinite(Date.parse(claim.runCreatedAt)));
-    assert(finish.durationMs>=0&&finish.db.statements>0&&finish.db.editLockHoldMs>=0);
-    const stages=records.filter(row=>row.event==='stage_timing');
-    assert(stages.some(row=>row.stage==='action_apply'&&row.operation==='CopyRoute'&&row.db.statements>0));
-    assert(stages.every(row=>row.workflowRunId===run.id&&row.attemptId===claim.attemptId));
   }finally{await f.close();}
 });
