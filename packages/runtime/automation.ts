@@ -1,5 +1,7 @@
 import { checkWorkflowDependencies } from './workflow-compatibility.js';
 import { randomUUID } from 'node:crypto';
+import { withOperationTiming } from '../core/operation-timing.js';
+import { profileDatabase, profileSummary, type DatabaseProfile } from '../core/database-profile.js';
 import type { QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope } from '../core/identity.js';
@@ -1008,7 +1010,7 @@ export class Automation {
   async runOne(signal = AbortSignal.timeout(120000)): Promise<boolean> {
     signal.throwIfAborted();
     const token = randomUUID();
-    const row = await this.db.transaction(async (client) => {
+    const claim = await this.db.transaction(async (client) => {
       const found = (
         await this.db.query(
           `SELECT * FROM ${this.db.schema}.workflow_runs WHERE (state='pending' AND available_at<=now()) OR(state='working' AND lease_until<now())
@@ -1022,15 +1024,32 @@ export class Automation {
         )
       ).rows[0];
       if (!found) return undefined;
-      await this.db.query(
-        `UPDATE ${this.db.schema}.workflow_runs SET state='working',token=$2,lease_until=now()+interval '150 seconds',updated_at=now() WHERE id=$1`,
+      const claimed = (await this.db.query<{ updated_at: Date }>(
+        `UPDATE ${this.db.schema}.workflow_runs SET state='working',token=$2,lease_until=now()+interval '150 seconds',updated_at=now() WHERE id=$1 RETURNING updated_at`,
         [found.id, token],
         client,
-      );
-      return found;
+      )).rows[0]!;
+      return { row: found, claimedAt: claimed.updated_at };
     });
-    if (!row) return false;
-    await this.db.withOwner(String(row.owner), () => this.executeRun(row, token, signal));
+    if (!claim) return false;
+    const { row, claimedAt } = claim, correlation = { workflowRunId: String(row.id), attemptId: token };
+    const availableAt = row.available_at instanceof Date ? row.available_at : undefined;
+    console.info(JSON.stringify({
+      event: 'workflow_claim', ...correlation, runCreatedAt: new Date(row.created_at).toISOString(),
+      runAvailableAt: availableAt?.toISOString(), claimedAt: claimedAt.toISOString(),
+      queuedMs: availableAt ? claimedAt.getTime() - availableAt.getTime() : undefined,
+    }));
+    const started = performance.now();
+    let profile: DatabaseProfile | undefined;
+    try {
+      await this.db.withOwner(String(row.owner), () => withOperationTiming(correlation,
+        () => profileDatabase(measured => { profile = measured; return this.executeRun(row, token, signal); })));
+    } finally {
+      console.info(JSON.stringify({
+        event: 'workflow_finish', ...correlation, finishedAt: new Date().toISOString(),
+        durationMs: Math.round(performance.now() - started), db: profile && profileSummary(profile),
+      }));
+    }
     return true;
   }
   private async executeRun(row: QueryResultRow, token: string, signal: AbortSignal) {

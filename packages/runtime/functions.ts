@@ -1,4 +1,5 @@
 import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest, type Principal, type ExecutionActor } from '../core/identity.js';
+import { timeOperation } from '../core/operation-timing.js';
 import { validator, Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
@@ -96,9 +97,9 @@ export class Functions {
     if (definition.source) { await access.refresh(); access.source(model, definition.source); }
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
-    const output = await entry.handler(parameters, definition.edits ? context : {
+    const output = await timeOperation('function', async () => entry.handler(parameters, definition.edits ? context : {
       ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
-    });
+    }), name);
     context.signal.throwIfAborted();
     await access.refresh(context.scenarioEvaluation?.client);
     const result = validator(definition.returns).safeParse(output);

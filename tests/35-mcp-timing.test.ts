@@ -78,6 +78,10 @@ test('Gateway timings link a Grok account task to its pending and completed MCP 
     assert(Date.parse(workerLogs[0].taskClaimedAt) >= Date.parse(workerLogs[0].taskAvailableAt));
     assert.equal(workerLogs[1].stage, 'model_session');
     assert.equal(workerLogs[2].taskState, 'completed');
+    assert(logs.every(row => row.db.statements > 0 && row.db.durationMs >= 0 && row.db.lockTimeouts === 0));
+    assert.equal(workerLogs[0].queuedMs, Date.parse(workerLogs[0].taskClaimedAt) - Date.parse(workerLogs[0].taskAvailableAt));
+    assert.equal(workerLogs[1].db.statements, 0);
+    assert(workerLogs[2].db.statements > 0 && workerLogs[2].db.editLockWaitMs >= 0);
     assert(!JSON.stringify(records).includes('synthetic-private'));
     assert(!JSON.stringify(logs).includes(unknown));
   } finally {
@@ -105,6 +109,10 @@ test('one synchronous quote ties the Action, DiDi calls and readback to its MCP 
     }
     assert.deepEqual(records.filter(row => row.stage === 'action_apply' || row.stage === 'result_read').map(row => row.operation),
       ['EstimateRide', 'readRideEstimates']);
+    const functions = records.filter(row => row.stage === 'function');
+    assert(functions.some(row => row.operation === 'readRideEstimates'));
+    assert(records.every(row => row.db.statements >= 0 && row.db.durationMs >= 0));
+    assert(records.find(row => row.stage === 'action_apply').db.statements > 0);
     assert(!JSON.stringify(records).includes(requestId));
     assert(!JSON.stringify(records).includes(route.origin));
   } finally { await f.close(); }

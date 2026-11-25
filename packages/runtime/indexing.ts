@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
+import { profileDatabase, profileSummary, type DatabaseProfile } from '../core/database-profile.js';
 import { Access, type Permission } from './access.js';
 import type { Database } from './database.js';
 import { Metadata, type PublishedOntology } from './metadata.js';
@@ -127,7 +128,11 @@ export class Indexing {
     return this.inspect(access,model,id);
   }
   async runOne(): Promise<boolean> {
-    let selected: string | undefined;
+    return profileDatabase(profile => this.applyOne(profile));
+  }
+  private async applyOne(profile: DatabaseProfile): Promise<boolean> {
+    let selected: string | undefined, source: string | undefined, objects: number | undefined, state = 'applied';
+    const started = performance.now();
     try {
       return await this.db.transaction(async client => {
         const row = (await this.db.query(`SELECT t.* FROM ${this.db.schema}.index_transactions t
@@ -135,8 +140,9 @@ export class Indexing {
           WHERE t.state IN('pending','canceled') AND t.offset_value=s.applied_offset+1
           ORDER BY t.submitted_at FOR UPDATE OF t,s SKIP LOCKED LIMIT 1`,[],client)).rows[0];
         if (!row) return false;
-        selected=String(row.id);
+        selected=String(row.id); source=String(row.source);
         if (row.state === 'canceled') {
+          state='canceled';
           await this.db.query(`UPDATE ${this.db.schema}.index_streams SET applied_offset=$5,updated_at=now() WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4`,[row.owner,row.ontology,row.source,row.stream,row.offset_value],client);
           await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET applied_at=now() WHERE id=$1`,[row.id],client);
           return true;
@@ -147,7 +153,7 @@ export class Indexing {
         const graph=new Objects(this.db,model,access,client,{requestId:String(row.id),executor:{kind:'indexer',id:'eigos-indexer'}});
         await graph.lockWrites();
         // Objects resolves source values with user edits and journals changes in this transaction.
-        const batch=mapRows(model,input);
+        const batch=mapRows(model,input); objects=batch.length;
         await graph.ingestBatch(batch,input.source,input.observedAt);
         await access.refresh(client);
         await this.db.query(`UPDATE ${this.db.schema}.index_streams SET applied_offset=$5,updated_at=now() WHERE owner=$1 AND ontology=$2 AND source=$3 AND stream=$4`,[row.owner,row.ontology,row.source,row.stream,input.offset],client);
@@ -156,8 +162,14 @@ export class Indexing {
       });
     } catch (error) {
       if (!selected) throw error;
+      state='failed';
       await this.db.query(`UPDATE ${this.db.schema}.index_transactions SET state='failed',attempts=attempts+1,error=$2 WHERE id=$1 AND state='pending'`,[selected,error instanceof Error ? error.name : 'IndexingError']);
       return true;
+    } finally {
+      if (selected) console.info(JSON.stringify({
+        event: 'index_apply', transactionId: selected, source, objects, state,
+        durationMs: Math.round(performance.now() - started), db: profileSummary(profile),
+      }));
     }
   }
   async run(signal: AbortSignal) {

@@ -16,8 +16,10 @@ type ObjectCapture = { op: 'create' | 'edit' | 'delete'; journal?: ScenarioMutat
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
-  await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [db.lockKey('publication', model.document.id)], client);
-  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [db.lockKey('objects', model.release, owner)], client);
+  await db.acquireEditLocks(client, async () => {
+    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [db.lockKey('publication', model.document.id)], client);
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [db.lockKey('objects', model.release, owner)], client);
+  });
   if(model.evaluation){
     if(model.evaluation.client!==client)throw new Conflict('Candidate evaluation must remain in its original transaction');
     const ready=await db.query(`SELECT 1 FROM ${db.schema}.ontology o JOIN ${db.schema}.releases r ON r.digest=$3
