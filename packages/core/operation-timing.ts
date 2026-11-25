@@ -15,6 +15,11 @@ export function bindOperationTiming<Input, Result>(run: (input: Input) => Promis
   return correlation ? (input: Input) => timing.run(correlation, () => run(input)) : run;
 }
 
+/** Logs one runtime event with the current run's correlation, if any. Callers pass metadata only. */
+export function recordOperationEvent(event: string, fields: Record<string, string | number | boolean | undefined>) {
+  console.info(JSON.stringify({ event, ...timing.getStore(), ...fields, at: new Date().toISOString() }));
+}
+
 export async function timeOperation<T>(stage: Stage, run: () => Promise<T>, operation?: string) {
   const correlation = timing.getStore();
   if (!correlation) return run();

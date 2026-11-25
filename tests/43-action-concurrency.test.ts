@@ -7,6 +7,8 @@ import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
+import { withOperationTiming } from '../packages/core/operation-timing.js';
+import { lockEdits, objectLinks } from '../packages/runtime/scenario-store.js';
 import { fixture, principal } from './fixture.js';
 
 const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type', 'id'], additionalProperties: false };
@@ -53,8 +55,8 @@ async function concurrency() {
   const model = await f.metadata.publish(document, capabilities, f.publisher);
   await setGrants(f.db, principal.owner, businessGrants(model));
   const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
-  const apply = (action: string, input: Record<string, unknown>, requestId: string, beforeCommit?: () => Promise<void>) =>
-    capabilities.actions.apply(access, model, action, input, requestId, beforeCommit);
+  const apply = (action: string, input: Record<string, unknown>, requestId: string, beforeCommit?: () => Promise<void>, signal?: AbortSignal) =>
+    capabilities.actions.apply(access, model, action, input, requestId, beforeCommit, undefined, signal);
   return { ...f, model, capabilities, access, graph, apply };
 }
 
@@ -187,4 +189,84 @@ test('a release switch waits for an open commit and rejects a candidate prepared
     await assert.rejects(f.apply('RenameRouteConcurrently', { route: route('versioned'), revision: 2, name: 'Old release' }, 'after-switch'),
       /read-only/);
   } finally { holder.release(); await f.close(); }
+});
+
+/** Holds the owner's exclusive edit lock, as a source transaction or process scan does, until released. */
+async function holdExclusive(f: Awaited<ReturnType<typeof concurrency>>) {
+  let release!: () => void, acquired!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; }), locked = new Promise<void>(resolve => { acquired = resolve; });
+  const holding = f.db.transaction(async client => { await lockEdits(f.db, f.model, principal.owner, client); acquired(); await released; });
+  await locked;
+  return { release: async () => { release(); await holding; } };
+}
+
+test('an Action commit keeps waiting behind a long exclusive edit lock instead of failing at the lock timeout', async () => {
+  const f = await concurrency();
+  try {
+    await f.graph.create(route('patient'), { id: 'patient', name: 'start' });
+    const holder = await holdExclusive(f);
+    const commit = f.apply('RenameRouteConcurrently', { route: route('patient'), revision: 1, name: 'After the wait' }, 'patient');
+    try { await delay(3000); } finally { await holder.release(); }
+    await commit;
+    assert.equal((await f.graph.read(route('patient'))).properties.name, 'After the wait');
+  } finally { await f.close(); }
+});
+
+test('an Action commit stops waiting for the edit lock when its own deadline passes', async () => {
+  const f = await concurrency();
+  try {
+    await f.graph.create(route('impatient'), { id: 'impatient', name: 'start' });
+    const holder = await holdExclusive(f);
+    const started = performance.now();
+    try {
+      await assert.rejects(f.apply('RenameRouteConcurrently', { route: route('impatient'), revision: 1, name: 'Never' }, 'impatient',
+        undefined, AbortSignal.timeout(2500)));
+    } finally { await holder.release(); }
+    assert(performance.now() - started < 5000, 'the commit must give up within one lock timeout after its deadline');
+    assert.equal((await f.graph.read(route('impatient'))).properties.name, 'start');
+  } finally { await f.close(); }
+});
+
+test('each conflicted commit reports its fallback with the Action name and reason only', async t => {
+  const f = await concurrency();
+  try {
+    const count = 12;
+    for (let index = 0; index < count; index++) await f.graph.create(route('logged-' + index), { id: 'logged-' + index, name: 'start' });
+    const logger = t.mock.method(console, 'info', (_line: string) => {});
+    const slow = () => { let calls = 0; return async () => { if (++calls === 2) await delay(20); }; };
+    let profile!: DatabaseProfile;
+    await withOperationTiming({ mcpRequestId: 'synthetic-fallback-run' }, () => profileDatabase(async measured => { profile = measured;
+      await Promise.all(Array.from({ length: count }, (_, index) => f.apply('RenameRouteConcurrently',
+        { route: route('logged-' + index), revision: 1, name: 'renamed' }, 'private-request-' + index, slow()))); }));
+    const fallbacks = logger.mock.calls.map(call => JSON.parse(call.arguments[0])).filter(row => row.event === 'commit_fallback');
+    assert.equal(fallbacks.length, profile.commitFallbacks);
+    assert(fallbacks.every(row => row.operation === 'RenameRouteConcurrently' && ['40001', '40P01'].includes(row.code)
+      && row.mcpRequestId === 'synthetic-fallback-run'));
+    assert(!JSON.stringify(fallbacks).includes('private-request'));
+  } finally { await f.close(); }
+});
+
+test('reading one object\'s relationships uses endpoint indexes instead of scanning all of the owner\'s links', async () => {
+  const f = await concurrency();
+  try {
+    const place = (id: string) => ({ type: 'Place', id });
+    const { db, model } = f, schema = db.schema, scope = [model.projection, principal.owner];
+    await db.query(`INSERT INTO ${schema}.objects(projection,owner,type,id,properties) SELECT $1,$2,'Route','bulk-'||g,jsonb_build_object('id','bulk-'||g,'name','bulk') FROM generate_series(1,3000) g`, scope);
+    await db.query(`INSERT INTO ${schema}.objects(projection,owner,type,id,properties) SELECT $1,$2,'Place','spot-'||g,jsonb_build_object('id','spot-'||g) FROM generate_series(1,3000) g`, scope);
+    await db.query(`INSERT INTO ${schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
+      SELECT $1,$2,'RouteOrigin','Route','bulk-'||g,'Place','spot-'||g,true,false FROM generate_series(1,3000) g`, scope);
+    await db.query(`ANALYZE ${schema}.links`);
+    const captured: { text: string; values: unknown[] }[] = [];
+    const query = db.query.bind(db);
+    db.query = (async (text: string, values: unknown[] = [], client?: never) => {
+      captured.push({ text, values }); return query(text, values, client);
+    }) as typeof db.query;
+    let links;
+    try { links = await objectLinks(db, model, principal.owner, route('bulk-7'), db.pool); } finally { db.query = query; }
+    assert.deepEqual(links.map(row => [row.type, row.from_id, row.to_id]), [['RouteOrigin', 'bulk-7', 'spot-7']]);
+    assert.deepEqual((await objectLinks(db, model, principal.owner, place('spot-7'), db.pool)).map(row => row.from_id), ['bulk-7']);
+    const plan = JSON.stringify((await db.query('EXPLAIN (FORMAT JSON) ' + captured[0]!.text, captured[0]!.values)).rows[0]);
+    assert(plan.includes('links_forward') && plan.includes('links_reverse'), plan);
+    assert(!/"Filter":[^"]*from_type/.test(plan), 'endpoint conditions must be index conditions, not filters');
+  } finally { await f.close(); }
 });
