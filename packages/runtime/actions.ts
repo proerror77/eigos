@@ -18,6 +18,7 @@ import { validateCognitive } from './cognitive-workflow.js';
 import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 import { appendTrace } from './execution-trace.js';
+import { capturingDecisionReads } from './decision-evidence.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
 
@@ -151,7 +152,11 @@ export class Actions {
     };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
-    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => transaction(async client => {
+    // Live commits first share the owner edit lock under SERIALIZABLE isolation; a conflicted one reruns exclusively.
+    // Scenario edits, merges, batches and evidence-recording reads keep the exclusive lock.
+    const shared = !suppliedClient && !model.scenario && !capturingDecisionReads() && !action.rules?.some(rule => rule.op === 'applyScenario');
+    const commitTransaction = <T>(run: (client: Sql) => Promise<T>) => shared ? this.db.optimisticTransaction(run) : transaction(run);
+    const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => commitTransaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       if (!batchClient) await this.lockRequest(client, model, principal.owner, requestId);
       await beforeCommit?.(client);

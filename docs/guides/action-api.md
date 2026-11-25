@@ -8,7 +8,7 @@
 | `apply_action_batch` | `applyActionBatch` | 每批 1 至 20 条，按输入顺序执行当前发布版的声明式 Action。每条使用独立且可重试的 `requestId`，失败时回滚本批中新提交的对象、关系和收据。带编辑 Function、声明副作用或 Scenario 合并的 Action 走普通提交。 |
 | `list_action_log` | `listActionLog` | 按提交时间倒序分页，支持按 Action 名称和发布版过滤。默认读当前发布版，可明确指定该 Ontology 的历史发布版。每条包含已提交 Action 的名称、请求 ID、时间和执行者类型。当前身份只能看到自己拥有且有定义访问权的提交。 |
 
-校验只运行只读的提交条件，执行过程没有对象写入、供应商调用、Action 收据或副作用。Scenario 编辑以独立的 Scenario 请求保存，日志收录正式提交的 Action。日志可关联现有 `execution_trace` 服务读取授权范围内的执行证据。
+校验只运行只读的提交条件，执行过程没有对象写入、供应商调用、Action 收据或副作用。正式提交的并发规则见 [执行与数据访问](../architecture/ontology.md#执行与数据访问)：同一 owner 编辑不同对象的提交并行进行，读写冲突的一方改用排他锁重跑一次，同一对象的并发修改返回修订冲突。Scenario 编辑以独立的 Scenario 请求保存，日志收录正式提交的 Action。日志可关联现有 `execution_trace` 服务读取授权范围内的执行证据。
 
 实现沿用同一套 Action 执行与幂等收据。接口设计参考 [Foundry Validate Action](https://www.palantir.com/docs/foundry/api/ontology-resources/actions/validate-action)、[Apply Action Batch](https://www.palantir.com/docs/foundry/api/ontologies-v2-resources/actions/apply-action-batch) 和 [Action Log](https://www.palantir.com/docs/foundry/action-types/action-log)。
 

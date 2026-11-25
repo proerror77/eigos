@@ -48,6 +48,8 @@ interface EvidenceScope {
   saved: number;
 }
 const capture = new AsyncLocalStorage<EvidenceScope | undefined>();
+/** Whether reads are being recorded as decision evidence, which a retried transaction would record twice. */
+export function capturingDecisionReads() { return capture.getStore() !== undefined; }
 const inputVersions = new AsyncLocalStorage<{ versions: Set<string>; savedSets: Set<string> }>();
 
 /** A semantic operation can depend on a versioned input beyond its returned page. */

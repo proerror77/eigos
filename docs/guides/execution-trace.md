@@ -74,5 +74,6 @@ Indexer 领取 Workflow 运行时写 `workflow_claim`，本次执行结束时写
 | `editLockWaitMs` | 获取 Ontology 编辑锁（发布共享锁和同一发布、同一 owner 的编辑锁）所用时间，包含超时放弃的等待 |
 | `editLockHoldMs` | 从取得编辑锁到所在事务提交或回滚的时间。锁一直持有到事务结束，期间同一 owner 的其他写入需要等待 |
 | `lockTimeouts` | 因超过事务的 `lock_timeout`（2 秒）而失败的语句数 |
+| `commitFallbacks` | 共享编辑锁的 Action 提交遇到序列化冲突或死锁、改用排他锁重跑的次数 |
 
 按任务或运行汇总编辑锁的持有时间与超时次数，可以看到同一 owner 的写入在哪些阶段互相等待。

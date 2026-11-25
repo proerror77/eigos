@@ -16,6 +16,7 @@ import { initializeIndexing } from './indexing.js';
 import { initializeEditHistory } from './edit-history.js';
 import { initializeMaterializations } from './materializations.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import { activeProfiles, chargeProfiles, profileDatabase, type DatabaseProfile } from '../core/database-profile.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
@@ -34,6 +35,7 @@ export class Database {
   private readonly ownerContext = new AsyncLocalStorage<string>();
   private readonly transactionOwners = new WeakMap<Sql, string>();
   private readonly editLocks = new WeakMap<Sql, { since: number; profiles: readonly DatabaseProfile[] }>();
+  private readonly sharedEditLocks = new WeakSet<Sql>();
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
     queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
     readonly sandboxEnabled = developmentSandboxEnabled()) {
@@ -97,6 +99,31 @@ export class Database {
   }
   measureQueries<T>(operation: (count: () => number) => Promise<T>) {
     return profileDatabase(profile => operation(() => profile.statements));
+  }
+  /** Whether this transaction shares the owner's Ontology edit lock and relies on SERIALIZABLE isolation. */
+  sharesEditLocks(client: Sql) { return this.sharedEditLocks.has(client); }
+  /**
+   * Runs a write transaction optimistically: SERIALIZABLE isolation with the owner's Ontology edit lock shared,
+   * so commits on unrelated objects proceed in parallel and PostgreSQL detects conflicting reads and writes.
+   * After a serialization failure or deadlock the transaction reruns once with the exclusive edit lock, as every
+   * write did before, so conflicts cost one rerun instead of failing. Exclusive holders, such as process rule
+   * scans, never overlap shared ones, which keeps the combined schedule serializable.
+   */
+  async optimisticTransaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
+    const profiles = activeProfiles();
+    try {
+      return await this.transaction(async client => {
+        await this.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE', [], client);
+        this.sharedEditLocks.add(client);
+        try { return await action(client); } finally { this.sharedEditLocks.delete(client); }
+      });
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code !== '40001' && code !== '40P01') throw error;
+      chargeProfiles(profiles, 'commitFallbacks', 1);
+      await delay(Math.random() * 5);
+      return this.transaction(action);
+    }
   }
   async transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();

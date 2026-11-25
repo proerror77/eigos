@@ -185,6 +185,8 @@ Gateway 校验 JWT 的签名、issuer、audience、有效期和 scopes。对象�
 
 Action 的对象和关系编辑与操作记录共用事务。相同 requestId 的重复请求返回原结果，参数冲突会被拒绝。数据库约束执行关系基数，失败事务回滚编辑。Provider 请求在数据库事务外进行，返回结果通过来源映射提交。[Action 语义](https://www.palantir.com/docs/foundry/action-types/overview)
 
+同一 owner 的正式 Action 提交先以 SERIALIZABLE 隔离运行，并共享该 owner 的编辑锁，编辑不同对象的提交可以并行。同一对象的并发修改仍按 revision 检查，后提交的一方得到修订冲突。读写范围相交的提交由 PostgreSQL 可串行化快照隔离检测，例如两个提交都先确认同一时段空闲。检测到冲突或死锁的提交整体重跑一次，改用排他编辑锁和原有的 READ COMMITTED 事务，因此冲突只多花一次执行，不会反复失败。重跑会重新检查提交条件并执行暂存的编辑。排他锁与共享锁互斥，两类提交合起来仍可串行化。外部调用不在提交事务内，所以重跑不会重复供应商请求。Scenario 编辑与合并、批量 Action、记录决策证据的读取、Indexer 应用来源事务和过程规则扫描仍取排他编辑锁。过程规则扫描因此会等进行中的提交结束，不会越过尚未提交的较早日志。发布切换仍由发布锁和候选投影指纹保护。Palantir 默认的快照隔离只把双方都写入的对象算作冲突，并自动重试没有外部调用的 Action。EIGOS 对读取同样做冲突检测，比这一默认更严格。[Action 一致性保证](https://www.palantir.com/docs/foundry/action-types/consistency-guarantees)
+
 Worker 使用 PostgreSQL 通知唤醒，行锁领取单个任务，并在执行期间续租。取消或租约失效使后续提交失败。已完成的来源调用可以在原任务内复用，结果未知的原调用会保留失败状态。
 
 ## 当前支持范围

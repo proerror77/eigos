@@ -1658,3 +1658,25 @@ test('a workflow run logs its claim, queue time, stages and database profile und
     assert(stages.every(row=>row.workflowRunId===run.id&&row.attemptId===claim.attemptId));
   }finally{await f.close();}
 });
+
+test('a process scan waits for open shared commits so it never skips an earlier transition',async()=>{
+  const f=await processSetup();
+  try{
+    const rule=await f.automation.rule(f.access,f.model,{name:'Every stall',workflow:f.workflow.id,process:{type:'RouteStateLog',to:'stalled'},enabled:true});
+    const other={type:'Route',id:'second-route'};await f.graph.create(other,{id:other.id,name:'Second'});
+    let release!:()=>void,entered!:()=>void,calls=0;
+    const released=new Promise<void>(resolve=>{release=resolve;}),inside=new Promise<void>(resolve=>{entered=resolve;});
+    const held=f.actions.apply(await Access.load(f.db,principal),f.model,'ChangeRouteState',
+      {route:f.source,revision:(await f.graph.read(f.source)).revision,state:'stalled'},'held-transition',
+      async()=>{if(++calls===2){entered();await released;}});
+    try{
+      await inside;
+      await f.actions.apply(await Access.load(f.db,principal),f.model,'ChangeRouteState',{route:other,revision:1,state:'stalled'},'later-transition');
+      assert.equal(await f.automation.scanOne(),true);
+      assert.equal((await f.runs()).length,0,'a scan must not consume a later transition while an earlier commit is open');
+    }finally{release();await held;}
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL WHERE id=$1`,[rule.id]);
+    assert.equal(await f.automation.scanOne(),true);
+    assert.equal((await f.runs()).length,2);
+  }finally{await f.close();}
+});
