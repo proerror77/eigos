@@ -155,7 +155,9 @@ export class Actions {
     // Live commits first share the owner edit lock under SERIALIZABLE isolation; a conflicted one reruns exclusively.
     // Scenario edits, merges, batches and evidence-recording reads keep the exclusive lock.
     const shared = !suppliedClient && !model.scenario && !capturingDecisionReads() && !action.rules?.some(rule => rule.op === 'applyScenario');
-    const commitTransaction = <T>(run: (client: Sql) => Promise<T>) => shared ? this.db.optimisticTransaction(run) : transaction(run);
+    // A commit waiting behind a long edit lock retries within its deadline; a supplied transaction cannot rerun.
+    const commitTransaction = <T>(run: (client: Sql) => Promise<T>) => suppliedClient ? transaction(run)
+      : this.db.waitForLocks(() => shared ? this.db.optimisticTransaction(run, actionName) : transaction(run), signal);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => commitTransaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       if (!batchClient) await this.lockRequest(client, model, principal.owner, requestId);

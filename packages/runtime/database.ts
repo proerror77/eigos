@@ -18,6 +18,7 @@ import { initializeMaterializations } from './materializations.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { activeProfiles, chargeProfiles, profileDatabase, type DatabaseProfile } from '../core/database-profile.js';
+import { recordOperationEvent } from '../core/operation-timing.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -109,7 +110,7 @@ export class Database {
    * write did before, so conflicts cost one rerun instead of failing. Exclusive holders, such as process rule
    * scans, never overlap shared ones, which keeps the combined schedule serializable.
    */
-  async optimisticTransaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
+  async optimisticTransaction<T>(action: (client: PoolClient) => Promise<T>, operation?: string): Promise<T> {
     const profiles = activeProfiles();
     try {
       return await this.transaction(async client => {
@@ -121,8 +122,24 @@ export class Database {
       const code = (error as { code?: unknown } | null)?.code;
       if (code !== '40001' && code !== '40P01') throw error;
       chargeProfiles(profiles, 'commitFallbacks', 1);
+      recordOperationEvent('commit_fallback', { operation, code });
       await delay(Math.random() * 5);
       return this.transaction(action);
+    }
+  }
+  /**
+   * Reruns a write transaction that timed out waiting for a lock, after a growing backoff, until `signal` ends
+   * or 30 seconds pass. Contention then queues the work instead of failing it at the 2-second lock_timeout; each
+   * attempt still releases its connection while it backs off.
+   */
+  async waitForLocks<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+    for (let attempt = 1; ; attempt++) {
+      try { return await run(); }
+      catch (error) {
+        if ((error as { code?: unknown } | null)?.code !== '55P03' || deadline.aborted) throw error;
+        await delay(Math.min(1000, 50 * 2 ** attempt) * (0.5 + Math.random() / 2), undefined, { signal: deadline }).catch(() => { throw error; });
+      }
     }
   }
   async transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -208,6 +225,7 @@ export class Database {
         FOREIGN KEY(projection,owner,from_type,from_id) REFERENCES ${s}.objects(projection,owner,type,id),
         FOREIGN KEY(projection,owner,to_type,to_id) REFERENCES ${s}.objects(projection,owner,type,id));
       CREATE INDEX IF NOT EXISTS links_reverse ON ${s}.links(projection,owner,to_type,to_id,type);
+      CREATE INDEX IF NOT EXISTS links_forward ON ${s}.links(projection,owner,from_type,from_id,type);
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_from ON ${s}.links(projection,owner,type,from_type,from_id) WHERE single_from;
       CREATE UNIQUE INDEX IF NOT EXISTS links_single_to ON ${s}.links(projection,owner,type,to_type,to_id) WHERE single_to;
       CREATE TABLE IF NOT EXISTS ${s}.actions (owner text NOT NULL, request_id text NOT NULL, digest text NOT NULL, action text NOT NULL, release text NOT NULL REFERENCES ${s}.releases(digest), result jsonb NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner,request_id));
