@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { canonical, Conflict, digest, NotFound } from '../core/identity.js';
 import { propertyPathSchema } from '../ontology/property-path.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
-import { observeDecisionRead, observeReadInput, observedPage } from './decision-evidence.js';
+import { capturingDecisionReads, observeDecisionRead, observeReadInput, observedPage } from './decision-evidence.js';
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
@@ -130,6 +130,16 @@ export class ObjectSets {
       const add = (object: ObjectData) => { result.set(refKey(object.ref), object); bounded(result); };
       switch (node.op) {
         case 'query': {
+          if (!capturingDecisionReads()) {
+            const matches = await objects.queryAll(node.query);
+            for (let index = 0; index <= matches.length; index += 100) count();
+            for (const object of matches) {
+              if (node.query.type === object.ref.type) loaded.set(refKey(object.ref), object);
+              add(await read(object.ref));
+            }
+            return result;
+          }
+          // Recorded decision evidence names each page this evaluation reads.
           let cursor: string | undefined;
           do {
             count();
