@@ -115,11 +115,11 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 - `workflow_runs` 保存运行、租约、冻结正文、触发转换和最早执行时间。
 - `workflow_steps` 保存逐步参数、授权依赖及执行记录。
 
-业务运行角色需要这些表的 SELECT、INSERT、UPDATE 权限，修改规则还需要 `rule_matches` 的 DELETE。定义编辑与执行使用同一个 PostgreSQL schema。Indexer 通过 `scanOne` 和 `runOne` 驱动后台执行。
+业务运行角色需要这些表的 SELECT、INSERT、UPDATE 权限，修改规则还需要 `rule_matches` 的 DELETE。定义编辑与执行使用同一个 PostgreSQL schema。Indexer 用两个独立循环驱动后台执行：一个清理过期 Scenario，并调用持续关注与规则的 `scanOne`；另一个调用 `runOne` 领取并执行 Workflow。执行时间长的 Workflow 不会推迟规则扫描。扫描发现新工作时会唤醒空闲的执行循环。任一循环出错时，另一个在完成当前一步后停止，进程报告首个错误。
 
 ## 验证
 
-`tests/22-automation.test.ts` 覆盖并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。过程回归验证轮询间内进入和离开、历史游标的重复读取、状态离开后重新计时以及触发权限撤销。测试使用隔离数据库和合成 Action。
+`tests/22-automation.test.ts` 覆盖扫描与执行循环互不阻塞、并发领取、重复提交、Action 已提交但进度未记录时的恢复、取消提交隔离、取消时补记执行记录、原始 scopes、关系变化触发、错误扫描停用、输出引用权限和发布版本保护。过程回归验证轮询间内进入和离开、历史游标的重复读取、状态离开后重新计时以及触发权限撤销。测试使用隔离数据库和合成 Action。
 
 ## 从酒店行程任务学习与复用
 
