@@ -101,8 +101,8 @@ test('one synchronous quote ties the Action, DiDi calls and readback to its MCP 
     });
     await withOperationTiming({ mcpRequestId }, () => f.capabilities.actions.complete(f.access, f.model, selected, requestId,
       { function: 'readRideEstimates', resultParameter: 'request' }, undefined, AbortSignal.timeout(15000)));
-    const records = logger.mock.calls.map(call => JSON.parse(call.arguments[0]));
-    assert(records.every(row => row.event === 'stage_timing' && row.mcpRequestId === mcpRequestId && row.outcome === 'returned'));
+    const records = logger.mock.calls.map(call => JSON.parse(call.arguments[0])).filter(row => row.event === 'stage_timing');
+    assert(records.length && records.every(row => row.mcpRequestId === mcpRequestId && row.outcome === 'returned'));
     for (const stage of ['didi_read', 'didi_rpc']) {
       assert.deepEqual(records.filter(row => row.stage === stage).map(row => row.operation).sort(),
         ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);

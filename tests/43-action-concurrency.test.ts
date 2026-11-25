@@ -9,7 +9,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { withOperationTiming } from '../packages/core/operation-timing.js';
 import { lockEdits, objectLinks } from '../packages/runtime/scenario-store.js';
-import { fixture, principal } from './fixture.js';
+import { fixture, principal, route as rideRoute } from './fixture.js';
 
 const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type', 'id'], additionalProperties: false };
 const route = (id: string): ObjectRef => ({ type: 'Route', id });
@@ -26,15 +26,34 @@ async function concurrency() {
     returns: reference, edits: true, dependencies: { objectTypes: ['Route'] } };
   const origin = { apiName: 'StageRouteOrigin', description: 'Link a route to its origin', version: '1', parameters: originInput,
     returns: reference, edits: true, dependencies: { objectTypes: ['Route', 'Place'], linkTypes: ['RouteOrigin'] } };
+  const pairInput = { type: 'object', properties: { first: reference, second: reference, name: { type: 'string' } },
+    required: ['first', 'second', 'name'], additionalProperties: false };
+  const raw = { ...rename, apiName: 'StageRawRename', description: 'Rename after an unlocked statement' };
+  const swallowed = { ...rename, apiName: 'StageSwallowedRename', description: 'Rename after ignoring a failed set query' };
+  const pair = { apiName: 'StageTwoRenames', description: 'Rename two routes in the given order', version: '1', parameters: pairInput,
+    returns: reference, edits: true, dependencies: { objectTypes: ['Route'] } };
+  const departure = { apiName: 'StageDepartureIfRoom', description: 'Add a departing route while the place has room', version: '1',
+    parameters: { type: 'object', properties: { route: reference, place: reference }, required: ['route', 'place'], additionalProperties: false },
+    returns: reference, edits: true, dependencies: { objectTypes: ['Route', 'Place'], linkTypes: ['RouteOrigin'] } };
   const document = structuredClone(f.model.document);
-  document.functionTypes.push(rename, claim, origin);
+  document.functionTypes.push(rename, claim, origin, raw, swallowed, pair, departure);
   document.actionTypes.push(
     { apiName: 'RenameRouteConcurrently', description: 'Rename one route', parameters: renameInput, objectParameters: { route: 'Route' },
       submissionCriteria: [], function: rename.apiName },
     { apiName: 'ClaimSlot', description: 'Claim a slot once', parameters: claimInput, objectParameters: {}, submissionCriteria: [], function: claim.apiName },
     { apiName: 'SetRouteOrigin', description: 'Set the origin of a route', parameters: originInput, objectParameters: { route: 'Route', place: 'Place' },
       submissionCriteria: [], function: origin.apiName },
+    { apiName: 'RenameAfterRawRead', description: 'Rename one route after an unlocked statement', parameters: renameInput,
+      objectParameters: { route: 'Route' }, submissionCriteria: [], function: raw.apiName },
+    { apiName: 'RenameAfterSwallowedQuery', description: 'Rename one route after ignoring a set query', parameters: renameInput,
+      objectParameters: { route: 'Route' }, submissionCriteria: [], function: swallowed.apiName },
+    { apiName: 'RenameTwoRoutes', description: 'Rename two routes in order', parameters: pairInput, objectParameters: {},
+      submissionCriteria: [], function: pair.apiName },
+    { apiName: 'AddDepartureIfRoom', description: 'Depart from a place that takes one route', parameters: departure.parameters,
+      objectParameters: {}, submissionCriteria: [], function: departure.apiName },
   );
+  let pairArrivals = 0, releasePair!: () => void;
+  const pairBarrier = new Promise<void>(resolve => { releasePair = resolve; });
   const capabilities = createCapabilities(f.db, f.source, { functions: [
     { definition: rename, implementationId: 'stage-route-rename-v1', handler: async (args, context) => {
       const target = args.route as ObjectRef;
@@ -50,6 +69,37 @@ async function concurrency() {
     { definition: origin, implementationId: 'stage-route-origin-v1', handler: async (args, context) => {
       const target = args.route as ObjectRef;
       return context.edit!(target, graph => graph.link({ type: 'RouteOrigin', from: target, to: args.place as ObjectRef }));
+    } },
+    { definition: raw, implementationId: 'stage-raw-rename-v1', handler: async (args, context) => {
+      const target = args.route as ObjectRef;
+      return context.edit!(target, async graph => {
+        await graph.db.query(`SELECT count(*) FROM ${graph.db.schema}.objects WHERE owner=$1`, [graph.owner], graph.client);
+        await graph.edit(target, Number(args.revision), { name: String(args.name) });
+      });
+    } },
+    { definition: swallowed, implementationId: 'stage-swallowed-rename-v1', handler: async (args, context) => {
+      const target = args.route as ObjectRef;
+      return context.edit!(target, async graph => {
+        try { await graph.query({ type: 'Route' }); } catch { /* the commit must still rerun exclusively */ }
+        await graph.edit(target, Number(args.revision), { name: String(args.name) });
+      });
+    } },
+    { definition: departure, implementationId: 'stage-departure-if-room-v1', handler: async (args, context) => {
+      const [target, place] = [args.route as ObjectRef, args.place as ObjectRef];
+      return context.edit!(target, async graph => {
+        const departing = await graph.queryStored({ type: 'Route', from: { object: place, link: 'departingRoutes' }, limit: 100 });
+        if (departing.items.length >= 1) throw new Conflict('The place is at capacity');
+        await graph.link({ type: 'RouteOrigin', from: target, to: place });
+      });
+    } },
+    { definition: pair, implementationId: 'stage-two-renames-v1', handler: async (args, context) => {
+      const [first, second] = [args.first as ObjectRef, args.second as ObjectRef];
+      return context.edit!(first, async graph => {
+        await graph.edit(first, (await graph.read(first)).revision, { name: String(args.name) });
+        if (++pairArrivals === 2) releasePair();
+        await pairBarrier;
+        await graph.edit(second, (await graph.read(second)).revision, { name: String(args.name) });
+      });
     } },
   ] });
   const model = await f.metadata.publish(document, capabilities, f.publisher);
@@ -227,21 +277,19 @@ test('an Action commit stops waiting for the edit lock when its own deadline pas
   } finally { await f.close(); }
 });
 
-test('each conflicted commit reports its fallback with the Action name and reason only', async t => {
+test('each commit that needs the exclusive lock reports its fallback with the Action name and reason only', async t => {
   const f = await concurrency();
   try {
-    const count = 12;
-    for (let index = 0; index < count; index++) await f.graph.create(route('logged-' + index), { id: 'logged-' + index, name: 'start' });
+    const count = 6;
     const logger = t.mock.method(console, 'info', (_line: string) => {});
-    const slow = () => { let calls = 0; return async () => { if (++calls === 2) await delay(20); }; };
     let profile!: DatabaseProfile;
     await withOperationTiming({ mcpRequestId: 'synthetic-fallback-run' }, () => profileDatabase(async measured => { profile = measured;
-      await Promise.all(Array.from({ length: count }, (_, index) => f.apply('RenameRouteConcurrently',
-        { route: route('logged-' + index), revision: 1, name: 'renamed' }, 'private-request-' + index, slow()))); }));
+      await Promise.all(Array.from({ length: count }, (_, index) => f.apply('ClaimSlot',
+        { id: 'claimed-' + index, slot: 'slot-' + index }, 'private-request-' + index))); }));
     const fallbacks = logger.mock.calls.map(call => JSON.parse(call.arguments[0])).filter(row => row.event === 'commit_fallback');
-    assert.equal(fallbacks.length, profile.commitFallbacks);
-    assert(fallbacks.every(row => row.operation === 'RenameRouteConcurrently' && ['40001', '40P01'].includes(row.code)
-      && row.mcpRequestId === 'synthetic-fallback-run'));
+    assert.equal(profile.commitFallbacks, count);
+    assert.equal(fallbacks.length, count);
+    assert(fallbacks.every(row => row.operation === 'ClaimSlot' && row.reason === 'set query' && row.mcpRequestId === 'synthetic-fallback-run'));
     assert(!JSON.stringify(fallbacks).includes('private-request'));
   } finally { await f.close(); }
 });
@@ -269,4 +317,97 @@ test('reading one object\'s relationships uses endpoint indexes instead of scann
     assert(plan.includes('links_forward') && plan.includes('links_reverse'), plan);
     assert(!/"Filter":[^"]*from_type/.test(plan), 'endpoint conditions must be index conditions, not filters');
   } finally { await f.close(); }
+});
+
+test('one hundred concurrent commits on unrelated objects of one owner stay on object locks', async () => {
+  const f = await concurrency();
+  try {
+    const count = 100;
+    for (let index = 0; index < count; index++) await f.graph.create(route('wide-' + index), { id: 'wide-' + index, name: 'start' });
+    let profile!: DatabaseProfile;
+    const results = await profileDatabase(async measured => { profile = measured;
+      return Promise.allSettled(Array.from({ length: count }, (_, index) => f.apply('RenameRouteConcurrently',
+        { route: route('wide-' + index), revision: 1, name: 'renamed-' + index }, 'wide-' + index))); });
+    assert.deepEqual(results.filter(result => result.status === 'rejected').map(result => String((result as PromiseRejectedResult).reason)), []);
+    assert(profile.commitFallbacks * 20 < count, `${profile.commitFallbacks} of ${count} commits fell back to the exclusive lock`);
+    for (const index of [0, 42, 99]) assert.equal((await f.graph.read(route('wide-' + index))).properties.name, 'renamed-' + index);
+  } finally { await f.close(); }
+});
+
+test('a commit that reads Ontology data around its object locks reruns with the exclusive lock', async () => {
+  const f = await concurrency();
+  try {
+    for (const id of ['raw', 'swallowed']) await f.graph.create(route(id), { id, name: 'start' });
+    for (const [action, id] of [['RenameAfterRawRead', 'raw'], ['RenameAfterSwallowedQuery', 'swallowed']] as const) {
+      let profile!: DatabaseProfile;
+      await profileDatabase(async measured => { profile = measured;
+        await f.apply(action, { route: route(id), revision: 1, name: 'Renamed exclusively' }, 'escalated-' + id); });
+      assert.equal(profile.commitFallbacks, 1, action);
+      const stored = await f.graph.read(route(id));
+      assert.equal(stored.properties.name, 'Renamed exclusively');
+      assert.equal(stored.revision, 2, 'the abandoned attempt must not leave a write behind');
+    }
+  } finally { await f.close(); }
+});
+
+test('two commits that lock the same objects in opposite order both commit after a deadlock rerun', async () => {
+  const f = await concurrency();
+  try {
+    for (const id of ['left', 'right']) await f.graph.create(route(id), { id, name: 'start' });
+    let profile!: DatabaseProfile;
+    await profileDatabase(async measured => { profile = measured;
+      await Promise.all([
+        f.apply('RenameTwoRoutes', { first: route('left'), second: route('right'), name: 'from-left' }, 'pair-left'),
+        f.apply('RenameTwoRoutes', { first: route('right'), second: route('left'), name: 'from-right' }, 'pair-right'),
+      ]); });
+    assert(profile.commitFallbacks >= 1, 'one of the two commits must rerun after the deadlock');
+    const names = [(await f.graph.read(route('left'))).properties.name, (await f.graph.read(route('right'))).properties.name];
+    assert.equal(names[0], names[1], 'the later commit renamed both routes');
+    assert.equal((await f.graph.read(route('left'))).revision, 3);
+  } finally { await f.close(); }
+});
+
+test('a synchronous ride estimate commits on object locks, including its linked derived properties', async () => {
+  const f = await fixture();
+  try {
+    const selected = f.capabilities.actions.resolve(f.access, f.model, {
+      interface: { type: 'RideInquiry', action: 'estimate', implementation: 'RideRequest' }, input: rideRoute,
+    });
+    let profile!: DatabaseProfile;
+    await profileDatabase(async measured => { profile = measured;
+      await f.capabilities.actions.complete(f.access, f.model, selected, 'object-scoped-quote',
+        { function: 'readRideEstimates', resultParameter: 'request' }, undefined, AbortSignal.timeout(15000)); });
+    assert.equal(profile.commitFallbacks, 0, 'the quote commit must not need the exclusive lock');
+  } finally { await f.close(); }
+});
+
+test('a commit that would lock more objects than its budget reruns with the exclusive lock', async () => {
+  const f = await concurrency();
+  try {
+    const rows = Array.from({ length: 300 }, (_, index) => ({ ref: route('budget-' + index), properties: { id: 'budget-' + index, name: 'bulk' } }));
+    let profile!: DatabaseProfile;
+    await profileDatabase(async measured => { profile = measured;
+      await f.db.objectScopedTransaction(async client => { await new Objects(f.db, f.model, f.access, client).ingestBatch(rows, 'default'); }, 'BulkIngest'); });
+    assert.equal(profile.commitFallbacks, 1);
+    assert.equal((await f.graph.read(route('budget-299'))).properties.name, 'bulk');
+  } finally { await f.close(); }
+});
+
+test('two commits that check one place\'s relationships before adding to it never exceed its capacity', async () => {
+  const f = await concurrency(), holder = holdCommit();
+  try {
+    const place = { type: 'Place', id: 'gate' };
+    await f.graph.create(place, { id: 'gate', name: 'Gate', city: 'Shanghai', address: 'A', coordinates: { lat: 31, lng: 121 },
+      coordinateSystem: 'GCJ02', sourceBinding: 'test', observedAt: new Date().toISOString() });
+    for (const id of ['first-leg', 'second-leg']) await f.graph.create(route(id), { id, name: id });
+    const first = f.apply('AddDepartureIfRoom', { route: route('first-leg'), place }, 'departure-first', holder.beforeCommit);
+    await holder.inside;
+    const second = f.apply('AddDepartureIfRoom', { route: route('second-leg'), place }, 'departure-second');
+    await delay(300);
+    holder.release();
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.match(String((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason), /at capacity/);
+    assert.equal((await f.graph.follow(place, 'departingRoutes')).length, 1);
+  } finally { holder.release(); await f.close(); }
 });
