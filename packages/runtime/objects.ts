@@ -3,7 +3,7 @@ import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } fro
 import { observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
-import { recordObjectEdit, resolveSourceEdit } from './edit-history.js';
+import { recordObjectEdit, resolveSourceEdits } from './edit-history.js';
 import { z } from 'zod';
 import { Conflict, NotFound, PermissionDenied, InvalidInput, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
@@ -607,22 +607,48 @@ export class Objects {
       if (prior && digest(prior.properties)!==digest(properties)) throw new Conflict('Source rows disagree about one object');
       unique.set(key,{ref:item.ref,properties});
     }
-    for (const {ref,properties} of unique.values()) {
+    const entries = [...unique.values()], stored = await this.storedSources(entries.map(entry => entry.ref));
+    const observations = entries.map(({ref,properties}) => {
       if (properties) this.access.sourceRow(this.model,ref.type,properties);
-      const old = await this.stored(ref).catch(error=>{if(error instanceof NotFound)return undefined;throw error;});
-      if (old) this.access.sourceRow(this.model,ref.type,old.properties);
-      const resolved = await resolveSourceEdit(this,ref,properties,source,observedAt);
-      const key=[this.model.projection,this.owner,ref.type,ref.id];
-      if (resolved === null) {
-        await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND ((from_type=$3 AND from_id=$4) OR (to_type=$3 AND to_id=$4))`,key,this.client);
-        await this.db.query(`DELETE FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key,this.client);
-      } else {
-        this.access.sourceRow(this.model,ref.type,resolved);
-        await this.db.query(`INSERT INTO ${this.db.schema}.objects AS o(projection,owner,type,id,properties) VALUES($1,$2,$3,$4,$5)
-          ON CONFLICT(projection,owner,type,id) DO UPDATE SET properties=excluded.properties,revision=o.revision+1
-          WHERE o.properties IS DISTINCT FROM excluded.properties`,[...key,resolved],this.client);
-      }
+      const old = stored.get(JSON.stringify([ref.type,ref.id]));
+      if (old?.visible) this.access.sourceRow(this.model,ref.type,old.visible.properties);
+      return { ref, incoming: properties, before: old?.raw ?? null };
+    });
+    const removed: ObjectRef[] = [], written: { type: string; id: string; properties: Record<string, unknown> }[] = [];
+    (await resolveSourceEdits(this,observations,source,observedAt)).forEach(({ value, current }, index) => {
+      const { ref } = entries[index]!;
+      if (value) this.access.sourceRow(this.model,ref.type,value);
+      if (!current) return;
+      if (value === null) removed.push(ref); else written.push({ type: ref.type, id: ref.id, properties: value });
+    });
+    const scope = [this.model.projection,this.owner], rows = (refs: readonly ObjectRef[]) => JSON.stringify(refs.map(({type,id}) => ({type,id})));
+    if (removed.length) {
+      await this.db.query(`DELETE FROM ${this.db.schema}.links l USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
+        WHERE l.projection=$1 AND l.owner=$2 AND ((l.from_type=k.type AND l.from_id=k.id) OR (l.to_type=k.type AND l.to_id=k.id))`,[...scope,rows(removed)],this.client);
+      await this.db.query(`DELETE FROM ${this.db.schema}.objects o USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
+        WHERE o.projection=$1 AND o.owner=$2 AND o.type=k.type AND o.id=k.id`,[...scope,rows(removed)],this.client);
     }
+    if (written.length) await this.db.query(`INSERT INTO ${this.db.schema}.objects AS o(projection,owner,type,id,properties)
+      SELECT $1,$2,r.type,r.id,r.properties FROM jsonb_to_recordset($3::jsonb) AS r(type text,id text,properties jsonb)
+      ON CONFLICT(projection,owner,type,id) DO UPDATE SET properties=excluded.properties,revision=o.revision+1
+      WHERE o.properties IS DISTINCT FROM excluded.properties`,[...scope,JSON.stringify(written)],this.client);
+  }
+  /** Stored rows for source ingestion: the raw value it replaces, and the parsed value when the caller may see it. */
+  private async storedSources(refs: readonly ObjectRef[]) {
+    const found = new Map<string, { raw: Record<string, unknown>; visible?: ObjectData }>();
+    if (!refs.length) return found;
+    const { rows } = await this.db.query(`SELECT o.type,o.id,o.revision,o.properties FROM ${this.db.schema}.objects o
+      JOIN jsonb_to_recordset($3::jsonb) AS k(type text,id text) ON o.type=k.type AND o.id=k.id
+      WHERE o.projection=$1 AND o.owner=$2`, [this.model.projection, this.owner, JSON.stringify(refs.map(({type,id}) => ({type,id})))], this.client);
+    for (const row of rows) {
+      const ref = { type: String(row.type), id: String(row.id) };
+      // Row policies decide whether a document chunk counts as an existing visible row, as for a single read.
+      const visible = ref.type === documentChunkType || processLogTarget(this.model, ref.type)
+        ? await this.stored(ref).catch(error => { if (error instanceof NotFound) return undefined; throw error; })
+        : this.row(row);
+      found.set(JSON.stringify([ref.type, ref.id]), { raw: row.properties as Record<string, unknown>, visible });
+    }
+    return found;
   }
   async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).edit(ref, revision, fields));

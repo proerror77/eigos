@@ -54,10 +54,6 @@ const key = (graph: Objects, ref: ObjectRef) => [graph.model.projection, graph.o
 function requireTransaction(graph: Objects) {
   if (graph.client === graph.db.pool) throw new Conflict('Edit history must share the object transaction');
 }
-async function stored(graph: Objects, ref: ObjectRef): Promise<Properties | null> {
-  const row = (await graph.db.query(`SELECT properties FROM ${graph.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key(graph,ref),graph.client)).rows[0];
-  return row?.properties ?? null;
-}
 async function state(graph: Objects, ref: ObjectRef): Promise<EditState> {
   const row = (await graph.db.query(`SELECT overrides,deleted,created FROM ${graph.db.schema}.object_edits WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key(graph,ref),graph.client)).rows[0];
   return row ? { overrides: row.overrides, deleted: row.deleted, created: row.created } : { overrides: {}, deleted: false, created: false };
@@ -95,57 +91,111 @@ export async function recordObjectEdit(graph: Objects, ref: ObjectRef, before: P
   await append(graph,ref,kind,before,after,null);
 }
 
-/** Persists a source baseline and resolves it with user edits. The caller writes the returned object value. */
-export async function resolveSourceEdit(graph: Objects, ref: ObjectRef, incoming: Properties | null, source = 'default', observedAt?: string): Promise<Properties | null> {
+/** One source observation of an object, with the stored value it may replace. */
+export interface SourceObservation { ref: ObjectRef; incoming: Properties | null; before: Properties | null }
+/** The value to store for an observed object. A stale observation leaves the stored value current. */
+export interface ResolvedSource { value: Properties | null; current: boolean }
+type Baseline = { source: string; properties: Properties | null; observed_at: unknown };
+
+const objectKey = (ref: { type: string; id: string }) => JSON.stringify([ref.type, ref.id]);
+const keyRows = (refs: readonly ObjectRef[]) => JSON.stringify(refs.map(({ type, id }) => ({ type, id })));
+
+/**
+ * Persists the source baselines of a batch and resolves each object with its user edits, in input order.
+ * Each object needs the same decisions as a single observation; the statements are shared by the batch.
+ * The caller writes the returned object values in the same transaction.
+ */
+export async function resolveSourceEdits(graph: Objects, observations: readonly SourceObservation[], source = 'default', observedAt?: string): Promise<ResolvedSource[]> {
   requireTransaction(graph);
   if (graph.model.scenario) throw new Conflict('Source ingestion requires the live projection');
-  const before = await stored(graph,ref);
-  const candidateTime = observedAt ?? (typeof incoming?.observedAt === 'string' ? incoming.observedAt : new Date().toISOString());
-  const observed = z.iso.datetime({offset:true}).parse(candidateTime);
-  let prior = (await graph.db.query(`SELECT properties,observed_at FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source=$5`,[...key(graph,ref),source],graph.client)).rows[0];
-  const edits = await state(graph,ref);
-  if (!prior && before && !edits.created) {
-    const baselines = (await graph.db.query(`SELECT source,properties FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key(graph,ref),graph.client)).rows;
+  if (!observations.length) return [];
+  const { db, model, client, change } = graph, scope = [model.projection, graph.owner];
+  const matching = (alias: string) => `JOIN jsonb_to_recordset($3::jsonb) AS k(type text,id text) ON ${alias}.type=k.type AND ${alias}.id=k.id
+    WHERE ${alias}.projection=$1 AND ${alias}.owner=$2`;
+  const group = (rows: (Baseline & { type: string; id: string })[]) => {
+    const grouped = new Map<string, Baseline[]>();
+    for (const row of rows) grouped.set(objectKey(row), [...grouped.get(objectKey(row)) ?? [], row]);
+    return grouped;
+  };
+  const keys = keyRows(observations.map(item => item.ref));
+  const baselines = group((await db.query(`SELECT s.type,s.id,s.source,s.properties,s.observed_at FROM ${db.schema}.source_values s ${matching('s')}`,
+    [...scope, keys], client)).rows as (Baseline & { type: string; id: string })[]);
+  const edits = new Map((await db.query(`SELECT e.type,e.id,e.overrides,e.deleted,e.created FROM ${db.schema}.object_edits e ${matching('e')}`,
+    [...scope, keys], client)).rows.map(row => [objectKey(row as { type: string; id: string }),
+    { overrides: row.overrides, deleted: row.deleted, created: row.created } as EditState]));
+  const now = new Date().toISOString();
+  const plans = observations.map(item => {
+    const key = objectKey(item.ref), rows = baselines.get(key) ?? [];
+    const state = edits.get(key) ?? { overrides: {}, deleted: false, created: false };
+    const candidateTime = observedAt ?? (typeof item.incoming?.observedAt === 'string' ? item.incoming.observedAt : now);
+    const observed = z.iso.datetime({offset:true}).parse(candidateTime);
+    let prior: Baseline | undefined = rows.find(row => row.source === source), legacy: Baseline | undefined;
     // An upgraded row has no source history yet. Retain its observed time before handling the first refresh or deletion.
-    if (baselines.every(row=>row.source==='__legacy__')) {
-      const baseline = baselines.find(row=>row.source==='__legacy__')?.properties ?? before;
+    if (!prior && item.before && !state.created && rows.every(row => row.source === '__legacy__')) {
+      const baseline = rows.find(row => row.source === '__legacy__')?.properties ?? item.before;
       const timestamp = z.iso.datetime({offset:true}).safeParse(baseline.observedAt);
-      if (timestamp.success) {
-        prior = {properties:baseline,observed_at:timestamp.data};
-        await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7)`,[...key(graph,ref),source,baseline,timestamp.data],graph.client);
+      if (timestamp.success) prior = legacy = { source, properties: baseline, observed_at: timestamp.data };
+    }
+    const priorTime = prior && new Date(prior.observed_at as string).getTime();
+    const stale = priorTime !== undefined && priorTime > Date.parse(observed);
+    if (!stale && prior && priorTime === Date.parse(observed) && digest(prior.properties) !== digest(item.incoming))
+      throw new Conflict('One source timestamp contains conflicting object data');
+    return { item, key, observed, state, stale, legacy };
+  });
+  const current = plans.filter(plan => !plan.stale);
+  const baselineRows = [
+    ...current.map(plan => ({ ...plan.item.ref, properties: plan.item.incoming, observed_at: plan.observed })),
+    // A stale observation keeps the stored value, but an upgraded row records the baseline it was compared with.
+    ...plans.filter(plan => plan.stale && plan.legacy).map(plan => ({ ...plan.item.ref, ...plan.legacy! })),
+  ].map(({ type, id, properties, observed_at }) => ({ type, id, properties, observed_at }));
+  if (current.length) await db.query(`DELETE FROM ${db.schema}.source_values s USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
+    WHERE s.projection=$1 AND s.owner=$2 AND s.type=k.type AND s.id=k.id AND s.source='__legacy__'`,
+    [...scope, keyRows(current.map(plan => plan.item.ref))], client);
+  if (baselineRows.length) await db.query(`INSERT INTO ${db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
+    SELECT $1,$2,r.type,r.id,$3,r.properties,r.observed_at FROM jsonb_to_recordset($4::jsonb) AS r(type text,id text,properties jsonb,observed_at timestamptz)
+    ON CONFLICT(projection,owner,type,id,source) DO UPDATE SET properties=excluded.properties,observed_at=excluded.observed_at`,
+    [...scope, source, JSON.stringify(baselineRows)], client);
+  const resolving = current.filter(plan => !plan.state.deleted);
+  const merged = resolving.length ? group((await db.query(`SELECT s.type,s.id,s.properties,s.observed_at,s.source FROM ${db.schema}.source_values s ${matching('s')}
+    ORDER BY s.type,s.id,s.observed_at,s.source`, [...scope, keyRows(resolving.map(plan => plan.item.ref))], client)).rows as (Baseline & { type: string; id: string })[]) : new Map<string, Baseline[]>();
+  const types = [...new Set(resolving.map(plan => plan.item.ref.type))];
+  const policies = new Map(types.length ? (await db.query(`SELECT type,policy FROM ${db.schema}.edit_policies WHERE ontology=$1 AND type=ANY($2::text[])`,
+    [model.document.id, types], client)).rows.map(row => [String(row.type), String(row.policy)]) : []);
+  const history: { position: number; type: string; id: string; before_values: Properties | null; after_values: Properties | null; observed_at: string }[] = [];
+  const results = plans.map(({ item, key, observed, state, stale }): ResolvedSource => {
+    if (stale) return { value: item.before, current: false };
+    const { ref } = item, fields = model.object(ref.type).properties;
+    let resolved: Properties | null = null;
+    if (!state.deleted) {
+      const times = new Map<string,number>();
+      for (const row of merged.get(key) ?? []) {
+        if (row.properties === null) continue;
+        resolved ??= {};
+        for (const [field, value] of Object.entries(row.properties)) {
+          if(!fields[field])continue;
+          resolved[field] = value;
+          const timestamp=new Date(row.observed_at as string).getTime();
+          times.set(field,Number.isFinite(timestamp)?timestamp:-Infinity);
+        }
+      }
+      if (state.created) resolved ??= {};
+      const policy = policies.get(ref.type) ?? 'user_wins';
+      if (resolved) for (const [field, edit] of Object.entries(state.overrides)) {
+        if(!fields[field])continue;
+        if (policy === 'user_wins' || !times.has(field) || Date.parse(edit.at) > times.get(field)!) resolved[field] = edit.value;
       }
     }
-  }
-  if (prior && new Date(prior.observed_at).getTime() > Date.parse(observed)) return before;
-  if (prior && new Date(prior.observed_at).getTime() === Date.parse(observed) && digest(prior.properties) !== digest(incoming)) throw new Conflict('One source timestamp contains conflicting object data');
-  await graph.db.query(`DELETE FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND source='__legacy__'`,key(graph,ref),graph.client);
-  await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(projection,owner,type,id,source) DO UPDATE SET properties=excluded.properties,observed_at=excluded.observed_at`,[...key(graph,ref),source,incoming,observed],graph.client);
-  let resolved: Properties | null = null;
-  if (!edits.deleted) {
-    const rows = (await graph.db.query(`SELECT properties,observed_at,source FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 ORDER BY observed_at,source`,key(graph,ref),graph.client)).rows;
-    const times = new Map<string,number>();
-    for (const row of rows) {
-      if (row.properties === null) continue;
-      resolved ??= {};
-      for (const [field, value] of Object.entries(row.properties)) {
-        if(!graph.model.object(ref.type).properties[field])continue;
-        resolved[field] = value;
-        const timestamp=new Date(row.observed_at).getTime();
-        times.set(field,Number.isFinite(timestamp)?timestamp:-Infinity);
-      }
-    }
-    if (edits.created) resolved ??= {};
-    const policy = (await graph.db.query(`SELECT policy FROM ${graph.db.schema}.edit_policies WHERE ontology=$1 AND type=$2`,[graph.model.document.id,ref.type],graph.client)).rows[0]?.policy ?? 'user_wins';
-    if (resolved) for (const [field, edit] of Object.entries(edits.overrides)) {
-      if(!graph.model.object(ref.type).properties[field])continue;
-      if (policy === 'user_wins' || !times.has(field) || Date.parse(edit.at) > times.get(field)!) resolved[field] = edit.value;
-    }
-  }
-  if (resolved) resolved = graph.model.parseObject(ref,resolved);
-  await append(graph,ref,'source',before,resolved,source,observed);
-  return resolved;
+    if (resolved) resolved = model.parseObject(ref,resolved);
+    if (digest(item.before) !== digest(resolved))
+      history.push({ position: history.length, type: ref.type, id: ref.id, before_values: item.before, after_values: resolved, observed_at: observed });
+    return { value: resolved, current: true };
+  });
+  if (history.length) await db.query(`INSERT INTO ${db.schema}.edit_history(projection,owner,type,id,release,operation,source,before_values,after_values,actor,action,request_id,task_id,observed_at,executor_kind,executor_id)
+    SELECT $1,$2,h.type,h.id,$3,'source',$4,h.before_values,h.after_values,$5,$6,$7,$8,h.observed_at,$9,$10
+    FROM jsonb_to_recordset($11::jsonb) AS h(position integer,type text,id text,before_values jsonb,after_values jsonb,observed_at timestamptz) ORDER BY h.position`,
+    [...scope, model.release, source, graph.access.principal.owner, change?.action ?? null, change?.requestId ?? null, change?.taskId ?? null,
+      change?.executor?.kind ?? null, change?.executor?.id ?? null, JSON.stringify(history)], client);
+  return results;
 }
 
 export class EditHistory {

@@ -482,3 +482,22 @@ test('publication locks serialize inside a schema and allow another schema to pu
     await Promise.all([first.close(), second.close()]);
   }
 });
+
+test('source ingestion sends a bounded number of statements whatever the batch size',async()=>{
+  const f=await indexedFixture();try{
+    const graph=new Objects(f.db,f.model,f.access),place=(id:string)=>({type:'Place',id});
+    const statements=(rows:{ref:{type:string;id:string};properties:Record<string,unknown>|null}[],observedAt:string)=>
+      f.db.measureQueries(async count=>{await graph.ingestBatch(rows,'DidiPlaces',observedAt);return count();});
+    const ids=(prefix:string,size:number)=>Array.from({length:size},(_,index)=>prefix+index);
+    const small=await statements(ids('small-',5).map(id=>({ref:place(id),properties:sourceRow(id,'Created')})),origin);
+    const created=await statements(ids('large-',100).map(id=>({ref:place(id),properties:sourceRow(id,'Created')})),origin);
+    await graph.edit(place('large-1'),1,{name:'User correction'});
+    const refreshed=await statements(ids('large-',100).map(id=>({ref:place(id),properties:sourceRow(id,'Refreshed',later)})),later);
+    const deleted=await statements(ids('large-',50).map(id=>({ref:place(id),properties:null})),new Date(Date.parse(later)+1000).toISOString());
+    for(const [name,count] of Object.entries({created,refreshed,deleted}))
+      assert(count<=small+4,`${name}: ${count} statements for up to 100 objects, ${small} for 5`);
+    assert.equal((await graph.read(place('large-60'))).properties.name,'Refreshed');
+    await assert.rejects(graph.read(place('large-1')),/unavailable/);
+    assert.equal((await graph.read(place('small-0'))).properties.name,'Created');
+  }finally{await f.close();}
+});
