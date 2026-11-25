@@ -349,3 +349,47 @@ test('saved high-risk order sets aggregate and follow two deduplicated links in 
     });
   } finally { await f.close(); }
 });
+
+test('linked derived properties and set traversal read relationships in batches instead of once per object', async () => {
+  const f = await fixture();
+  try {
+    await initializeObjectSets(f.db);
+    const document = structuredClone(f.model.document);
+    document.objectTypes.find(type => type.apiName === 'Route')!.properties.originCity = { description: 'City of the linked origin',
+      schema: { type: 'string' }, required: false, derived: { op: 'linked', path: [{ link: 'origin' }], aggregate: 'select', property: 'city' } };
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access), sets = new ObjectSets(f.db);
+    const scope = [model.projection, principal.owner], observedAt = new Date().toISOString(), schema = f.db.schema;
+    const seed = async (from: number, to: number) => {
+      await f.db.query(`INSERT INTO ${schema}.objects(projection,owner,type,id,properties) SELECT $1,$2,'Route','r'||g,jsonb_build_object('id','r'||g,'name','Route')
+        FROM generate_series($3::int,$4::int) g`, [...scope, from, to]);
+      await f.db.query(`INSERT INTO ${schema}.objects(projection,owner,type,id,properties) SELECT $1,$2,'Place','p'||g,jsonb_build_object('id','p'||g,'name','Place',
+        'city','City-'||g,'address','A','coordinates',jsonb_build_object('lat',31,'lng',121),'coordinateSystem','GCJ02','sourceBinding','test','observedAt',$5::text)
+        FROM generate_series($3::int,$4::int) g`, [...scope, from, to, observedAt]);
+      // Every tenth route has no origin, so its derived city stays null.
+      await f.db.query(`INSERT INTO ${schema}.links(projection,owner,type,from_type,from_id,to_type,to_id,single_from,single_to)
+        SELECT $1,$2,'RouteOrigin','Route','r'||g,'Place','p'||g,true,false FROM generate_series($3::int,$4::int) g WHERE g % 10 <> 0`, [...scope, from, to]);
+    };
+    const measured = <T>(run: () => Promise<T>) => f.db.measureQueries(async count => ({ result: await run(), statements: count() }));
+    const city = (id: string) => Number(id.slice(1)) % 10 === 0 ? null : 'City-' + id.slice(1);
+    await seed(1, 100);
+    const page = await measured(() => graph.query({ type: 'Route', limit: 100 }));
+    assert(page.statements < 20, `${page.statements} statements to read 100 routes with a linked derived property`);
+    assert.equal(page.result.items.length, 100);
+    for (const item of page.result.items) assert.equal(item.properties.originCity, city(item.ref.id));
+    for (const id of ['r7', 'r10']) assert.equal((await graph.read({ type: 'Route', id })).properties.originCity, city(id));
+    const traverse = await measured(() => sets.evaluate(access, model, {
+      set: { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin' }] }, limit: 100 }));
+    assert(traverse.statements < 20, `${traverse.statements} statements to traverse from 100 routes`);
+    assert.equal(traverse.result.total, 90);
+    await seed(101, 1000);
+    const larger = await measured(() => graph.query({ type: 'Route', where: { originCity: 'City-999' } }));
+    assert(larger.statements < 40, `${larger.statements} statements to filter 1000 routes by a linked derived property`);
+    assert.deepEqual(larger.result.items.map(item => item.ref.id), ['r999']);
+    const wider = await measured(() => sets.evaluate(access, model, {
+      set: { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin' }] }, limit: 100 }));
+    assert(wider.statements <= traverse.statements + 2, `${wider.statements} statements to traverse from 1000 routes, ${traverse.statements} from 100`);
+    assert.equal(wider.result.total, 900);
+  } finally { await f.close(); }
+});

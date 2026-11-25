@@ -185,6 +185,80 @@ export class Objects {
       && digest(object.properties[field]) === digest(value)));
     return { matches, version: baseline, revision: object.revision };
   }
+  /**
+   * For objects this graph has read, whether each named property is visible, as propertyVisible decides, from
+   * one read. Objects whose rows need a row policy or cannot be read here are left to the per-object check.
+   */
+  async propertyVisibility(items: readonly { ref: ObjectRef; names: readonly string[] }[]): Promise<Map<string, boolean>> {
+    const visibility = new Map<string, boolean>();
+    const plain = items.filter(({ ref }) => ref.type !== documentChunkType && !processLogTarget(this.model, ref.type));
+    if (!plain.length) return visibility;
+    await this.lockObjects(plain.map(item => item.ref), 'shared');
+    await checkScenario(this.db, this.model, this.owner, this.client);
+    const values: unknown[] = [this.owner, this.model.projection, JSON.stringify(plain.map(({ ref }) => ({ type: ref.type, id: ref.id })))];
+    const tables = viewTables(this.db, this.model, this.owner, values, [...new Set(plain.map(({ ref }) => ref.type))]);
+    const { rows } = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
+      JOIN jsonb_to_recordset($3::jsonb) AS k(type text,id text) ON o.type=k.type AND o.id=k.id
+      WHERE o.owner=$1 AND o.projection=$2`, values, this.client);
+    const names = new Map(plain.map(item => [digest({ type: item.ref.type, id: item.ref.id }), item.names]));
+    for (const row of rows) {
+      let object: ObjectData;
+      try { object = this.row(row); this.access.readRow(this.model, object.ref.type, object.properties); } catch { continue; }
+      for (const name of names.get(digest(object.ref)) ?? [])
+        visibility.set(digest([object.ref, name]), this.access.cell(this.model, object.ref.type, name, object.properties));
+    }
+    return visibility;
+  }
+  /**
+   * The objects linked from each source along one step, as queryStored with `from` returns them for that source,
+   * from one read. Undefined when the target type needs the per-source path: it has derived properties, row
+   * policies of its own kind, or the relationship is too large to hold at once.
+   */
+  async linkedTargets(sources: readonly ObjectRef[], link: string, as?: string): Promise<Map<string, ObjectData[]> | undefined> {
+    const sourceType = sources[0]?.type;
+    if (!sourceType || sources.some(source => source.type !== sourceType) || processLogTarget(this.model, sourceType)) return undefined;
+    const nav = this.model.navigation(sourceType, link, as), target = nav.target;
+    if (!this.model.objects.has(target) || [scenarioMetadataType, documentChunkType].includes(target) || processLogTarget(this.model, target)
+      || Object.values(this.model.object(target).properties).some(property => property.derived)) return undefined;
+    // The checks storedSelection makes for each source, made once for the batch.
+    await checkScenario(this.db, this.model, this.owner, this.client);
+    this.access.definition(this.model, 'object', target);
+    if (as) this.access.definition(this.model, 'interface', as);
+    this.access.read(this.model, target);
+    this.access.definition(this.model, 'link', nav.link);
+    const key = (id: string) => digest({ type: sourceType, id });
+    const targets = new Map(sources.map(source => [key(source.id), [] as ObjectData[]]));
+    const label = this.model.links.get(nav.link)?.classification;
+    if (!this.access.canSeeModelData(label)) return targets;
+    this.access.observeClassification(label);
+    if (!this.access.canRead(this.model, target)) return targets;
+    const [from, to] = nav.forward ? ['from', 'to'] : ['to', 'from'], ids = sources.map(source => source.id), limit = 50000;
+    if (this.db.objectScoped(this.client)) {
+      const { rows } = await this.db.query(`SELECT l.${to}_type AS type,l.${to}_id AS id FROM ${this.db.schema}.links l
+        WHERE l.projection=$1 AND l.owner=$2 AND l.type=$3 AND l.${from}_type=$4 AND l.${from}_id=ANY($5::text[]) LIMIT $6`,
+        [this.model.projection, this.owner, nav.link, sourceType, ids, this.db.objectLockBudget + 1], this.client);
+      await this.lockObjects([...sources, ...rows.map(row => ({ type: String(row.type), id: String(row.id) }))], 'shared');
+    }
+    const values: unknown[] = [this.owner, this.model.projection];
+    const bind = (value: unknown) => { values.push(value); return '$' + values.length; };
+    const tables = viewTables(this.db, this.model, this.owner, values, [target, sourceType]);
+    const policy = this.access.rowSql(this.model, target, values, 'o.properties');
+    const { rows } = await this.db.readQuery(`${tables.prefix}SELECT l.${from}_id AS source_id,o.type,o.id,o.revision,o.properties
+      FROM ${tables.links} l JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND o.type=l.${to}_type AND o.id=l.${to}_id
+      WHERE l.owner=$1 AND l.projection=$2 AND l.type=${bind(nav.link)} AND l.${from}_type=${bind(sourceType)}
+        AND l.${from}_id=ANY(${bind(ids)}::text[]) AND o.type=${bind(target)} AND ${policy}
+      ORDER BY l.${from}_id, o.type COLLATE "C", o.id COLLATE "C" LIMIT ${bind(limit + 1)}`, values, this.client);
+    if (rows.length > limit) return undefined;
+    const records = rows.map(row => ({ source: String(row.source_id), object: this.row(row) }));
+    await this.linkedSecurityReads(records.map(record => record.object));
+    const fields = Object.keys(this.model.object(target).properties);
+    for (const { source, object } of records) {
+      this.access.readRow(this.model, object.ref.type, object.properties);
+      targets.get(key(source))?.push({ ...object, properties: Object.fromEntries(fields.map(field => [field,
+        this.visibleViewField(target, field) && this.access.cell(this.model, object.ref.type, field, object.properties) ? object.properties[field] : null])) });
+    }
+    return targets;
+  }
   async propertyVisible(ref:ObjectRef,field:string):Promise<boolean> {
     const object=await this.stored(ref);
     this.access.readRow(this.model,ref.type,object.properties);
@@ -210,7 +284,24 @@ export class Objects {
     const args = querySchema.parse(input);
     return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryObjects(args), observedPage);
   }
-  private async queryObjects(args: z.output<typeof querySchema>): Promise<{ items: ObjectData[]; cursor?: string }> {
+  /**
+   * Every match of a query for a caller that needs the whole set, such as Object Set evaluation. A query that
+   * needs complete evaluation (derived properties, filters, ordering) is evaluated once rather than once per
+   * page; other queries are read page by page from storage.
+   */
+  async queryAll(input: Query): Promise<ObjectData[]> {
+    this.requireExclusive('set query');
+    const args = querySchema.parse({ ...input, limit: 100, cursor: undefined });
+    const items: ObjectData[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.queryObjects({ ...args, cursor }, true);
+      items.push(...page.items);
+      cursor = page.cursor;
+    } while (cursor);
+    return items;
+  }
+  private async queryObjects(args: z.output<typeof querySchema>, complete = false): Promise<{ items: ObjectData[]; cursor?: string }> {
     const fields = queryFields(args);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -224,7 +315,7 @@ export class Objects {
       const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,access,client).query(args);
+        return new Objects(this.db,this.model,access,client).queryObjects(args,complete);
       });
       if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
       this.access.adoptReads(access);return result;
@@ -243,18 +334,22 @@ export class Objects {
     let matching: ObjectData[];
     if (pushed) {
       matching = [];
+      await evaluator.prefetch(pushed.objects);
       for (const item of pushed.objects) matching.push(await project(item));
     } else {
-      const all: ObjectData[] = [];
+      const candidates: ObjectData[] = [], all: ObjectData[] = [];
       let cursor: string | undefined;
       do {
         const page = await this.queryStored({ type: args.type, from: args.from, intervalOverlap: args.intervalOverlap, limit: 100, cursor });
         for (const item of page.items) {
-          all.push(await project(args.type === item.ref.type ? item : await this.readStored(item.ref)));
-          if (all.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
+          candidates.push(args.type === item.ref.type ? item : await this.readStored(item.ref));
+          if (candidates.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
         }
         cursor = page.cursor;
       } while (cursor);
+      // Derived properties of every candidate read their visibility and relationships together.
+      await evaluator.prefetch(candidates);
+      for (const item of candidates) all.push(await project(item));
       const regex = await regexMatches(args.filter, all);
       matching = all.filter(object => Object.entries(args.where).every(([field, value]) =>
         digest(nestedValue(object.properties, field)) === digest(value)) &&
@@ -271,7 +366,7 @@ export class Objects {
     });
     const identity=digest({owner:this.owner,release:this.model.release,scenario:this.model.scenario,args:{...args,cursor:undefined,limit:undefined},objects:matching});
     const offset=args.cursor?z.strictObject({query:z.literal(identity),offset:z.number().int().min(0).max(matching.length)}).parse(decodeQueryCursor(args.cursor)).offset:0;
-    const end=offset+args.limit;
+    const end=complete?matching.length:offset+args.limit;
     const items=matching.slice(offset,end).map(object=>args.select?{...object,properties:Object.fromEntries(args.select.map(field=>[field,nestedValue(object.properties,field)]))}:object);
     return {items,cursor:end<matching.length?Buffer.from(JSON.stringify({query:identity,offset:end})).toString('base64url'):undefined};
   }
@@ -566,14 +661,14 @@ export class Objects {
     const tables = viewTables(this.db, this.model, this.owner, values, [sourceType, nav.target]);
     const sourcePolicy = this.access.rowSql(this.model, sourceType, values, 's.properties');
     const targetPolicy = this.access.rowSql(this.model, nav.target, values, 'o.properties');
-    const result = await this.db.readQuery(`${tables.prefix}SELECT o.type,o.id,o.revision,o.properties FROM ${tables.objects} o
-      WHERE o.owner=$1 AND o.projection=$2 AND o.type=$6 AND ${targetPolicy}
-      AND EXISTS (
-        SELECT 1 FROM ${tables.links} l JOIN ${tables.objects} s
-          ON s.projection=l.projection AND s.owner=l.owner AND (s.type,s.id)=(l.${from}_type,l.${from}_id)
-        WHERE l.projection=o.projection AND l.owner=o.owner AND l.type=$5
-          AND s.type=$3 AND s.id=ANY($4::text[]) AND ${sourcePolicy}
-          AND (l.${to}_type,l.${to}_id)=(o.type,o.id)) LIMIT $7`, values, this.client);
+    // Start from the sources' relationship rows, which the endpoint indexes find, instead of testing every target.
+    const result = await this.db.readQuery(`${tables.prefix}SELECT DISTINCT ON (o.type,o.id) o.type,o.id,o.revision,o.properties
+      FROM ${tables.links} l
+      JOIN ${tables.objects} s ON s.projection=l.projection AND s.owner=l.owner AND (s.type,s.id)=(l.${from}_type,l.${from}_id)
+      JOIN ${tables.objects} o ON o.projection=l.projection AND o.owner=l.owner AND (o.type,o.id)=(l.${to}_type,l.${to}_id)
+      WHERE l.owner=$1 AND l.projection=$2 AND l.type=$5 AND l.${from}_type=$3 AND l.${from}_id=ANY($4::text[])
+        AND s.type=$3 AND ${sourcePolicy} AND o.type=$6 AND ${targetPolicy}
+      ORDER BY o.type,o.id LIMIT $7`, values, this.client);
     if (result.rows.length > maximum) throw new Conflict('Object set exceeds the complete evaluation limit');
     const records = result.rows.map(row => this.row(row));
     await this.linkedSecurityReads(records);
@@ -618,8 +713,9 @@ export class Objects {
       for(const row of result.rows)try{items.push(await scenarioMetadataRead(this,{type:scenarioMetadataType,id:String(row.id)}));}catch(error){if(!(error instanceof NotFound))throw error;}
       return items;
     }
-    const evaluator=new DerivedProperties(this);
-    return Promise.all(result.rows.map(row=>evaluator.enrich(this.visible(this.row(row)))));
+    const evaluator=new DerivedProperties(this), targets=result.rows.map(row=>this.visible(this.row(row)));
+    await evaluator.prefetch(targets);
+    return Promise.all(targets.map(object=>evaluator.enrich(object)));
   }
   async create(ref: ObjectRef, input: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).create(ref, input));

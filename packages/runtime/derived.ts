@@ -3,13 +3,58 @@ import { validator } from '../ontology/model.js';
 import type { DerivedExpression, ObjectData, ObjectRef } from '../ontology/schema.js';
 import type { Objects } from './objects.js';
 import { nestedValue } from './query-filter.js';
+import { capturingDecisionReads } from './decision-evidence.js';
 
 /** One evaluation shares authorized reads and detects cycles across linked and local properties. */
 export class DerivedProperties {
   private readonly objects = new Map<string, ObjectData>();
   private readonly values = new Map<string, unknown>();
+  private readonly visibility = new Map<string, boolean>();
+  private readonly linked = new Map<string, ObjectData[]>();
   private operations = 0;
   constructor(private readonly graph: Objects) {}
+  private linkKey(ref: ObjectRef, step: { link: string; as?: string }) { return digest([ref, step.link, step.as ?? null]); }
+  /**
+   * Reads ahead what these objects' derived properties need, in a few statements instead of a few per object:
+   * the visibility of each derived property, and each linked step for all objects together. Evaluation then
+   * uses these reads and falls back to its per-object reads for anything they do not cover.
+   */
+  async prefetch(objects: readonly ObjectData[]) {
+    // Recorded decision evidence names each per-object read, so it keeps them.
+    if (!objects.length || capturingDecisionReads()) return;
+    const derivedOf = (type: string) => Object.entries(this.graph.model.object(type).properties).filter(([, property]) => property.derived);
+    const pending = objects.filter(object => derivedOf(object.ref.type).length);
+    if (!pending.length) return;
+    for (const object of pending) this.objects.set(digest(object.ref), object);
+    for (const [key, allowed] of await this.graph.propertyVisibility(pending.map(object =>
+      ({ ref: object.ref, names: derivedOf(object.ref.type).map(([name]) => name) })))) this.visibility.set(key, allowed);
+    const paths = new Map<string, { type: string; path: { link: string; as?: string }[] }>();
+    const collect = (type: string, expression: DerivedExpression) => {
+      if (expression.op === 'linked') paths.set(digest([type, expression.path]), { type, path: expression.path });
+      else if (expression.op !== 'literal' && expression.op !== 'property') { collect(type, expression.left); collect(type, expression.right); }
+    };
+    for (const type of new Set(pending.map(object => object.ref.type)))
+      for (const [, property] of derivedOf(type)) collect(type, property.derived!);
+    for (const { type, path } of paths.values()) {
+      let frontier = pending.filter(object => object.ref.type === type).map(object => object.ref);
+      for (const step of path) {
+        const unseen = frontier.filter(ref => !this.linked.has(this.linkKey(ref, step)));
+        if (unseen.length) {
+          const targets = await this.graph.linkedTargets(unseen, step.link, step.as);
+          if (!targets) break;
+          for (const ref of unseen) {
+            const items = targets.get(digest({ type: ref.type, id: ref.id })) ?? [];
+            this.linked.set(this.linkKey(ref, step), items);
+            for (const item of items) this.objects.set(digest(item.ref), item);
+          }
+        }
+        const next = new Map<string, ObjectRef>();
+        for (const ref of frontier) for (const item of this.linked.get(this.linkKey(ref, step)) ?? []) next.set(digest(item.ref), item.ref);
+        if (next.size > 10000) break;
+        frontier = [...next.values()];
+      }
+    }
+  }
   private consume() {
     if (++this.operations > 50000) throw new Conflict('Derived property evaluation exceeds its work limit');
   }
@@ -41,7 +86,7 @@ export class DerivedProperties {
       throw new Conflict('Derived property dependency cycle or depth limit');
     if (!this.values.has(key)) {
       this.consume();
-      const allowed = await this.graph.propertyVisible(ref, name!);
+      const allowed = this.visibility.get(key) ?? await this.graph.propertyVisible(ref, name!);
       const value = allowed
         ? await this.calculate(ref, definition.derived, new Set([...stack, key]), 0)
         : null;
@@ -65,6 +110,16 @@ export class DerivedProperties {
       for (const step of expression.path) {
         const next = new Map<string, ObjectData>();
         for (const source of current.values()) {
+          const prefetched = this.linked.get(this.linkKey(source.ref, step));
+          if (prefetched) {
+            this.consume();
+            for (const object of prefetched) {
+              next.set(digest(object.ref), object);
+              this.objects.set(digest(object.ref), object);
+            }
+            if (next.size > 10000) throw new Conflict('Derived relationship exceeds 10000 objects');
+            continue;
+          }
           const nav = this.graph.model.navigation(source.ref.type, step.link, step.as);
           let cursor: string | undefined;
           do {
