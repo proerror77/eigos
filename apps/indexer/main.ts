@@ -11,6 +11,7 @@ import { MachineryReviews } from '../../packages/runtime/machinery-reviews.js';
 import { Automation } from '../../packages/runtime/automation.js';
 import { configuredCapabilities } from '../../packages/capabilities/index.js';
 import { connectionConfigSchema } from '../../packages/core/config.js';
+import { dispatchAutomation } from './dispatch.js';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const db = new Database(process.env.DATABASE_URL, process.env.EIGOS_PG_SCHEMA);
@@ -33,19 +34,11 @@ async function deliverEffects() {
     if (!await effects.runOne(controller.signal)) await idle();
   }
 }
-async function dispatch() {
-  let nextCleanup = 0;
-  while (!controller.signal.aborted) {
-    if (Date.now() >= nextCleanup) {
-      const cleaned = await scenarios.cleanup();
-      nextCleanup = Date.now() + (cleaned.more ? 1000 : 60000);
-    }
-    let worked = await observations.scanOne();
-    worked = await automation.scanOne() || worked;
-    worked = await automation.runOne(controller.signal) || worked;
-    if (!worked) await idle();
-  }
-}
+const dispatch = () => dispatchAutomation({
+  cleanup: () => scenarios.cleanup(),
+  scans: [() => observations.scanOne(), () => automation.scanOne()],
+  run: signal => automation.runOne(signal),
+}, controller.signal);
 async function reviewProcesses() {
   while (!controller.signal.aborted) {
     if (!await machinery.scanOne()) {

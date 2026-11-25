@@ -65,6 +65,8 @@ import { mapFunctions } from '../packages/ontology/maps.js';
 import { rideWatchDefinition, rideWatchType } from '../packages/ontology/ride-watch.js';
 import { fliggyServicesDefinition, marketplaceDefinition } from '../packages/ontology/services.js';
 import { checkWorkflowDependencies } from '../packages/runtime/workflow-compatibility.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import { dispatchAutomation } from '../apps/indexer/dispatch.js';
 
 async function setup() {
   const f=await fixture();await initializeActionUndo(f.db);await initializeScenarioLifecycle(f.db);await initializeAutomation(f.db);
@@ -1640,4 +1642,48 @@ test('a process effect checks its published Action contract before admitting lat
     assert.equal(current.enabled,false);assert.match(current.error,/scan failed/i);
     assert.equal(current.latestRun,null);assert.equal((await f.runs()).length,0);
   }finally{await f.close();}
+});
+
+test('rule scans continue while a workflow run is still executing',async()=>{
+  const controller=new AbortController();let scans=0,runs=0,release!:()=>void,scanned!:()=>void;
+  const running=new Promise<void>(resolve=>{release=resolve;}),thirdScan=new Promise<void>(resolve=>{scanned=resolve;});
+  const dispatch=dispatchAutomation({
+    cleanup:async()=>({more:false}),
+    scans:[async()=>{if(++scans===3)scanned();return false;}],
+    run:async()=>{if(++runs>1)return false;await running;return true;},
+  },controller.signal,5);
+  try{
+    await Promise.race([thirdScan,delay(2000).then(()=>{throw new Error('Rule scans waited for the running workflow');})]);
+    assert.equal(runs,1);
+  }finally{release();controller.abort();await dispatch;}
+});
+
+test('a productive rule scan wakes an idle workflow runner',async()=>{
+  const controller=new AbortController();let queued=false,scans=0,claimed!:()=>void;
+  const claim=new Promise<void>(resolve=>{claimed=resolve;});
+  const dispatch=dispatchAutomation({
+    cleanup:async()=>({more:false}),
+    scans:[async()=>{if(++scans>1)return false;await delay(20);queued=true;return true;}],
+    run:async()=>{if(!queued)return false;queued=false;claimed();return true;},
+  },controller.signal,60000);
+  try{
+    await Promise.race([claim,delay(1000).then(()=>{throw new Error('The queued workflow waited for the idle interval');})]);
+  }finally{controller.abort();await dispatch;}
+});
+
+test('a failing workflow runner stops rule scans and reports its error',async()=>{
+  const controller=new AbortController(),failure=new Error('runner failed');let scans=0;
+  await assert.rejects(dispatchAutomation({
+    cleanup:async()=>({more:false}),
+    scans:[async()=>{scans++;await delay(1);return true;}],
+    run:async()=>{await delay(20);throw failure;},
+  },controller.signal,5),failure);
+  const stopped=scans;await delay(30);assert.equal(scans,stopped);
+});
+
+test('aborting dispatch ends idle scan and run loops promptly',async()=>{
+  const controller=new AbortController();
+  const dispatch=dispatchAutomation({cleanup:async()=>({more:false}),scans:[async()=>false],run:async()=>false},controller.signal,60000);
+  await delay(10);const started=performance.now();controller.abort();await dispatch;
+  assert.ok(performance.now()-started<1000);
 });
