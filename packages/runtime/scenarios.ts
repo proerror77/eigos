@@ -447,7 +447,7 @@ export class Scenarios {
   }
   async view(access: Access, model: PublishedOntology, id: string, client: Sql = this.db.pool) {
     z.uuid().parse(id);
-    const view = new PublishedOntology(model.document, model.release, model.projection, model.runtimeId, model.bindings, id, model.evaluation);
+    const view = model.scoped(id, model.evaluation);
     await checkScenario(this.db, view, access.principal.owner, client);
     if (model.evaluation) await lockEdits(this.db,view,access.principal.owner,client);
     else if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [model.document.id], client)).rows[0]?.release !== model.release) throw new Conflict('Scenario publication changed; create a new scenario');

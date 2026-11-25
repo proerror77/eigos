@@ -16,8 +16,18 @@ export interface Bindings {
   describe(model: Ontology): BindingManifest;
   evaluateRelease?(model: Ontology): { policy: string; checks: ReleaseCheck[] };
 }
+const compiledReleases = new WeakMap<PublishedOntology, PublishedOntology>();
 export class PublishedOntology extends Ontology {
   constructor(body: unknown, readonly release: string, readonly projection: string, readonly runtimeId: string, readonly bindings: BindingManifest, readonly scenario?: string, readonly evaluation?: {base:string;client:Sql}) { super(body,{published:true}); }
+  /** The same compiled release seen through a Scenario or a candidate evaluation, without compiling it again. */
+  scoped(scenario: string | undefined, evaluation: PublishedOntology['evaluation']): PublishedOntology {
+    const compiled = compiledReleases.get(this) ?? this;
+    const view = Object.create(compiled, {
+      scenario: { value: scenario, enumerable: true }, evaluation: { value: evaluation, enumerable: true },
+    }) as PublishedOntology;
+    compiledReleases.set(view, compiled);
+    return view;
+  }
 }
 export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, unknown>) => Record<string, unknown>;
 

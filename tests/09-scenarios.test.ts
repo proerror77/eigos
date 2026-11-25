@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { fixture, principal } from './fixture.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
+import { PublishedOntology } from '../packages/runtime/metadata.js';
 import { Access } from '../packages/runtime/access.js';
 import { ScenarioEvaluations, compareScenariosSchema } from '../packages/runtime/scenario-evaluation.js';
 import { calendarAnswer } from './planning-fixture.js';
@@ -262,4 +263,18 @@ test('scenario comparison selects exact revisions and compares one shared aggreg
     }), /revision changed/);
     await assert.rejects(evaluations.compare(await Access.load(f.db, { ...principal, owner: 'another' }), f.model, input), /Permission|unavailable/);
   } finally { await f.close(); }
+});
+
+test('a Scenario view reuses the compiled release instead of compiling the Ontology again',async()=>{
+  const f=await fixture();
+  try{
+    const scenarios=new Scenarios(f.db),created=await scenarios.create(f.access,f.model,{requestId:'compiled-view',name:'Compiled view'});
+    const view=await scenarios.view(f.access,f.model,created.id);
+    assert.equal(view.scenario,created.id);assert.equal(f.model.scenario,undefined);
+    assert.equal(view.release,f.model.release);assert.equal(view.projection,f.model.projection);
+    assert.equal(view.document,f.model.document);assert.equal(view.objects,f.model.objects);assert.equal(view.actions,f.model.actions);
+    assert(view instanceof PublishedOntology);
+    const nested=view.scoped(undefined,undefined);
+    assert.equal(nested.scenario,undefined);assert.equal(nested.objects,f.model.objects);assert.equal(view.scenario,created.id);
+  }finally{await f.close();}
 });

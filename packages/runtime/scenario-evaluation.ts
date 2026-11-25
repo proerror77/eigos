@@ -140,8 +140,7 @@ export class ScenarioEvaluations {
     if (model.scenario) throw new Conflict('Select the current Ontology publication');
     access.require(model.document.id, 'view_definition', model.document.id);
     return this.db.withOwner(access.principal.owner, () => this.db.transaction(async client => {
-      const scoped=candidateBase?new PublishedOntology(model.document,model.release,model.projection,model.runtimeId,
-        model.bindings,undefined,{base:candidateBase,client}):model;
+      const scoped=candidateBase?model.scoped(undefined,{base:candidateBase,client}):model;
       await lockEdits(this.db, scoped, access.principal.owner, client);
       await access.refresh(client);
       const at = (await this.db.query<{ at: Date }>('SELECT clock_timestamp() AS at', [], client)).rows[0]!.at;
