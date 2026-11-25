@@ -22,6 +22,7 @@ Gateway 将 `submit_task`、`get_task` 和 `complete_with_action` 的 HTTP 返�
 | `receivedAt`、`toolStartedAt`、`toolFinishedAt`、`finishedAt` | Gateway 收到请求、开始工具回调、结果序列化或错误处理完成、HTTP 响应结束的 UTC 时间。`durationMs` 使用单调时钟计算整次 Gateway 请求耗时 |
 | `transport`、`httpStatus`、`toolStatus` | `sent` 表示服务端将响应交给传输层，`closed` 表示在此之前连接关闭。HTTP 状态与工具状态分别记录 |
 | `taskId`、`taskState`、`taskCreatedAt`、`resultIncluded`、`taskCompletedAt` | 任务型工具返回的已授权快照。创建和完成时间取自任务记录。单次 Action 调用也记录是否返回结果 |
+| `db` | 工具回调期间的[数据库与锁画像](#数据库与锁画像) |
 
 从 Gateway 日志按任务 ID 查看轮询。`gateway_container` 填运行中的 Gateway 容器名，`task_id` 填查询返回的 ID。
 
@@ -34,12 +35,13 @@ docker logs "$gateway_container" 2>&1 | jq -Rc --arg id "$task_id" \
 
 ## 执行阶段计时
 
-Worker 领到任务时写 `worker_claim`，运行结束时写 `worker_finish`。两行和执行阶段的 `stage_timing` 共用 `taskId` 和本次领取的 `workerRunId`。`taskCreatedAt`、`taskAvailableAt` 和 `taskClaimedAt` 来自 PostgreSQL，同一笔任务首次领取时可以分别算出合批等待与进入可执行状态后的排队时间。恢复和重试各有独立的 `workerRunId`。`worker_finish.taskState` 表示本次的已提交结果，`uncommitted` 表示未能提交状态。
+Worker 领到任务时写 `worker_claim`，运行结束时写 `worker_finish`。两行和执行阶段的 `stage_timing` 共用 `taskId` 和本次领取的 `workerRunId`。`taskCreatedAt`、`taskAvailableAt` 和 `taskClaimedAt` 来自 PostgreSQL，同一笔任务首次领取时可以分别算出合批等待与进入可执行状态后的排队时间，`queuedMs` 直接给出领取时间减去可执行时间。恢复和重试各有独立的 `workerRunId`。`worker_finish.taskState` 表示本次的已提交结果，`uncommitted` 表示未能提交状态。`worker_finish.db` 汇总本次运行的数据库与锁画像。
 
 | `stage_timing.stage` | 时间范围 |
 | --- | --- |
 | `model_session`、`agent_tool` | EIGOS 驱动模型会话和各工具的时间。模型会话包含等工具的时间，可以用首个 `agent_tool.startedAt` 看模型启动到第一次选择工具经过多久 |
-| `action_apply`、`result_read` | 发布的 Action 提交与结果 Function 的读回 |
+| `action_apply`、`result_read` | 发布的 Action 提交与结果 Function 的读回。Agent、Workflow、Gateway 和排程调用的 Action 都记录 `action_apply` |
+| `function` | 每次 Function 实现的执行时间，`operation` 为 Function 名。它嵌套在调用它的阶段里 |
 | `didi_read`、`didi_rpc` | 每个滴滴工具的连接器执行耗时，以及其中的 MCP 工具调用耗时。两次地点读取可能并行 |
 
 在 Worker 容器里用同一个任务 ID 查看阶段。单次 `complete_with_action` 的阶段在 Gateway 日志里，用同一个 `mcpRequestId` 查询。
@@ -52,6 +54,25 @@ docker logs "$gateway_container" 2>&1 | jq -Rc --arg id "$mcp_request_id" \
   'fromjson? | select(.mcpRequestId == $id and (.event == "mcp_request" or .event == "stage_timing"))'
 ```
 
-阶段记录包含 UTC 起止时间和单调时钟计算的 `durationMs`，可按 `startedAt` 排列。同一调用内会有嵌套和并行阶段，按起止时间读取关键路径。用 Grok 的消息发送和报价显示时间对齐首条和末条 Gateway 记录，可量出 EIGOS 边界外的时间；Grok 内部阶段仍需客户端日志。
+阶段记录包含 UTC 起止时间、单调时钟计算的 `durationMs`，以及该阶段的 `db` 画像，可按 `startedAt` 排列。同一调用内会有嵌套和并行阶段，按起止时间读取关键路径。用 Grok 的消息发送和报价显示时间对齐首条和末条 Gateway 记录，可量出 EIGOS 边界外的时间；Grok 内部阶段仍需客户端日志。
 
 日志只保存调用元数据。凭据、提示词、入参与报价内容留在原调用的权限边界内。
+
+## Indexer 计时
+
+Indexer 领取 Workflow 运行时写 `workflow_claim`，本次执行结束时写 `workflow_finish`。两行和执行期间的 `stage_timing` 共用 `workflowRunId` 与本次领取的 `attemptId`。`runCreatedAt`、`runAvailableAt` 和 `claimedAt` 取自 PostgreSQL，`queuedMs` 是领取时间减去可执行时间。运行结果状态仍以 `workflow_runs` 为准。
+
+每应用、跳过或失败一笔来源事务，Indexer 写一行 `index_apply`，包含 `transactionId`、`source`、本次映射的对象数 `objects`、`state`（`applied`、`canceled` 或 `failed`）、`durationMs` 和 `db`。日志不包含来源行内容。
+
+## 数据库与锁画像
+
+`db` 统计操作期间经运行层数据库客户端发出的语句。嵌套阶段的语句同时计入外层阶段和整次运行。
+
+| 字段 | 含义 |
+| --- | --- |
+| `statements`、`durationMs` | 语句数与各语句往返时间之和，包含语句内部的锁等待 |
+| `editLockWaitMs` | 获取 Ontology 编辑锁（发布共享锁和同一发布、同一 owner 的编辑锁）所用时间，包含超时放弃的等待 |
+| `editLockHoldMs` | 从取得编辑锁到所在事务提交或回滚的时间。锁一直持有到事务结束，期间同一 owner 的其他写入需要等待 |
+| `lockTimeouts` | 因超过事务的 `lock_timeout`（2 秒）而失败的语句数 |
+
+按任务或运行汇总编辑锁的持有时间与超时次数，可以看到同一 owner 的写入在哪些阶段互相等待。

@@ -115,7 +115,8 @@ export class Actions {
     return { release: model.release, items };
   }
   apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
-    return this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation);
+    return timeOperation('action_apply',
+      () => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation), actionName);
   }
   private async execute(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>,
     requestId: string, beforeCommit: ((client: Sql) => Promise<void>) | undefined, execution: FunctionContext['execution'],
@@ -278,8 +279,7 @@ export class Actions {
     } : undefined;
     let reference: ObjectRef;
     try {
-      reference = await timeOperation('action_apply',
-        () => this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal), selected.action);
+      reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
     } catch (error) {
       if (!execution || !options.allowPause || model.scenario) throw error;
       const original = { ...selected, requestId, read };

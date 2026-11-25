@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { TaskResult,PermissionDenied } from '../../packages/runtime/access.js';
 import { Conflict } from '../../packages/core/identity.js';
 import { withOperationTiming } from '../../packages/core/operation-timing.js';
+import { profileDatabase, profileSummary, type DatabaseProfile } from '../../packages/core/database-profile.js';
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
@@ -22,14 +23,16 @@ export class Worker {
     console.info(JSON.stringify({
       event: 'worker_claim', ...correlation, startedAt, taskCreatedAt: task.created_at.toISOString(),
       taskAvailableAt: task.available_at?.toISOString(), taskClaimedAt: task.updated_at.toISOString(),
+      queuedMs: task.available_at ? task.updated_at.getTime() - task.available_at.getTime() : undefined,
     }));
-    let taskState = 'uncommitted';
+    let taskState = 'uncommitted', profile: DatabaseProfile | undefined;
     try {
-      taskState = await this.tasks.db.withOwner(task.owner, () => withOperationTiming(correlation, () => this.execute(task)));
+      taskState = await this.tasks.db.withOwner(task.owner, () => withOperationTiming(correlation,
+        () => profileDatabase(measured => { profile = measured; return this.execute(task); })));
     } finally {
       console.info(JSON.stringify({
         event: 'worker_finish', ...correlation, taskState, finishedAt: new Date().toISOString(),
-        durationMs: Math.round(performance.now() - started),
+        durationMs: Math.round(performance.now() - started), db: profile && profileSummary(profile),
       }));
     }
     return true;

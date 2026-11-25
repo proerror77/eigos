@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { withOperationTiming } from '../../packages/core/operation-timing.js';
+import { profileDatabase, profileSummary, type DatabaseProfile } from '../../packages/core/database-profile.js';
 
 const toolCall = z.object({
   method: z.literal('tools/call'),
@@ -21,6 +22,7 @@ type Call = {
   taskCreatedAt?: string;
   taskCompletedAt?: string;
   resultIncluded?: boolean;
+  db?: DatabaseProfile;
 };
 
 /** Record transport timings without retaining the request or response payload. */
@@ -31,7 +33,7 @@ export function startMcpTiming(res: Response) {
     if (!call) return;
     console.info(JSON.stringify({
       event: 'mcp_request', ...call, receivedAt, finishedAt: new Date().toISOString(),
-      durationMs: Math.round(performance.now() - started), transport,
+      durationMs: Math.round(performance.now() - started), transport, db: call.db && profileSummary(call.db),
       httpStatus: res.headersSent ? res.statusCode : undefined,
     }));
     call = undefined;
@@ -47,7 +49,10 @@ export function startMcpTiming(res: Response) {
     res.setHeader('X-EIGOS-MCP-Request-Id', entry.mcpRequestId);
     return {
       start() { entry.toolStartedAt = new Date().toISOString(); },
-      run<T>(operation: () => Promise<T>) { return withOperationTiming({ mcpRequestId: entry.mcpRequestId }, operation); },
+      run<T>(operation: () => Promise<T>) {
+        return withOperationTiming({ mcpRequestId: entry.mcpRequestId },
+          () => profileDatabase(profile => { entry.db = profile; return operation(); }));
+      },
       succeed(result: unknown) {
         entry.toolFinishedAt = new Date().toISOString();
         entry.toolStatus = 200;

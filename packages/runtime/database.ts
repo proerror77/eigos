@@ -16,6 +16,7 @@ import { initializeIndexing } from './indexing.js';
 import { initializeEditHistory } from './edit-history.js';
 import { initializeMaterializations } from './materializations.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { activeProfiles, chargeProfiles, profileDatabase, type DatabaseProfile } from '../core/database-profile.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -30,9 +31,9 @@ export class Database {
   readonly schema: string;
   readonly queryPool?: pg.Pool;
   queries = 0;
-  private readonly queryCount = new AsyncLocalStorage<{ count: number }>();
   private readonly ownerContext = new AsyncLocalStorage<string>();
   private readonly transactionOwners = new WeakMap<Sql, string>();
+  private readonly editLocks = new WeakMap<Sql, { since: number; profiles: readonly DatabaseProfile[] }>();
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
     queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
     readonly sandboxEnabled = developmentSandboxEnabled()) {
@@ -45,14 +46,28 @@ export class Database {
     }
     this.pool.on('error', error => process.stderr.write(`PostgreSQL connection error: ${error.name}\n`));
   }
-  async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool) {
-    this.queries++;
-    const measured = this.queryCount.getStore();
-    if (measured) measured.count++;
+  async query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = [], client: Sql = this.pool): Promise<pg.QueryResult<T>> {
     if (this.ownerIsolation && client === this.pool && this.ownerContext.getStore()) {
-      return this.transaction(connection => connection.query<T>(text, values));
+      return this.transaction(connection => this.query<T>(text, values, connection));
     }
-    return client.query<T>(text, values);
+    this.queries++;
+    const profiles = activeProfiles(), started = performance.now();
+    try { return await client.query<T>(text, values); }
+    catch (error) {
+      if ((error as { code?: unknown } | null)?.code === '55P03') chargeProfiles(profiles, 'lockTimeouts', 1);
+      throw error;
+    } finally {
+      chargeProfiles(profiles, 'statements', 1);
+      chargeProfiles(profiles, 'durationMs', performance.now() - started);
+    }
+  }
+  /** Times acquiring the Ontology edit locks and how long the transaction then holds them. */
+  async acquireEditLocks(client: Sql, acquire: () => Promise<void>) {
+    const profiles = activeProfiles(), started = performance.now();
+    try { await acquire(); }
+    finally { chargeProfiles(profiles, 'editLockWaitMs', performance.now() - started); }
+    if (client !== this.pool && client !== this.queryPool && !this.editLocks.has(client))
+      this.editLocks.set(client, { since: performance.now(), profiles });
   }
   lockKey(namespace: string, ...parts: string[]): string {
     return JSON.stringify([this.schema, namespace, ...parts]);
@@ -81,8 +96,7 @@ export class Database {
     return result;
   }
   measureQueries<T>(operation: (count: () => number) => Promise<T>) {
-    const measured = { count: 0 };
-    return this.queryCount.run(measured, () => operation(() => measured.count));
+    return profileDatabase(profile => operation(() => profile.statements));
   }
   async transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -97,7 +111,14 @@ export class Database {
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
-    } finally { this.transactionOwners.delete(client); client.release(); }
+    } finally {
+      const held = this.editLocks.get(client);
+      if (held) {
+        chargeProfiles(held.profiles, 'editLockHoldMs', performance.now() - held.since);
+        this.editLocks.delete(client);
+      }
+      this.transactionOwners.delete(client); client.release();
+    }
   }
   private async readTransaction<T extends QueryResultRow>(pool: pg.Pool, text: string, values: unknown[], authority?: {id:string;position:string}) {
     const connection = await pool.connect();
