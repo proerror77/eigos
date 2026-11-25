@@ -281,8 +281,10 @@ test('Agent MCP discovers map and weather Functions in the same published model 
     const send = (name: string, args: Record<string, unknown>) => mcp.callTool({ name, arguments: args });
     const r = await send('describe_ontology', {});
     const manifest = JSON.parse((r.content[0] as {text: string}).text);
-    for (const name of ['geocodeAddress', 'searchNearbyPlaces', 'estimateMapRoute', 'readWeather'])
-      assert(manifest.functionTypes.some((fn: {apiName: string; source: string}) => fn.apiName === name && fn.source === 'Amap'));
+    const amapFunctions = ['geocodeAddress', 'searchNearbyPlaces', 'estimateMapRoute', 'readWeather'];
+    for (const name of amapFunctions) assert(manifest.catalogue.function.includes(name));
+    const contracts = JSON.parse(((await send('describe_ontology', { names: amapFunctions })).content[0] as { text: string }).text);
+    assert.deepEqual(contracts.resources.map((resource: { definition: { source: string } }) => resource.definition.source), amapFunctions.map(() => 'Amap'));
     const search = await send('describe_ontology', { query: 'readWeather' });
     assert(!search.isError);
     const matches = JSON.parse((search.content[0] as { text: string }).text);
@@ -296,7 +298,7 @@ test('Agent MCP discovers map and weather Functions in the same published model 
     assert(!details.isError);
     assert.deepEqual(JSON.parse((details.content[0] as { text: string }).text).resources, [{
       kind: 'function', apiName: 'readWeather',
-      definition: manifest.functionTypes.find((fn: { apiName: string }) => fn.apiName === 'readWeather'),
+      definition: contracts.resources.find((resource: { apiName: string }) => resource.apiName === 'readWeather').definition,
     }]);
     const ambiguous = await send('describe_ontology', { query: 'readWeather', names: ['readWeather'] });
     assert.deepEqual(ambiguous.structuredContent, { status: 400, error: 'Provide either query or names' });

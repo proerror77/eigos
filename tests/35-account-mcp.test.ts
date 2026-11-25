@@ -393,7 +393,8 @@ test('member restaurant search uses the original account source and exposes no g
     assert.deepEqual((await (await g.call('/identity', alice.token)).json()).scopes, ['tasks:read', 'tasks:write']);
     assert.equal((await g.call('/ontology', alice.token)).status, 403);
     const catalogue = body(await alice.client.callTool({ name: 'describe_ontology', arguments: {} }));
-    assert(!catalogue.actionTypes.some((action: { apiName: string }) => action.apiName === 'EstimateRide'));
+    assert(!(catalogue.catalogue.action ?? []).includes('EstimateRide'));
+    assert(!('actionTypes' in catalogue));
     await assert.rejects(alice.client.callTool({ name: 'check_restaurant_availability', arguments: {} }), /Tool .* not found/);
     const rows = await f.db.query(`SELECT action FROM ${f.schema}.action_changes WHERE request_id=$1`, [input.requestId]);
     assert.deepEqual(rows.rows.map(row => row.action), ['FindRestaurants', 'FindRestaurants']);

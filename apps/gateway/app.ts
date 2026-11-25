@@ -15,7 +15,7 @@ import { restaurantSearchInput, restaurantVenueType, restaurantVenueRecord, visi
 import { actionRequestSchema as actionInput, functionRequestSchema as functionInput, completeWithActionRequestSchema, type ActionCall } from '../../packages/ontology/invocation.js';
 import { withoutExternalDispatch } from '../../packages/runtime/external-operations.js';
 import { Access } from '../../packages/runtime/access.js';
-import { checkAgentCapability, discoverOntology, discoveryOptions } from '../../packages/runtime/agent-catalogue.js';
+import { checkAgentCapability, discoverOntology, discoveryOptions, ontologyIndex } from '../../packages/runtime/agent-catalogue.js';
 import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata, type PublishedOntology } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
@@ -37,7 +37,7 @@ import { startMcpTiming } from './mcp-timing.js';
 import { developmentSandboxEnabled } from '../../packages/core/sandbox-mode.js';
 
 const queryInput = z.strictObject({ ontology:z.string().optional(), taskId: z.uuid().optional(), scenarioId: z.uuid().optional(), query: querySchema });
-const mcpDescription = 'Use query to find up to 16 resources by name or description, then names to read exact contracts. Omit both for the full published definition.';
+const mcpDescription = 'Without arguments it returns a compact index of resource names by kind. Use query to find up to 16 resources by name or description, then names to read exact contracts.';
 const discoverySchema = discoveryOptions.extend({ ontology: z.string().optional() });
 const scenarioCreateInput = createScenarioSchema.safeExtend({ ontology: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(80).optional() });
 const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
@@ -330,7 +330,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       const access = await Access.load(db, p), model = await metadata.active(ontology);
       if (!member && !readScope) access.require('Eigos', 'view_definition', 'Eigos');
       const document = access.describe(model, member);
-      return query || names ? discoverOntology(model, document, { query, names }) : document;
+      return query || names ? discoverOntology(model, document, { query, names }) : ontologyIndex(model, document);
     };
     const serve = async () => {
       const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

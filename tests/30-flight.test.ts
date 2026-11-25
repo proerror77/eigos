@@ -80,7 +80,7 @@ test('MCP looks up the supplier flight directly, and the original scheduled Acti
     };
     const evaluate = (name: string, input: Record<string, unknown>) => call('evaluate_ontology', { function: name, input });
     const describe = await call('describe_ontology', {});
-    assert(describe.functionTypes.some((fn: { apiName: string }) => fn.apiName === 'readFlightStatus'));
+    assert(describe.catalogue.function.includes('readFlightStatus'));
     const direct = flightStatusRead.parse(await evaluate('readFlightStatus', flight));
     assert.equal(direct.flights[0]?.gate, 'A6');
     assert.equal(direct.flights[0]?.carrier, "O'Air");
