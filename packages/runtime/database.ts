@@ -28,6 +28,14 @@ import { initializeExecutionTrace } from './execution-trace.js';
 import { initializeAccounts } from './accounts.js';
 
 export type Sql = Pick<pg.Pool, 'query'> | Pick<PoolClient, 'query'>;
+/** Thrown inside an object-scoped commit whose conflicts object locks cannot bound; the commit reruns exclusively. */
+export class ExclusiveScopeRequired extends Error {
+  constructor(readonly reason: string) { super(`Object-scoped commit needs the exclusive edit lock: ${reason}`); }
+}
+interface ObjectScope { held: Map<string, 'shared' | 'exclusive'>; escalated?: string }
+/** Tables whose rows object locks protect; statements on them must come from code that took those locks. */
+const ontologyData = /\.(?:objects|links|source_values|object_edits|edit_history|scenario_objects|scenario_links)\b/;
+
 export class Database {
   readonly pool: pg.Pool;
   readonly schema: string;
@@ -37,6 +45,8 @@ export class Database {
   private readonly transactionOwners = new WeakMap<Sql, string>();
   private readonly editLocks = new WeakMap<Sql, { since: number; profiles: readonly DatabaseProfile[] }>();
   private readonly sharedEditLocks = new WeakSet<Sql>();
+  private readonly objectScopes = new WeakMap<Sql, ObjectScope>();
+  private readonly objectAccess = new AsyncLocalStorage<true>();
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
     queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
     readonly sandboxEnabled = developmentSandboxEnabled()) {
@@ -53,6 +63,8 @@ export class Database {
     if (this.ownerIsolation && client === this.pool && this.ownerContext.getStore()) {
       return this.transaction(connection => this.query<T>(text, values, connection));
     }
+    if (this.objectScopes.has(client) && !this.objectAccess.getStore() && ontologyData.test(text))
+      this.requireExclusive(client, 'unlocked Ontology data statement');
     this.queries++;
     const profiles = activeProfiles(), started = performance.now();
     try { return await client.query<T>(text, values); }
@@ -101,28 +113,67 @@ export class Database {
   measureQueries<T>(operation: (count: () => number) => Promise<T>) {
     return profileDatabase(profile => operation(() => profile.statements));
   }
-  /** Whether this transaction shares the owner's Ontology edit lock and relies on SERIALIZABLE isolation. */
+  /** Whether this transaction shares the owner's Ontology edit lock because it locks the objects it touches. */
   sharesEditLocks(client: Sql) { return this.sharedEditLocks.has(client); }
+  /** Whether this transaction locks the objects it touches instead of the whole owner. */
+  objectScoped(client: Sql) { return this.objectScopes.has(client); }
+  /** Runs Ontology data statements that the caller has covered with object locks. */
+  withObjectAccess<T>(run: () => T): T { return this.objectAccess.run(true, run); }
   /**
-   * Runs a write transaction optimistically: SERIALIZABLE isolation with the owner's Ontology edit lock shared,
-   * so commits on unrelated objects proceed in parallel and PostgreSQL detects conflicting reads and writes.
-   * After a serialization failure or deadlock the transaction reruns once with the exclusive edit lock, as every
-   * write did before, so conflicts cost one rerun instead of failing. Exclusive holders, such as process rule
-   * scans, never overlap shared ones, which keeps the combined schedule serializable.
+   * In an object-scoped transaction, abandons the attempt because an operation's conflicts cannot be bounded
+   * by object locks; the transaction then reruns with the exclusive owner lock. Elsewhere it does nothing.
    */
-  async optimisticTransaction<T>(action: (client: PoolClient) => Promise<T>, operation?: string): Promise<T> {
+  requireExclusive(client: Sql, reason: string) {
+    const scope = this.objectScopes.get(client);
+    if (!scope) return;
+    scope.escalated ??= reason;
+    throw new ExclusiveScopeRequired(reason);
+  }
+  /** Takes shared or exclusive locks on object keys for the rest of an object-scoped transaction, in key order. */
+  async lockObjects(client: Sql, keys: readonly string[], mode: 'shared' | 'exclusive') {
+    const scope = this.objectScopes.get(client);
+    if (!scope) return;
+    const needed = [...new Set(keys)].filter(key => {
+      const held = scope.held.get(key);
+      return !held || mode === 'exclusive' && held === 'shared';
+    }).sort();
+    if (!needed.length) return;
+    const lock = mode === 'exclusive' ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
+    await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
+    for (const key of needed) scope.held.set(key, mode);
+  }
+  /**
+   * Runs an Action commit that locks only what it touches: the owner's edit lock is shared, every object it reads
+   * is locked shared and every object it writes, or whose relationships it changes, exclusively, until COMMIT.
+   * Commits on unrelated objects therefore proceed in parallel without depending on predicate locks. A set query,
+   * an unlocked Ontology data statement or a deadlock reruns the commit once with the exclusive owner lock, which
+   * never overlaps shared holders; the escalation also applies when the commit code caught it.
+   */
+  async objectScopedTransaction<T>(action: (client: PoolClient) => Promise<T>, operation?: string): Promise<T> {
     const profiles = activeProfiles();
     try {
       return await this.transaction(async client => {
-        await this.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE', [], client);
+        const scope: ObjectScope = { held: new Map() };
+        this.objectScopes.set(client, scope);
         this.sharedEditLocks.add(client);
-        try { return await action(client); } finally { this.sharedEditLocks.delete(client); }
+        try {
+          const result = await action(client);
+          if (scope.escalated) throw new ExclusiveScopeRequired(scope.escalated);
+          return result;
+        } catch (error) {
+          if (scope.escalated && !(error instanceof ExclusiveScopeRequired)) throw new ExclusiveScopeRequired(scope.escalated);
+          throw error;
+        } finally {
+          this.objectScopes.delete(client);
+          this.sharedEditLocks.delete(client);
+        }
       });
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
-      if (code !== '40001' && code !== '40P01') throw error;
+      const reason = error instanceof ExclusiveScopeRequired ? error.reason : code === '40P01' ? 'deadlock' : undefined;
+      if (!reason) throw error;
       chargeProfiles(profiles, 'commitFallbacks', 1);
-      recordOperationEvent('commit_fallback', { operation, code });
+      recordOperationEvent('commit_fallback', { operation, reason, code: typeof code === 'string' ? code : undefined });
       await delay(Math.random() * 5);
       return this.transaction(action);
     }

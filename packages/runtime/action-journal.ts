@@ -68,14 +68,17 @@ export class JournalObjects extends Objects {
     if (!this.beforeLinks.has(key)) this.beforeLinks.set(key, { edge, before: await this.linkPresent(edge) });
   }
   override async create(ref: ObjectRef, properties: Record<string, unknown>) {
+    await this.lockObjects([ref], 'exclusive');
     await this.remember(ref);
     return super.create(ref, properties);
   }
   override async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>) {
+    await this.lockObjects([ref], 'exclusive');
     await this.remember(ref);
     return super.edit(ref, revision, fields);
   }
   override async remove(ref: ObjectRef, revision: number) {
+    await this.lockObjects([ref], 'exclusive');
     await this.remember(ref);
     return super.remove(ref, revision);
   }
@@ -84,6 +87,7 @@ export class JournalObjects extends Objects {
     source = 'default',
     observedAt?: string,
   ) {
+    await this.lockObjects(rows.map(row => row.ref), 'exclusive');
     for (const row of rows) {
       await this.remember(row.ref);
       for (const link of await objectLinks(this.db, this.model, this.owner, row.ref, this.client)) {
@@ -97,10 +101,12 @@ export class JournalObjects extends Objects {
     return super.ingestBatch(rows, source, observedAt);
   }
   override async linkBatch(edges: readonly LinkData[]) {
+    await this.lockObjects(edges.flatMap(edge => [edge.from, edge.to]), 'exclusive');
     for (const edge of edges) await this.rememberLink(edge);
     return super.linkBatch(edges);
   }
   override async unlink(edge: LinkData) {
+    await this.lockObjects([edge.from, edge.to], 'exclusive');
     await this.rememberLink(edge);
     return super.unlink(edge);
   }

@@ -49,8 +49,25 @@ export class Objects {
       action?: string; requestId?: string; taskId?: string; inputDigest?: string; reviewedChangeDigest?: string;
       executor?: ExecutionActor; scenarioEdits?: ScenarioMutation[];
       validateWorkflow?: (objects: Objects, validation: CognitiveStep['validation'], object: ObjectRef) => Promise<void>;
-    }) {}
+    }) {
+    if (!db.objectScoped(client)) return;
+    // In an object-scoped commit, this graph's Ontology data statements are the ones its object locks cover.
+    for (let proto = Object.getPrototypeOf(this); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        const method = Object.getOwnPropertyDescriptor(proto, name)?.value;
+        if (name === 'constructor' || typeof method !== 'function' || Object.hasOwn(this, name)) continue;
+        Object.defineProperty(this, name, { configurable: true, writable: true,
+          value: (...args: unknown[]) => db.withObjectAccess(() => method.apply(this, args)) });
+      }
+    }
+  }
   get owner() { return this.access.principal.owner; }
+  /** Object-scoped commits lock each object before reading (shared) or writing it or its relationships (exclusive). */
+  protected lockObjects(refs: readonly ObjectRef[], mode: 'shared' | 'exclusive') {
+    return this.db.lockObjects(this.client, refs.map(ref => this.db.lockKey('object', this.model.projection, this.owner, ref.type, ref.id)), mode);
+  }
+  /** A read whose conflicts object locks cannot bound sends an object-scoped commit to its exclusive rerun. */
+  protected requireExclusive(reason: string) { this.db.requireExclusive(this.client, reason); }
   private writeReady?: Promise<void>;
   async lockWrites() { await this.prepareWrite(); }
   private prepareWrite() {
@@ -88,6 +105,8 @@ export class Objects {
   }
   private async stored(input: ObjectRef): Promise<ObjectData> {
     const ref = objectRefSchema.parse(input);
+    if (processLogTarget(this.model, ref.type)) this.requireExclusive('process log read');
+    await this.lockObjects([ref], 'shared');
     await checkScenario(this.db, this.model, this.owner, this.client);
     const values: unknown[] = [this.owner, ref.type, ref.id, this.model.projection];
     const policy = ref.type === documentChunkType || processLogTarget(this.model,ref.type) ? this.access.rowSql(this.model,ref.type,values,'o.properties') : 'TRUE';
@@ -173,6 +192,7 @@ export class Objects {
     return new DerivedProperties(this).enrich(await this.readStored(input));
   }
   async query(input: Query): Promise<{ items: ObjectData[]; cursor?: string }> {
+    this.requireExclusive('set query');
     const args = querySchema.parse(input);
     return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryObjects(args), observedPage);
   }
@@ -357,6 +377,7 @@ export class Objects {
     return { objects: records.map(record => this.visible(record)), ordered };
   }
   async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
+    this.requireExclusive('set query');
     if (input.type === scenarioMetadataType) {
       if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
       return scenarioMetadataQuery(this, input);
@@ -384,6 +405,7 @@ export class Objects {
   }
   /** Compile membership when this read needs no per-row authorization evidence. */
   async storedSetSelection(input: Query, path: readonly { link: string; as?: string }[]) {
+    this.requireExclusive('set query');
     const args = querySchema.parse(input), start = args.type;
     const eligible = (type: string) => this.model.objects.has(type) && this.access.canRead(this.model, type)
       && type !== scenarioMetadataType && !processLogTarget(this.model, type) && !this.access.hasObjectPolicy(this.model, type);
@@ -455,6 +477,7 @@ export class Objects {
     return this.db.readQuery(statement, values, this.client);
   }
   async readStoredSet(input: Query, path: readonly { link: string; as?: string }[], limit: number) {
+    this.requireExclusive('set query');
     const selection = await this.storedSetSelection(input, path);
     if (!selection || Object.values(this.model.object(selection.type).properties).some(property => property.derived)) return undefined;
     const { prefix, relation, filter, values, bind } = selection;
@@ -467,6 +490,7 @@ export class Objects {
   /** Keep eligible set membership and reduction inside PostgreSQL. */
   async aggregateStored(input: Query, view: string | undefined, groupBy: string[], metrics: Record<string, Metric>, groupLimit: number,
     path: readonly { link: string; as?: string }[]) {
+    this.requireExclusive('set query');
     const selection = await this.storedSetSelection(input, path);
     if (!selection) return undefined;
     const { type, prefix, relation, filter, values, bind, property } = selection;
@@ -508,6 +532,7 @@ export class Objects {
   }
   /** Object Set frontiers have already been read within this transaction. Recheck both endpoints in the join. */
   async followSet(sourceType: string, ids: string[], link: string, as: string | undefined, maximum: number) {
+    this.requireExclusive('set query');
     const nav = this.model.navigation(sourceType, link, as);
     if ([sourceType, nav.target].some(type => type === scenarioMetadataType || processLogTarget(this.model, type))
       || Object.values(this.model.object(nav.target).properties).some(property => property.derived)) return undefined;
@@ -556,6 +581,15 @@ export class Objects {
       this.access.adoptReads(access);return result;
     }
     await this.read(ref); this.access.read(this.model, nav.target); this.access.definition(this.model, 'link', nav.link);
+    if (this.db.objectScoped(this.client)) {
+      if (processLogTarget(this.model, nav.target)) this.requireExclusive('process log relationship');
+      // The shared lock on ref fixes its relationships; lock the targets before reading them.
+      const side = nav.forward ? ['from', 'to'] : ['to', 'from'];
+      const { rows } = await this.db.query(`SELECT l.${side[1]}_type AS type,l.${side[1]}_id AS id FROM ${this.db.schema}.links l
+        WHERE l.projection=$1 AND l.owner=$2 AND l.type=$3 AND l.${side[0]}_type=$4 AND l.${side[0]}_id=$5 LIMIT $6`,
+        [this.model.projection, this.owner, nav.link, ref.type, ref.id, maximum + 1], this.client);
+      await this.lockObjects(rows.map(row => ({ type: String(row.type), id: String(row.id) })), 'shared');
+    }
     const label = this.model.links.get(nav.link)?.classification;
     if (!this.access.canSeeModelData(label)) return [];
     this.access.observeClassification(label);
@@ -580,7 +614,7 @@ export class Objects {
   }
   async create(ref: ObjectRef, input: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).create(ref, input));
-    this.writeType(ref.type); await this.prepareWrite();
+    this.writeType(ref.type); await this.prepareWrite(); await this.lockObjects([ref], 'exclusive');
     this.assertStoredFields(ref,input);
     const properties = this.model.parseObject(ref, input);
     this.access.writeRow(this.model,ref.type,properties);
@@ -607,6 +641,7 @@ export class Objects {
       if (prior && digest(prior.properties)!==digest(properties)) throw new Conflict('Source rows disagree about one object');
       unique.set(key,{ref:item.ref,properties});
     }
+    await this.lockObjects([...unique.values()].map(entry => entry.ref), 'exclusive');
     const entries = [...unique.values()], stored = await this.storedSources(entries.map(entry => entry.ref));
     const observations = entries.map(({ref,properties}) => {
       if (properties) this.access.sourceRow(this.model,ref.type,properties);
@@ -622,6 +657,8 @@ export class Objects {
       if (value === null) removed.push(ref); else written.push({ type: ref.type, id: ref.id, properties: value });
     });
     const scope = [this.model.projection,this.owner], rows = (refs: readonly ObjectRef[]) => JSON.stringify(refs.map(({type,id}) => ({type,id})));
+    // Deleting an object deletes its relationships with objects this commit has not locked.
+    if (removed.length) this.requireExclusive('source deletion');
     if (removed.length) {
       await this.db.query(`DELETE FROM ${this.db.schema}.links l USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
         WHERE l.projection=$1 AND l.owner=$2 AND ((l.from_type=k.type AND l.from_id=k.id) OR (l.to_type=k.type AND l.to_id=k.id))`,[...scope,rows(removed)],this.client);
@@ -652,7 +689,7 @@ export class Objects {
   }
   async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).edit(ref, revision, fields));
-    this.writeType(ref.type); await this.prepareWrite();
+    this.writeType(ref.type); await this.prepareWrite(); await this.lockObjects([ref], 'exclusive');
     this.assertStoredFields(ref,fields);
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
     this.access.readRow(this.model,ref.type,old.properties);
@@ -673,6 +710,7 @@ export class Objects {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).linkBatch(edges));
     await this.prepareWrite();
     if (!edges.length) return;
+    await this.lockObjects(edges.flatMap(edge => [edge.from, edge.to]), 'exclusive');
     for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
     const rows = edges.map(edge => {
       this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
@@ -716,6 +754,7 @@ export class Objects {
   async unlink(edge: LinkData): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).unlink(edge));
     await this.prepareWrite(); this.access.definition(this.model, 'link', edge.type);
+    await this.lockObjects([edge.from, edge.to], 'exclusive');
     await this.read(edge.from); await this.read(edge.to);
     this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
     const definition = this.model.links.get(edge.type);
@@ -725,7 +764,7 @@ export class Objects {
   }
   async remove(ref: ObjectRef, revision: number): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).remove(ref, revision));
-    await this.prepareWrite(); this.writeType(ref.type);
+    await this.prepareWrite(); this.writeType(ref.type); await this.lockObjects([ref], 'exclusive');
     const old = await this.stored(ref);
     this.access.readRow(this.model,ref.type,old.properties);
     for (const field of Object.keys(old.properties)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot delete an object with hidden properties');

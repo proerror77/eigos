@@ -152,12 +152,12 @@ export class Actions {
     };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
-    // Live commits first share the owner edit lock under SERIALIZABLE isolation; a conflicted one reruns exclusively.
+    // Live commits lock only the objects they touch; one whose conflicts objects cannot bound reruns exclusively.
     // Scenario edits, merges, batches and evidence-recording reads keep the exclusive lock.
     const shared = !suppliedClient && !model.scenario && !capturingDecisionReads() && !action.rules?.some(rule => rule.op === 'applyScenario');
     // A commit waiting behind a long edit lock retries within its deadline; a supplied transaction cannot rerun.
     const commitTransaction = <T>(run: (client: Sql) => Promise<T>) => suppliedClient ? transaction(run)
-      : this.db.waitForLocks(() => shared ? this.db.optimisticTransaction(run, actionName) : transaction(run), signal);
+      : this.db.waitForLocks(() => shared ? this.db.objectScopedTransaction(run, actionName) : transaction(run), signal);
     const commit = (write?: (objects: Objects) => Promise<ObjectRef>) => commitTransaction(async client => {
       // The request key serializes only duplicate submissions of this action.
       if (!batchClient) await this.lockRequest(client, model, principal.owner, requestId);
