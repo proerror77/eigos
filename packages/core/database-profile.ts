@@ -12,6 +12,8 @@ export interface DatabaseProfile {
   editLockHoldMs: number;
   /** Statements that failed because a lock wait exceeded lock_timeout. */
   lockTimeouts: number;
+  /** Optimistic commits rerun with the exclusive edit lock after a serialization failure or deadlock. */
+  commitFallbacks: number;
 }
 type Counter = keyof DatabaseProfile;
 
@@ -19,7 +21,7 @@ const active = new AsyncLocalStorage<readonly DatabaseProfile[]>();
 
 /** Runs an operation with its own profile. Work in nested profiles also counts toward enclosing ones. */
 export function profileDatabase<T>(run: (profile: DatabaseProfile) => Promise<T>): Promise<T> {
-  const profile: DatabaseProfile = { statements: 0, durationMs: 0, editLockWaitMs: 0, editLockHoldMs: 0, lockTimeouts: 0 };
+  const profile: DatabaseProfile = { statements: 0, durationMs: 0, editLockWaitMs: 0, editLockHoldMs: 0, lockTimeouts: 0, commitFallbacks: 0 };
   return active.run([...(active.getStore() ?? []), profile], () => run(profile));
 }
 
@@ -37,6 +39,6 @@ export function profileSummary(profile: DatabaseProfile): DatabaseProfile {
   const round = (value: number) => Math.round(value * 10) / 10;
   return {
     statements: profile.statements, durationMs: round(profile.durationMs), editLockWaitMs: round(profile.editLockWaitMs),
-    editLockHoldMs: round(profile.editLockHoldMs), lockTimeouts: profile.lockTimeouts,
+    editLockHoldMs: round(profile.editLockHoldMs), lockTimeouts: profile.lockTimeouts, commitFallbacks: profile.commitFallbacks,
   };
 }

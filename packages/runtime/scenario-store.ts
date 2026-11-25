@@ -16,9 +16,11 @@ type ObjectCapture = { op: 'create' | 'edit' | 'delete'; journal?: ScenarioMutat
 
 /** Shared by live and scenario edits, including source ingestion and scenario merge. */
 export async function lockEdits(db: Database, model: PublishedOntology, owner: string, client: Sql) {
+  // A SERIALIZABLE Action commit shares the owner lock; every other writer and process scans take it exclusively.
+  const owners = db.sharesEditLocks(client) ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock';
   await db.acquireEditLocks(client, async () => {
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [db.lockKey('publication', model.document.id)], client);
-    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [db.lockKey('objects', model.release, owner)], client);
+    await db.query(`SELECT ${owners}(hashtextextended($1,0))`, [db.lockKey('objects', model.release, owner)], client);
   });
   if(model.evaluation){
     if(model.evaluation.client!==client)throw new Conflict('Candidate evaluation must remain in its original transaction');
