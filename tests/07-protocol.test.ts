@@ -160,7 +160,15 @@ test('MCP publishes a model proposal and executes isolated, revision-checked sce
     const active = await f.metadata.active(ontology);
     assert.equal(active.release, prepared.release);
     assert.equal((await f.metadata.active()).release, f.model.release);
-    assert((await call('describe_ontology', { ontology })).actionTypes.some((item: { apiName: string }) => item.apiName === 'RenameRoute'));
+    const index = await call('describe_ontology', { ontology });
+    assert.equal(index.ontology, ontology);
+    assert.equal(index.definition, active.digest);
+    assert(index.catalogue.action.includes('RenameRoute'));
+    assert(index.catalogue.object.includes('Route'));
+    assert(!('actionTypes' in index) && !index.catalogue.action.some((name: unknown) => typeof name !== 'string'));
+    const full = await (await fetch(`http://127.0.0.1:${address.port}/ontology?ontology=${ontology}`, { headers: { Authorization: 'Bearer ' + token } })).json();
+    assert(full.actionTypes.some((item: { apiName: string }) => item.apiName === 'RenameRoute'));
+    assert(JSON.stringify(index).length * 5 < JSON.stringify(full).length, 'the index must stay much smaller than the full definition');
     const sdk = new OntologyClient({ baseUrl: `http://127.0.0.1:${address.port}`, token, ontology });
     const creation = { implementation: 'Route', type: 'EditableRoute', action: 'create' };
     const ref = await sdk.apply({ requestId: 'create-route', interface: creation, input: { id: 'selected-route', name: 'Before' } });

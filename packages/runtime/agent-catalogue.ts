@@ -122,6 +122,17 @@ export function discoverOntology(model: Ontology, document: OntologyDocument,
   };
 }
 
+/** The API names an identity can see, grouped by resource kind, for a client that then searches or names them. */
+export function ontologyIndex(model: Ontology, document: OntologyDocument) {
+  const catalogue = Object.fromEntries(Object.entries(resourceGroups)
+    .map(([kind, field]) => [kind, (document[field] ?? []).map(definition => definition.apiName)] as const)
+    .filter(([, names]) => names.length));
+  return {
+    ontology: document.id, version: document.version, definition: model.digest, catalogue,
+    next: 'Pass query to search names and descriptions, or names (up to 16) to read exact contracts.',
+  };
+}
+
 export function catalogue(model: Ontology, access: Access, sandbox: boolean,
   include = (_kind: string, _name: string) => true, compact = false) {
   const document = access.describe(model, true, (kind, name) =>
