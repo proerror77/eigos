@@ -295,13 +295,15 @@ test('the hotel distribution Actions verify rated terms, approve exact orders an
     const { rows: [clock] } = await f.db.query<{ now: Date }>('SELECT clock_timestamp() AS now');
     await indexer.waitFor('cancellation delivery', async () => {
       const { rows: [progress] } = await f.db.query(
-        `SELECT enabled,error,last_scan,process_cursor FROM ${f.db.schema}.object_rules WHERE id=$1`, [rule.id]);
+        `SELECT r.enabled,r.error,r.last_scan,r.process_commit>=c.commit_seq AS passed FROM ${f.db.schema}.object_rules r
+          JOIN ${f.db.schema}.edit_history h ON h.sequence=$2::bigint JOIN ${f.db.schema}.change_commits c ON c.owner=h.owner AND c.xact=h.xact
+          WHERE r.id=$1`, [rule.id, transition.properties.sequence]);
       assert.equal(progress!.enabled, true, progress!.error);
       const { rows: runs } = await f.db.query(
         `SELECT state,object_ref,process_trigger->>'sequence' AS sequence FROM ${f.db.schema}.workflow_runs
           WHERE process_trigger->>'ruleId'=$1`, [rule.id]);
       if (progress!.last_scan > clock!.now && runs.some(run => run.state === 'completed')) {
-        assert.equal(progress!.process_cursor, transition.properties.sequence);
+        assert.equal(progress!.passed, true, 'the rule has read past the commit of the transition');
         assert.deepEqual(runs, [{ state: 'completed', object_ref: second, sequence: transition.properties.sequence }]);
         return true;
       }

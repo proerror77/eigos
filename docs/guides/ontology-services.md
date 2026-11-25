@@ -56,12 +56,12 @@ Gateway 可配置 `QUERY_DATABASE_URL` 使用独立只读连接池，包括已�
 
 ## 升级
 
-管理角色执行 `npm run db:upgrade`，为既有 schema 增加治理、集合、来源基线、编辑历史、索引和物化表。已有对象首次编辑保留原值作为来源基线。更新运行账号的授权后准备新发布，再激活已验证的候选。
+管理角色执行 `npm run db:upgrade`，为既有 schema 增加治理、集合、来源基线、编辑历史、提交序号、关系历史、索引和物化表。已有对象首次编辑保留原值作为来源基线。更新运行账号的授权后准备新发布，再激活已验证的候选。
 
 | 账号职责 | 数据库授权 |
 | --- | --- |
 | Gateway/Worker 读取 | 既有定义和对象表，以及 `object_policies`、`security_memberships`、`ontology_resource_projects`、`edit_policies` 的 SELECT |
-| 对象编辑 | `source_values`、`object_edits` 的 SELECT/INSERT/UPDATE/DELETE，`edit_history` 的 SELECT/INSERT 和序列 USAGE，业务对象与关系的相应编辑权限 |
+| 对象编辑 | `source_values`、`object_edits` 的 SELECT/INSERT/UPDATE/DELETE，`edit_history`、`link_history`、`change_commits` 的 SELECT/INSERT 和序列 USAGE，`change_journal` 的 SELECT，业务对象与关系的相应编辑权限 |
 | 对象集 | `object_sets` 的 SELECT/INSERT/UPDATE/DELETE |
 | 方案审阅 | `scenario_approvals` 的 SELECT/INSERT/UPDATE |
 | 索引生产与消费 | `index_streams`、`index_transactions` 的 SELECT/INSERT/UPDATE，加对象编辑权限 |

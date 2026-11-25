@@ -378,6 +378,28 @@ test('a second published process and Action reuse related dispatch and invalidat
   }
 });
 
+test('a related process rule replays from a committed history sequence without repeating earlier transitions', async () => {
+  const f = await processSetup(true);
+  try {
+    const target = { type: 'Route', id: 'dependent' };
+    await f.graph.create(target, { id: target.id, name: 'To review' });
+    await f.graph.link({ type: 'SyntheticRouteDependency', from: f.source, to: target });
+    const related = { path: ['impactedRoutes'], sourceParameter: 'upstream', transitionParameter: 'transition', targetParameter: 'route' };
+    const rule = await f.automation.rule(f.access, f.model, {
+      name: 'Review each stall', enabled: true, process: { type: 'RouteStateLog', to: 'stalled' },
+      effect: { action: 'ReviewDependentRoute', related, input: { revision: { property: '$revision' }, name: { literal: 'Reviewed' } } },
+    });
+    await f.change('stalled'); await f.change('open'); await f.change('stalled');
+    assert.equal(await f.automation.scanOne(), true);
+    const first = (await f.runs()).map(row => String(row.process_trigger.sequence));
+    assert.equal(first.length, 2);
+    const replay = await f.automation.rule(f.access, f.model, { ...rule, replayFrom: first[0] });
+    assert.equal(await f.automation.scanOne(), true);
+    const replayed = (await f.runs()).filter(row => row.process_trigger.revision === replay.revision);
+    assert.deepEqual(replayed.map(row => String(row.process_trigger.sequence)), [first[1]]);
+  } finally { await f.close(); }
+});
+
 test('process rules deliver each committed matching transition between polls and replay checkpoints without duplicates',async()=>{
   const f = await processSetup();
   try {
@@ -386,7 +408,7 @@ test('process rules deliver each committed matching transition between polls and
     await f.change('open');
     const rule = await f.automation.rule(f.access, f.model, {name:'Each stall',workflow:f.workflow.id,
       process:{type:'RouteStateLog',from:'open',to:'stalled'},enabled:true});
-    const initial = (await f.db.query(`SELECT process_cursor::text FROM ${f.db.schema}.object_rules WHERE id=$1`, [rule.id])).rows[0]!.process_cursor;
+    const initial = (await f.db.query(`SELECT process_commit::text,process_cursor::text FROM ${f.db.schema}.object_rules WHERE id=$1`, [rule.id])).rows[0]!;
     await f.change('stalled');
     await f.change('open');
     await f.change('stalled');
@@ -396,7 +418,8 @@ test('process rules deliver each committed matching transition between polls and
     assert.equal(first.length, 2);
     assert.notEqual(first[0]!.process_trigger.sequence, first[1]!.process_trigger.sequence);
     assert(first.every(row=>row.request_id.startsWith('process-rule:')));
-    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET process_cursor=$2,last_scan=NULL WHERE id=$1`, [rule.id,initial]);
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET process_commit=$2,process_cursor=$3,last_scan=NULL WHERE id=$1`,
+      [rule.id,initial.process_commit,initial.process_cursor]);
     assert.equal(await f.automation.scanOne(), true);
     assert.deepEqual(await f.runs(), first);
     assert.equal(await f.automation.runOne(), true);
@@ -406,24 +429,52 @@ test('process rules deliver each committed matching transition between polls and
   } finally { await f.close(); }
 });
 
-test('a process scan waits for open shared commits so it never skips an earlier transition',async()=>{
+test('a process scan consumes committed transitions in commit order without waiting for open commits',async()=>{
   const f=await processSetup();
   try{
     const rule=await f.automation.rule(f.access,f.model,{name:'Every stall',workflow:f.workflow.id,process:{type:'RouteStateLog',to:'stalled'},enabled:true});
     const other={type:'Route',id:'second-route'};await f.graph.create(other,{id:other.id,name:'Second'});
+    const targets=async()=>(await f.db.query(`SELECT object_ref->>'id' AS id FROM ${f.db.schema}.workflow_runs ORDER BY created_at`)).rows.map(row=>row.id);
     let release!:()=>void,entered!:()=>void,calls=0;
     const released=new Promise<void>(resolve=>{release=resolve;}),inside=new Promise<void>(resolve=>{entered=resolve;});
+    // The held commit writes its history row first and commits last.
     const held=f.actions.apply(await Access.load(f.db,principal),f.model,'ChangeRouteState',
       {route:f.source,revision:(await f.graph.read(f.source)).revision,state:'stalled'},'held-transition',
       async()=>{if(++calls===2){entered();await released;}});
     try{
       await inside;
       await f.actions.apply(await Access.load(f.db,principal),f.model,'ChangeRouteState',{route:other,revision:1,state:'stalled'},'later-transition');
+      const started=performance.now();
       assert.equal(await f.automation.scanOne(),true);
-      assert.equal((await f.runs()).length,0,'a scan must not consume a later transition while an earlier commit is open');
+      assert(performance.now()-started<1500,'the scan must not wait for the open commit');
+      assert.deepEqual(await targets(),[other.id]);
     }finally{release();await held;}
     await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL WHERE id=$1`,[rule.id]);
     assert.equal(await f.automation.scanOne(),true);
+    assert.deepEqual(await targets(),[other.id,f.source.id],'the earlier-written, later-committed transition is still consumed');
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL WHERE id=$1`,[rule.id]);
+    await f.automation.scanOne();
+    assert.equal((await targets()).length,2,'no transition is consumed twice');
+  }finally{await f.close();}
+});
+
+test('a process rule finishes pre-upgrade history by sequence before commit-ordered history',async()=>{
+  const f=await processSetup();
+  try{
+    await f.change('stalled');await f.change('open');
+    // History written before the commit journal existed has no transaction identity and ends at the recorded boundary.
+    await f.db.query(`UPDATE ${f.db.schema}.edit_history SET xact=NULL`);
+    await f.db.query(`UPDATE ${f.db.schema}.change_journal SET legacy_end=(SELECT max(sequence) FROM ${f.db.schema}.edit_history)`);
+    const rule=await f.automation.rule(f.access,f.model,{name:'Replayed stalls',workflow:f.workflow.id,process:{type:'RouteStateLog',to:'stalled'},enabled:true});
+    // A rule saved before that history was written still has to consume it.
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET process_commit=0,process_cursor=0 WHERE id=$1`,[rule.id]);
+    await f.change('stalled');
+    assert.equal(await f.automation.scanOne(),true);
+    const triggers=(await f.runs()).map(row=>Number(row.process_trigger.sequence));
+    assert.equal(triggers.length,2);
+    assert(triggers[0]!<triggers[1]!,'the legacy transition comes first');
+    await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL WHERE id=$1`,[rule.id]);
+    await f.automation.scanOne();
     assert.equal((await f.runs()).length,2);
   }finally{await f.close();}
 });

@@ -3,7 +3,7 @@ import type { Database } from './database.js';
 // Dispatch and administration use separate tables and permissions. The business
 // graph, proposed edits and their committed journals use a tenant predicate.
 const protectedTables = [
-  'objects', 'links', 'source_values', 'object_edits', 'edit_history',
+  'objects', 'links', 'source_values', 'object_edits', 'edit_history', 'link_history', 'change_commits',
   'scenario_objects', 'scenario_links', 'scenario_actions', 'scenario_approvals',
   'actions', 'action_changes', 'action_undo_requests', 'execution_trace',
   'materializations', 'semantic_vectors', 'geometry_blobs', 'entity_bindings', 'entity_binding_history',

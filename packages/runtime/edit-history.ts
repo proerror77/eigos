@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { z } from 'zod';
 import { Conflict, digest } from '../core/identity.js';
 import type { ObjectRef } from '../ontology/schema.js';
@@ -36,6 +37,82 @@ export async function initializeEditHistory(db: Database) {
     ALTER TABLE ${db.schema}.edit_history ADD COLUMN IF NOT EXISTS executor_id text;
     CREATE INDEX IF NOT EXISTS edit_history_object ON ${db.schema}.edit_history(owner,type,id,sequence);
     CREATE INDEX IF NOT EXISTS edit_history_process_cursor ON ${db.schema}.edit_history(owner,type,sequence);`);
+  await initializeChangeJournal(db);
+}
+
+/**
+ * Numbers committed changes per owner in commit order. History rows record their transaction. At COMMIT a deferred
+ * trigger takes a per-owner lock and numbers the transaction in change_commits; the lock is released only after the
+ * commit is visible. A reader that sees commit N of an owner therefore also sees every earlier commit of that owner and
+ * can follow commit numbers without blocking writers. History written before the journal existed has no transaction;
+ * change_journal records where it ends, and readers consume it in sequence order first.
+ */
+async function initializeChangeJournal(db: Database) {
+  const s = db.schema, relation = (name: string) => pg.escapeLiteral(`${s}.${name}`);
+  // The key matches db.lockKey('change-commit', owner).
+  const lockPrefix = pg.escapeLiteral(db.lockKey('change-commit').slice(0, -1) + ',');
+  await db.query(`CREATE TABLE IF NOT EXISTS ${s}.change_journal(
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), legacy_end bigint NOT NULL);
+    DO $install$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=${relation('edit_history')}::regclass AND attname='xact' AND NOT attisdropped) THEN
+        -- Existing rows keep a NULL transaction. The table lock keeps writers out until the boundary is recorded.
+        ALTER TABLE ${s}.edit_history ADD COLUMN xact xid8;
+        ALTER TABLE ${s}.edit_history ALTER COLUMN xact SET DEFAULT pg_current_xact_id();
+        INSERT INTO ${s}.change_journal(legacy_end) SELECT coalesce(max(sequence),0) FROM ${s}.edit_history;
+      END IF;
+    END $install$;
+    CREATE INDEX IF NOT EXISTS edit_history_commit ON ${s}.edit_history(xact,type,sequence) WHERE xact IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS ${s}.link_history (
+      sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, projection text NOT NULL, release text NOT NULL, owner text NOT NULL,
+      type text NOT NULL, from_type text NOT NULL, from_id text NOT NULL, to_type text NOT NULL, to_id text NOT NULL,
+      operation text NOT NULL CHECK (operation IN ('link','unlink')), source text, actor text NOT NULL, action text,
+      request_id text, task_id text, executor_kind text, executor_id text,
+      happened_at timestamptz NOT NULL DEFAULT clock_timestamp(), xact xid8 NOT NULL DEFAULT pg_current_xact_id());
+    CREATE INDEX IF NOT EXISTS link_history_from ON ${s}.link_history(owner,from_type,from_id,sequence);
+    CREATE INDEX IF NOT EXISTS link_history_to ON ${s}.link_history(owner,to_type,to_id,sequence);
+    CREATE TABLE IF NOT EXISTS ${s}.change_commits (owner text NOT NULL, xact xid8 NOT NULL,
+      commit_seq bigint GENERATED ALWAYS AS IDENTITY, committed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+      PRIMARY KEY(owner,xact));
+    CREATE UNIQUE INDEX IF NOT EXISTS change_commits_order ON ${s}.change_commits(owner,commit_seq);
+    CREATE OR REPLACE FUNCTION ${s}.record_change_commit() RETURNS trigger LANGUAGE plpgsql AS $journal$
+    DECLARE prior text := current_setting('eigos.owner', true);
+    BEGIN
+      IF NEW.xact IS NULL THEN RETURN NULL; END IF;
+      -- The row passed owner isolation when it was written. The commit may run after the owner context was restored.
+      PERFORM set_config('eigos.owner', NEW.owner, true);
+      IF NOT EXISTS (SELECT 1 FROM ${s}.change_commits WHERE owner=NEW.owner AND xact=NEW.xact) THEN
+        -- Held until the transaction ends, so this owner's next commit is numbered after this one is visible.
+        PERFORM pg_advisory_xact_lock(hashtextextended(${lockPrefix} || to_json(NEW.owner)::text || ']', 0));
+        INSERT INTO ${s}.change_commits(owner,xact) VALUES (NEW.owner,NEW.xact);
+      END IF;
+      PERFORM set_config('eigos.owner', coalesce(prior, ''), true);
+      RETURN NULL;
+    END $journal$;
+    DO $install$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=${relation('edit_history')}::regclass AND tgname='record_edit_commit') THEN
+        CREATE CONSTRAINT TRIGGER record_edit_commit AFTER INSERT ON ${s}.edit_history DEFERRABLE INITIALLY DEFERRED
+          FOR EACH ROW EXECUTE FUNCTION ${s}.record_change_commit();
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=${relation('link_history')}::regclass AND tgname='record_link_commit') THEN
+        CREATE CONSTRAINT TRIGGER record_link_commit AFTER INSERT ON ${s}.link_history DEFERRABLE INITIALLY DEFERRED
+          FOR EACH ROW EXECUTE FUNCTION ${s}.record_change_commit();
+      END IF;
+    END $install$;`);
+}
+
+/**
+ * Journals the relationships a statement's CTE returned (type, from_type, from_id, to_type, to_id), with the
+ * graph's change identity. Appends its parameters to `values`; `projection` and `owner` are placeholders already bound.
+ */
+export function journalLinks(graph: Objects, operation: 'link' | 'unlink', rows: string, projection: string, owner: string,
+  values: unknown[], source: string | null = null) {
+  const bind = (value: unknown) => { values.push(value); return '$' + values.length; };
+  const { change } = graph;
+  return `INSERT INTO ${graph.db.schema}.link_history(projection,release,owner,type,from_type,from_id,to_type,to_id,
+      operation,source,actor,action,request_id,task_id,executor_kind,executor_id)
+    SELECT ${projection},${bind(graph.model.release)},${owner},type,from_type,from_id,to_type,to_id,${bind(operation)},${bind(source)},
+      ${bind(graph.access.principal.owner)},${bind(change?.action ?? null)},${bind(change?.requestId ?? null)},${bind(change?.taskId ?? null)},
+      ${bind(change?.executor?.kind ?? null)},${bind(change?.executor?.id ?? null)} FROM ${rows}`;
 }
 
 export async function setConflictPolicy(db: Database, access: Access, model: PublishedOntology, type: string, policy: unknown) {
