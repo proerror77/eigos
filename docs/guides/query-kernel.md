@@ -17,6 +17,7 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 - **服务启动：** 服务只监听 `127.0.0.1`。端口由 `EIGOS_KERNEL_PORT` 指定，不设置时随机分配，启动后输出一行 `kernel_listening` JSON 报告实际端口。
 - **测试套件：** `tests/46-query-kernel.test.ts` 在同一份数据上分别用参考实现（`ObjectSets.evaluate`、`aggregate`）和内核执行同一批表达式，逐项比较结果。没有 `EIGOS_KERNEL_BIN` 时，只运行回退测试。
 - **CI：** 在套件 46 的 job 里先构建内核，再运行这个套件。
+- **发布：** `Kernel release` 工作流手动触发，输入一个 CI 已经通过的 main 提交。它在 ubuntu-24.04（x86_64，glibc 2.39，与生产主机相同）上编译，剥离符号并检查服务能启动，然后以 `kernel-<提交号前 12 位>` 发布二进制和它的 SHA-256。已有的发布不会被替换。
 
 ## 覆盖范围
 
