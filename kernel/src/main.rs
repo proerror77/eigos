@@ -9,16 +9,17 @@
 use std::{collections::{BTreeMap, HashMap, HashSet}, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
 use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
-use datafusion::arrow::array::{ArrayRef, AsArray, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
+use datafusion::arrow::array::{Array, ArrayRef, AsArray, BinaryBuilder, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::common::{Column, ScalarValue};
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::MemTable;
 use datafusion::functions::core::expr_fn::coalesce;
+use datafusion::functions::string::expr_fn::concat_ws;
 use datafusion::functions::unicode::expr_fn::strpos;
 use datafusion::functions_aggregate::expr_fn::{avg, bool_or, count, max, min, sum};
 use datafusion::functions_nested::expr_fn::{array_has_all, array_has_any, cardinality, make_array};
-use datafusion::logical_expr::{cast, lit, when, Expr, JoinType};
+use datafusion::logical_expr::{cast, create_udf, lit, when, ColumnarValue, Expr, JoinType, ScalarUDF, Volatility};
 use datafusion::prelude::{DataFrame, ParquetReadOptions, SessionConfig, SessionContext};
 use futures_util::{pin_mut, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -644,10 +645,18 @@ struct PartField { name: String, column: Option<String>, #[serde(default)] hidde
 #[derive(Deserialize)]
 struct Part { r#type: String, fields: Vec<PartField> }
 
+/// One key of a query's order: an output field, descending or not; nulls come last either way.
+#[derive(Deserialize)]
+struct OrderKey { name: String, #[serde(default)] desc: bool }
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum Output {
   Page { offset: usize, limit: usize },
+  /// One page of the members in a query's order: each order key, then the JSON-encoded type and id, as the reference
+  /// orders a query it evaluates completely. `parts` read the order fields of each member type, as for an aggregation.
+  #[serde(rename_all = "camelCase")]
+  Query { offset: usize, limit: usize, parts: Vec<Part>, kinds: HashMap<String, Kind>, order: Vec<OrderKey> },
   /// `kinds` holds the kind of each field across the member types.
   #[serde(rename_all = "camelCase")]
   Aggregate { parts: Vec<Part>, kinds: HashMap<String, Kind>, group_by: Vec<String>, metrics: Vec<Metric> },
@@ -1203,6 +1212,62 @@ async fn membership(set: &DataFrame) -> Result<String, Failure> {
   Ok(format!("{count:x}-{sum:016x}"))
 }
 
+/// A string function over a Utf8 column, null for null.
+fn string_udf(name: &str, output: DataType, each: fn(&str, &mut Vec<u8>)) -> ScalarUDF {
+  let binary = output == DataType::Binary;
+  create_udf(name, vec![DataType::Utf8], output, Volatility::Immutable, Arc::new(move |args: &[ColumnarValue]| {
+    let arrays = ColumnarValue::values_to_arrays(args)?;
+    let strings = arrays[0].as_string::<i32>();
+    let mut buffer = Vec::new();
+    let array: ArrayRef = if binary {
+      let mut out = BinaryBuilder::with_capacity(strings.len(), strings.value_data().len() * 2);
+      for value in strings.iter() { match value { None => out.append_null(), Some(s) => { buffer.clear(); each(s, &mut buffer); out.append_value(&buffer); } } }
+      Arc::new(out.finish())
+    } else {
+      let mut out = StringBuilder::with_capacity(strings.len(), strings.value_data().len() + 2 * strings.len());
+      for value in strings.iter() { match value { None => out.append_null(), Some(s) => {
+        buffer.clear(); each(s, &mut buffer);
+        out.append_value(std::str::from_utf8(&buffer).map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?);
+      } } }
+      Arc::new(out.finish())
+    };
+    Ok(ColumnarValue::Array(array))
+  }))
+}
+/// The string's UTF-16 code units, big-endian: their bytes order as JavaScript orders strings, by code unit.
+fn utf16_key(value: Expr) -> Expr {
+  string_udf("utf16_key", DataType::Binary, |s, out| for unit in s.encode_utf16() { out.extend_from_slice(&unit.to_be_bytes()); }).call(vec![value])
+}
+/// The string as a JSON string literal, as `JSON.stringify` writes it.
+fn json_string(value: Expr) -> Expr {
+  string_udf("json_string", DataType::Utf8, |s, out| out.extend_from_slice(serde_json::to_string(s).unwrap().as_bytes())).call(vec![value])
+}
+
+/// One member type's members with `leading` columns, then each part field as an aggregation or a query order reads it:
+/// from the type's own column, cast to the field's kind across member types, hidden for every row or shown where a cell
+/// policy permits, or null where the type does not map the field.
+async fn part_frame(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, part: &Part, kinds: &HashMap<String, Kind>, leading: Vec<Expr>) -> Result<DataFrame, Failure> {
+  let local = kinds_of(snapshot, owner, &part.r#type)?;
+  let members = set.clone().filter(column("$type").eq(lit(part.r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
+  let rows = objects(snapshot, owner, &part.r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
+  let mut projection = leading;
+  for field in &part.fields {
+    let kind = *kinds.get(&field.name).ok_or_else(|| invalid(format!("No kind for {}", field.name)))?;
+    let null = || ScalarValue::try_from(&data_type(kind)).map(lit).map_err(internal);
+    let value = match &field.column {
+      None => null()?,
+      Some(_) if field.hidden => null()?,
+      Some(name) => {
+        if !local.contains_key(name) { return Err(invalid(format!("Unknown column {name} of {}", part.r#type))); }
+        let value = cast(column(name), data_type(kind));
+        match &field.policy { Some(policy) => when(predicate(policy, &local)?, value).otherwise(null()?).map_err(internal)?, None => value }
+      }
+    };
+    projection.push(value.alias(field.name.clone()));
+  }
+  rows.select(projection).map_err(internal)
+}
+
 async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Failure> {
   let started = Instant::now();
   let owner = Ctx { owner: request.owner.clone(), rows: request.rows, derived: request.derived, columns: Default::default(), reads: Default::default() };
@@ -1222,30 +1287,54 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
       Ok(json!({ "total": total, "refs": refs, "types": types, "membership": membership(&set).await?, "reads": reads,
         "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
+    Output::Query { offset, limit, parts, kinds, order } => {
+      let total = set.clone().count().await.map_err(internal)?;
+      let covered: HashSet<&str> = parts.iter().map(|part| part.r#type.as_str()).collect();
+      for row in rows(set.clone().select(vec![column("$type")]).map_err(internal)?.distinct().map_err(internal)?).await? {
+        if !row["$type"].as_str().is_some_and(|t| covered.contains(t)) { return Err(invalid(format!("No order part for members of {}", row["$type"]))); }
+      }
+      let mut frames = Vec::new();
+      for part in &parts {
+        let leading = vec![column("$key"), lit(part.r#type.clone()).alias("$type"), column("$id"),
+          lit(serde_json::to_string(&part.r#type).unwrap()).alias("$jtype"), json_string(column("$id")).alias("$jid")];
+        frames.push(part_frame(snapshot, &owner, &set, part, &kinds, leading).await?);
+      }
+      let mut iter = frames.into_iter();
+      let (refs, membership): (Vec<Value>, String) = match iter.next() {
+        None => (Vec::new(), membership(&set).await?),
+        Some(first) => {
+          let members = iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?.cache().await.map_err(internal)?;
+          // As the reference orders a query it evaluates completely: each order key with nulls last in either direction,
+          // numbers as JavaScript numbers and strings by UTF-16 code unit; then the JSON-encoded type and id, by byte.
+          let mut keys = Vec::new();
+          for key in &order {
+            let value = match kinds.get(&key.name) {
+              Some(Kind::String) => utf16_key(column(&key.name)),
+              Some(Kind::Integer) | Some(Kind::Number) => cast(column(&key.name), DataType::Float64),
+              Some(Kind::Boolean) => column(&key.name),
+              _ => return Err(invalid(format!("Cannot order by {}", key.name))),
+            };
+            keys.push(value.sort(!key.desc, false));
+          }
+          keys.push(column("$jtype").sort(true, false));
+          keys.push(column("$jid").sort(true, false));
+          let page = members.clone().sort(keys).map_err(internal)?.limit(offset, Some(limit)).map_err(internal)?
+            .select(vec![column("$type"), column("$id")]).map_err(internal)?;
+          let refs = rows(page).await?.into_iter().map(|row| json!({ "type": row["$type"], "id": row["$id"] })).collect();
+          // The members and the values they are ordered by: a cursor continues only while neither changed.
+          let mut digested = vec![column("$key")];
+          for key in &order { digested.push(coalesce(vec![cast(column(&key.name), DataType::Utf8), lit("\u{1}")])); }
+          let keyed = members.select(vec![concat_ws(lit("\u{0}"), digested).alias("$key")]).map_err(internal)?;
+          (refs, membership(&keyed).await?)
+        }
+      };
+      Ok(json!({ "total": total, "refs": refs, "membership": membership, "reads": reads,
+        "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+    }
     Output::Aggregate { parts, kinds, group_by, metrics } => {
       // Each member type's fields as the aggregation reads them, under one kind per field, then all members together.
       let mut frames = Vec::new();
-      for part in &parts {
-        let local = kinds_of(snapshot, &owner, &part.r#type)?;
-        let members = set.clone().filter(column("$type").eq(lit(part.r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
-        let objects = objects(snapshot, &owner, &part.r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
-        let mut projection = vec![column("$key")];
-        for field in &part.fields {
-          let kind = *kinds.get(&field.name).ok_or_else(|| invalid(format!("No kind for {}", field.name)))?;
-          let null = || ScalarValue::try_from(&data_type(kind)).map(lit).map_err(internal);
-          let value = match &field.column {
-            None => null()?,
-            Some(_) if field.hidden => null()?,
-            Some(name) => {
-              if !local.contains_key(name) { return Err(invalid(format!("Unknown column {name} of {}", part.r#type))); }
-              let value = cast(column(name), data_type(kind));
-              match &field.policy { Some(policy) => when(predicate(policy, &local)?, value).otherwise(null()?).map_err(internal)?, None => value }
-            }
-          };
-          projection.push(value.alias(field.name.clone()));
-        }
-        frames.push(objects.select(projection).map_err(internal)?);
-      }
+      for part in &parts { frames.push(part_frame(snapshot, &owner, &set, part, &kinds, vec![column("$key")]).await?); }
       let mut iter = frames.into_iter();
       let first = iter.next().ok_or_else(|| invalid("An aggregation needs a member type"))?;
       let objects = iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?;

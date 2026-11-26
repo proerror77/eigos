@@ -1,6 +1,6 @@
 import type { CognitiveStep } from './cognitive-workflow.js';
 import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
-import { observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
+import { capturingDecisionReads, observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
 import { journalLinks, recordObjectEdit, resolveSourceEdits } from './edit-history.js';
@@ -15,6 +15,9 @@ import { isSandboxResource } from '../ontology/sandbox.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
+import { queryWithKernel, type KernelClient } from './kernel/client.js';
+import { compareWithKernel, defaultKernelUse, encodeKernelCursor, kernelAnswer, kernelCursor, referenceOffset, type KernelCursor,
+  type KernelUse } from './kernel/routing.js';
 
 const maxCompleteRelationships = 1_000;
 
@@ -44,6 +47,8 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
     ...(query.intervalOverlap ? [query.intervalOverlap.start, query.intervalOverlap.end] : [])])];
 }
 export class Objects {
+  /** How `query` uses the query kernel: by default from EIGOS_KERNEL and the process's kernels. Tests replace it. */
+  static kernels: () => KernelUse = defaultKernelUse;
   constructor(readonly db: Database, readonly model: PublishedOntology, readonly access: Access, readonly client: Sql = db.pool,
     readonly change?: {
       action?: string; requestId?: string; taskId?: string; inputDigest?: string; reviewedChangeDigest?: string;
@@ -326,7 +331,71 @@ export class Objects {
   async query(input: Query): Promise<{ items: ObjectData[]; cursor?: string }> {
     this.requireExclusive('set query');
     const args = querySchema.parse(input);
-    return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryObjects(args), observedPage);
+    return observeDecisionRead(this, { kind: 'query', input: args }, () => this.queryPage(args), observedPage);
+  }
+  /**
+   * One page of a query. A query the reference evaluates completely (it filters, orders, or reads derived properties or
+   * nested fields) goes through the query kernel as EIGOS_KERNEL says, like an Object Set: `route` answers it from the
+   * kernel, in the reference's order, and `shadow` compares the kernel's answer with the reference's. Inside a caller's
+   * transaction, in a Scenario, while decision evidence records each read and outside the owner's row security
+   * context, the reference answers.
+   */
+  private async queryPage(args: z.output<typeof querySchema>): Promise<{ items: ObjectData[]; cursor?: string }> {
+    const kernels = Objects.kernels();
+    const cursor = args.cursor ? kernelCursor(args.cursor) : undefined;
+    const allowed = kernels.mode !== 'off' && this.client === this.db.pool && !this.model.scenario && !capturingDecisionReads()
+      && this.db.readsAsOwner(this.owner) && this.completeQuery(args);
+    // A kernel cursor continues only on the kernel, and a reference cursor only on the reference.
+    if (!allowed && cursor) throw new InvalidInput('Query cursor expired; query again from the first page');
+    if (allowed && kernels.mode === 'route' && (!args.cursor || cursor)) {
+      const routed = await this.routedQuery(kernels, args, cursor);
+      if (routed) return routed;
+      if (cursor) throw new InvalidInput('Query cursor expired; query again from the first page');
+    }
+    const page = await this.queryObjects(args);
+    if (allowed && kernels.mode === 'shadow') await this.shadowQuery(kernels, args);
+    return page;
+  }
+  /** Whether the reference evaluates the query completely rather than reading it page by page from storage. */
+  private completeQuery(args: z.output<typeof querySchema>) {
+    try {
+      return Boolean(args.filter || args.orderBy || queryFields(args).some(field => field.includes('.'))
+        || this.model.concreteTypes(args.type).some(type => Object.values(this.model.object(type).properties).some(property => property.derived)));
+    } catch { return false; }
+  }
+  private async routedQuery(kernels: KernelUse, args: z.output<typeof querySchema>, cursor?: KernelCursor) {
+    const kernel = await kernels.registry.kernelFor(this.db, this.model, false);
+    if (!kernel) return undefined;
+    const identity = digest({ owner: this.owner, release: this.model.release, args: { ...args, cursor: undefined, limit: undefined } });
+    if (cursor && cursor.identity !== identity) throw new InvalidInput('Query cursor belongs to another query');
+    const offset = cursor?.offset ?? 0;
+    const result = await kernelAnswer(this.db, kernels.registry, this.model, () => this.kernelQuery(kernel, args, offset));
+    if (!result) return undefined;
+    if (cursor && result.membership !== cursor.membership) throw new InvalidInput('Query results changed since the previous page; query again from the first page');
+    const end = offset + args.limit;
+    return { items: result.items, cursor: end < result.total ? encodeKernelCursor({ identity, offset: end, membership: result.membership }) : undefined };
+  }
+  /**
+   * One page from the kernel. Like the reference's complete evaluation, it reads with a fork of the access, which must
+   * still be able to return what it read; this access adopts the reads once the kernel answered.
+   */
+  private async kernelQuery(kernel: KernelClient, args: z.output<typeof querySchema>, offset: number) {
+    const fork = await this.access.fork();
+    const result = await queryWithKernel(kernel, this.model, fork, new Objects(this.db, this.model, fork), { query: args, offset });
+    if (!result) return undefined;
+    if (!await fork.canReturn(fork.dataRequirements())) throw new Conflict('Query permissions changed');
+    this.access.adoptReads(fork);
+    return result;
+  }
+  private shadowQuery(kernels: KernelUse, args: z.output<typeof querySchema>) {
+    const offset = args.cursor ? referenceOffset(args.cursor) : 0;
+    return compareWithKernel(this.db, kernels.registry, this.access, this.model, args, async fork => {
+      const page = await new Objects(this.db, this.model, fork).queryObjects(args);
+      return { items: page.items, more: Boolean(page.cursor) };
+    }, async (client, fork) => {
+      const result = await new Objects(this.db, this.model, fork).kernelQuery(client, args, offset);
+      return result && { items: result.items, more: offset + args.limit < result.total };
+    });
   }
   /**
    * Every match of a query for a caller that needs the whole set, such as Object Set evaluation. A query that

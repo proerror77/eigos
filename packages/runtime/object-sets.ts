@@ -4,16 +4,15 @@ import { canonical, Conflict, digest, InvalidInput, NotFound } from '../core/ide
 import { propertyPathSchema } from '../ontology/property-path.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import { capturingDecisionReads, observeDecisionRead, observeReadInput, observedPage } from './decision-evidence.js';
-import { unprofiled } from '../core/database-profile.js';
-import { latestCommit } from './change-feed.js';
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { nestedValue } from './query-filter.js';
 import { Objects, querySchema } from './objects.js';
 import { projectView } from './object-view.js';
-import { aggregateWithKernel, evaluateWithKernel, KernelFailed, type KernelClient } from './kernel/client.js';
-import { defaultKernels, kernelMode, type KernelMode, type KernelRegistry } from './kernel/registry.js';
+import { aggregateWithKernel, evaluateWithKernel, type KernelClient } from './kernel/client.js';
+import { compareWithKernel, defaultKernelUse, encodeKernelCursor, kernelAnswer, kernelCursor, ontologyValues, referenceOffset, type KernelCursor,
+  type KernelUse } from './kernel/routing.js';
 
 const setQuerySchema = querySchema.omit({ limit: true, cursor: true, select: true });
 export type SetExpression =
@@ -73,78 +72,10 @@ const refKey = (ref: ObjectRef) => canonical(ref);
 const sorted = (objects: ObjectData[]) => objects.sort((a, b) => Buffer.compare(Buffer.from(refKey(a.ref)), Buffer.from(refKey(b.ref))));
 
 /** Object sets reuse the live object's authorization and Scenario view for every evaluation. */
-/** A kernel cursor: the evaluation it continues, where the next page starts, and the members it was computed over. */
-type KernelCursor = { identity: string; offset: number; membership: string };
-const encodeKernelCursor = (cursor: KernelCursor) => Buffer.from(JSON.stringify({ kernel: cursor })).toString('base64url');
-function kernelCursor(cursor: string): KernelCursor | undefined {
-  try {
-    const value = (JSON.parse(Buffer.from(cursor, 'base64url').toString()) as { kernel?: Partial<KernelCursor> }).kernel;
-    return value && typeof value.identity === 'string' && Number.isInteger(value.offset) && value.offset! >= 0 && typeof value.membership === 'string'
-      ? value as KernelCursor : undefined;
-  } catch { return undefined; }
-}
-/** Where a reference cursor's page starts. */
-function referenceOffset(cursor: string) {
-  try { return Math.max(0, Number((JSON.parse(Buffer.from(cursor, 'base64url').toString()) as { offset?: number }).offset) || 0); }
-  catch { return 0; }
-}
-
-/** Runs an operation with a fork of the principal's access in its own egress scope, and reports what it recorded. */
-async function isolated<T>(access: Access, operation: (fork: Access) => Promise<T>) {
-  const fork = await access.fork();
-  const measured = await fork.measureEgress(() => operation(fork));
-  return { result: measured.result, classification: measured.classification, requirements: measured.requirements, markings: fork.readMarkingsSnapshot() };
-}
-type Recorded = Awaited<ReturnType<typeof isolated<unknown>>>;
-/** Ontology values of objects: a missing value and null are the same value. */
-const ontologyValues = (items: readonly ObjectData[]) => items.map(item => ({ ref: item.ref, revision: item.revision,
-  properties: Object.fromEntries(Object.entries(item.properties).filter(([, value]) => value !== null && value !== undefined)) }));
-/**
- * How the kernel's answer differs from the reference's, or undefined: the results; the rows, markings and classification
- * recorded; and the type-level dependencies, of which the kernel may record more (it checks types while planning, also
- * for inputs that turn out empty).
- */
-function shadowMismatch(expected: Recorded, actual: Recorded): string | undefined {
-  if (canonical(expected.result) !== canonical(actual.result)) return 'result';
-  const rows = (recorded: Recorded) => recorded.requirements.flatMap(item => item.row ? [item.row.type + '/' + item.row.id] : []).sort();
-  if (canonical(rows(expected)) !== canonical(rows(actual))) return 'row dependencies';
-  if (canonical(expected.markings) !== canonical(actual.markings)) return 'read markings';
-  if (canonical(expected.classification) !== canonical(actual.classification)) return 'classification';
-  const typeLevel = (recorded: Recorded) => new Set(recorded.requirements.filter(item => !item.row && item.permission !== 'view_property').map(item => canonical(item)));
-  const recorded = typeLevel(actual);
-  if ([...typeLevel(expected)].some(item => !recorded.has(item))) return 'type-level dependencies';
-  return undefined;
-}
-function reportShadow(mismatch: string, input: unknown) {
-  const message = `Query kernel shadow mismatch (${mismatch}): ${JSON.stringify(input).slice(0, 2000)}`;
-  if (process.env.EIGOS_KERNEL_SHADOW_STRICT === 'true') throw new Error(message);
-  console.warn(message);
-}
-/**
- * How the shadow comparisons of this process went:
- * - compared;
- * - declined, when the kernel left the evaluation to the reference;
- * - skipped, when the owner committed during the comparison;
- * - stale, when the kernel differed until it loaded the projection again, because it missed writes outside the commit
- *   log;
- * - aborted, when a comparison that ran after its request failed, for example because the data was gone.
- * With EIGOS_KERNEL_SHADOW_REPORT=true, printed once when the process exits.
- */
-const shadowCounts = { compared: 0, declined: 0, skipped: 0, stale: 0, aborted: 0 };
-let shadowReport = false;
-function countShadow(outcome: keyof typeof shadowCounts) {
-  shadowCounts[outcome]++;
-  if (!shadowReport && process.env.EIGOS_KERNEL_SHADOW_REPORT === 'true') {
-    shadowReport = true;
-    process.once('exit', () => console.error(JSON.stringify({ event: 'kernel_shadow', ...shadowCounts })));
-  }
-}
-
 export class ObjectSets {
   /** `kernels` sets how evaluation uses the query kernel; by default from EIGOS_KERNEL and the process's kernels. */
   constructor(private readonly db: Database, private readonly maximumObjects = 10000,
-    private readonly kernels: { mode: KernelMode; registry: Pick<KernelRegistry, 'kernelFor'> & Partial<Pick<KernelRegistry, 'reload' | 'lost'>> }
-      = { mode: kernelMode(), registry: defaultKernels() }) {
+    private readonly kernels: KernelUse = defaultKernelUse()) {
     if (!Number.isInteger(maximumObjects) || maximumObjects < 1 || maximumObjects > 10000) throw new Error('Object set maximum must be between 1 and 10000');
   }
   /**
@@ -157,17 +88,8 @@ export class ObjectSets {
     return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000
       && this.db.readsAsOwner(access.principal.owner);
   }
-  /**
-   * The kernel's answer, or undefined when the kernel failed, so that the reference answers. A routed query never fails
-   * because of the kernel: a lost kernel is set aside until its registry opens it again.
-   */
-  private async kernelAnswer<T>(model: PublishedOntology, answer: () => Promise<T | undefined>): Promise<T | undefined> {
-    try { return await answer(); } catch (error) {
-      if (!(error instanceof KernelFailed)) throw error;
-      console.warn(`Query kernel failed, so the reference answers: ${error.message}`);
-      if (error.lost) this.kernels.registry.lost?.(this.db, model);
-      return undefined;
-    }
+  private kernelAnswer<T>(model: PublishedOntology, answer: () => Promise<T | undefined>) {
+    return kernelAnswer(this.db, this.kernels.registry, model, answer);
   }
   private kernelIdentity(access: Access, model: PublishedOntology, input: { set: unknown; view?: string }) {
     return digest({ owner: access.principal.owner, release: model.release, set: input.set, view: input.view });
@@ -388,39 +310,9 @@ export class ObjectSets {
     return { items: result.items, total: result.total,
       cursor: end < result.total && result.membership ? encodeKernelCursor({ identity, offset: end, membership: result.membership }) : undefined };
   }
-  /**
-   * Compares the kernel's answer with the reference's, each on a fork of the principal's access, outside every database
-   * profile. With EIGOS_KERNEL_SHADOW_STRICT=true the comparison finishes before the request answers, so a mismatch
-   * fails it; otherwise it runs after the request answers, adding no latency.
-   */
-  private async shadow(access: Access, model: PublishedOntology, input: unknown, reference: (fork: Access) => Promise<unknown>,
+  private shadow(access: Access, model: PublishedOntology, input: unknown, reference: (fork: Access) => Promise<unknown>,
     kernel: (client: KernelClient, fork: Access) => Promise<unknown | undefined>) {
-    const compare = async () => {
-      const client = await this.kernels.registry.kernelFor(this.db, model, true);
-      if (!client) return;
-      const before = await latestCommit(this.db, access.principal.owner, this.db.pool);
-      const expected = await isolated(access, reference);
-      const viaKernel = () => isolated(access, fork => kernel(client, fork));
-      let actual = await viaKernel();
-      if (actual.result === undefined) return countShadow('declined');
-      if (await latestCommit(this.db, access.principal.owner, this.db.pool) !== before) return countShadow('skipped');
-      let mismatch = shadowMismatch(expected, actual);
-      if (mismatch && this.kernels.registry.reload) {
-        // Writes outside the commit log are invisible to the kernel until it loads the projection again.
-        await this.kernels.registry.reload(this.db, model);
-        actual = await viaKernel();
-        if (actual.result !== undefined && !shadowMismatch(expected, actual)) return countShadow('stale');
-        mismatch = actual.result === undefined ? undefined : shadowMismatch(expected, actual);
-      }
-      countShadow('compared');
-      if (mismatch) reportShadow(mismatch, input);
-    };
-    if (process.env.EIGOS_KERNEL_SHADOW_STRICT === 'true') {
-      const counted = this.db.queries;
-      try { await unprofiled(compare); } finally { this.db.queries = counted; }
-      return;
-    }
-    void unprofiled(compare).catch(() => countShadow('aborted'));
+    return compareWithKernel(this.db, this.kernels.registry, access, model, input, reference, kernel);
   }
   private shadowEvaluate(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>) {
     const offset = input.cursor ? referenceOffset(input.cursor) : 0;
