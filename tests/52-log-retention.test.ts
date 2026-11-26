@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { addProcessLogs } from '../packages/ontology/process-definition.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
+import { EditHistory } from '../packages/runtime/edit-history.js';
 import { ArchiveCodec, LogRetention, auditHistory } from '../packages/runtime/log-retention.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { replayCheck } from '../packages/runtime/replay-check.js';
@@ -77,6 +78,19 @@ test('old commit log months move to Parquet behind every consumer, and history r
       Number((await f.db.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${f.s}.${table} WHERE owner=$1 AND ${where}`, [owner])).rows[0]!.n);
     const tables = async () => ({ edits: await count('edit_history'), links: await count('link_history'), commits: await count('change_commits') });
     const untouched = await tables();
+    const history = new EditHistory(f.db, { dir: archive, codec });
+    const pages = async (limit: number) => {
+      const items: unknown[] = [];
+      let cursor: string | undefined = '0';
+      while (cursor !== undefined) {
+        const page: { items: unknown[]; cursor?: string } = await history.read(f.graph, request('january'), cursor, limit);
+        items.push(...page.items);
+        cursor = page.cursor;
+      }
+      return items;
+    };
+    const historyBefore = await history.read(f.graph, request('january'));
+    assert.equal(historyBefore.items.length, 3);
 
     // A codec that fails leaves the tables, the manifest and the archive as they were.
     await assert.rejects(new LogRetention(f.db, { days: 90, archive, codec: new ArchiveCodec('/usr/bin/false'), now: new Date('2026-06-01T00:00:00Z') })
@@ -114,6 +128,15 @@ test('old commit log months move to Parquet behind every consumer, and history r
     assert.equal((await f.graph.query({ type: 'RouteStateLog' })).items.length, before.logs);
     assert.equal((await f.db.withOwner(owner, () => replayCheck(f.db, f.model.projection))).consistent, true);
     assert.equal(await f.latest() >= recent, true);
+
+    // The object's edit history reads its archived edits first, whole or page by page, as before they moved. Without the
+    // archive it returns what the tables keep and says that older history is archived.
+    assert.deepEqual(await history.read(f.graph, request('january')), historyBefore);
+    assert.deepEqual(await pages(1), historyBefore.items);
+    const withoutArchive = await new EditHistory(f.db, undefined).read(f.graph, request('january'));
+    assert.equal(withoutArchive.items.length, 1);
+    assert.equal(withoutArchive.archive, 'unavailable');
+    assert.equal((await history.read(f.graph, route)).archive, undefined);
 
     // February waits for the subscription, then goes once it is cancelled; nothing is archived twice.
     assert.deepEqual(await retention.plan(owner), []);

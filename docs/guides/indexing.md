@@ -111,7 +111,10 @@ node --import tsx scripts/ontology.ts audit --owner=<subject> [--table=edit_hist
 
 - `audit` 合并表里和归档里的行，按 sequence 输出 NDJSON。归档前后，同一查询的结果相同。
 - `replay-check` 把历史已归档的行计为 `carried`，不比较。
-- 对象的 `edit_history` 接口目前只读表里的行，读取归档是下一步。
+- 对象的 `edit_history` 接口（HTTP、MCP 和 `EditHistory.read`）先合并归档和表里的行，再按 sequence 分页。月份交界处两边可能交错，所以每页取两边最小的 sequence。分页游标不变，前几页是归档的编辑。
+  - 读取归档需要给运行时配置 `EIGOS_LOG_ARCHIVE_DIR` 和 `EIGOS_ARCHIVE_BIN`，用于 Gateway。
+  - 没有配置而 owner 又有归档时，接口只返回表里的行，并带上 `archive: "unavailable"`。
+  - 可见性和遮罩与表里的行相同：先按当前权限读取对象，再按快照遮罩属性，并且只返回本本体发布中的编辑。
 
 ## 物化
 
