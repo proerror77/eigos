@@ -1,0 +1,13 @@
+[package]
+name = "host-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wasmtime = "=50.0.1"
+wasmtime-wasi = "=50.0.1"
+anyhow = "1"
+serde_json = "1"
+
+[workspace]

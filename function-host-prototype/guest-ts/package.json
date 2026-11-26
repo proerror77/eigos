@@ -1,0 +1,8 @@
+{
+  "name": "guest-ts-prototype",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@bytecodealliance/componentize-js": "0.23.0"
+  }
+}

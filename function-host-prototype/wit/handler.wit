@@ -1,0 +1,6 @@
+package eigos:function@0.1.0;
+
+world handler {
+  /// JSON in, JSON out; an error carries a message.
+  export invoke: func(input: string) -> result<string, string>;
+}
