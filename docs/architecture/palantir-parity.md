@@ -25,7 +25,7 @@
 | 模型与流式 | 调用语言模型、functions on models、流式函数、语义检索向量 | 有 Agent 和嵌入 Function | F5 |
 
 阶段：
-- **F1 函数运行时。** 用户函数编写后编译成 Wasm，在 spared 宿主中隔离执行，宿主沿用已有的 spared 试点。每次调用都有 CPU 时间、内存、对象读取量和调用深度的上限。函数先作为定义分支发布，按语义化版本管理，有自己的调用权限，然后经过现有的候选准备和审阅。
+- **F1 函数运行时。** 用户函数编写后编译成 Wasm，在自建的 wasmtime 函数宿主中隔离执行（2026-11-26 修正：spared 不能为 F2 提供宿主函数，见 [路线图](roadmap.md#线二functions)）。每次调用都有 CPU 时间、内存、对象读取量和调用深度的上限。函数先作为定义分支发布，按语义化版本管理，有自己的调用权限，然后经过现有的候选准备和审阅。
 - **F2 Ontology API 与编辑。**
   - 函数内的对象、关系、Object Set 和聚合接口通过查询内核执行，可执行性与权限沿用规划层的判断。
   - 编辑接口在函数内提供写后读：同一次调用内暂存编辑，由 Function-backed Action 在一个事务里提交。
@@ -100,7 +100,7 @@
 4. **C5 之后：** S2、S4、M2，以及原 OSS 03.3 到 03.5。
 5. **最后：** F3 到 F5、S3、M3，以及 C6 基准、运行时 06.x、并发 04.3/04.4 和规模化 09.x。
 
-每个阶段一个或多个 PR，各自带上依据链接、实现边界和测试。阶段的验收标准是：在同一类业务用例上，提供与 Palantir 文档所述能力等价的功能和限制说明。Palantir 文档没有给出的限制，由 EIGOS 自行规定并写入文档。
+各阶段的依赖、验收与先后顺序见 [路线图](roadmap.md)。每个阶段一个或多个 PR，各自带上依据链接、实现边界和测试。阶段的验收标准是：在同一类业务用例上，提供与 Palantir 文档所述能力等价的功能和限制说明。Palantir 文档没有给出的限制，由 EIGOS 自行规定并写入文档。
 
 依据页面：
 - Functions：[overview](https://www.palantir.com/docs/foundry/functions/overview/) · [language feature support](https://www.palantir.com/docs/foundry/functions/language-feature-support/) · [edits](https://www.palantir.com/docs/foundry/functions/edits-overview/) · [API calls](https://www.palantir.com/docs/foundry/functions/api-calls/) · [performance](https://www.palantir.com/docs/foundry/functions/optimize-performance/) · [use functions](https://www.palantir.com/docs/foundry/functions/use-functions/)
