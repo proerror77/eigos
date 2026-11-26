@@ -149,10 +149,13 @@ export class ObjectSets {
   }
   /**
    * Whether an evaluation may use the kernel. It may not inside a caller's transaction, whose own writes the kernel
-   * cannot see; in a Scenario; while decision evidence records each read; or with a smaller evaluation limit.
+   * cannot see; in a Scenario; while decision evidence records each read; with a smaller evaluation limit; or outside
+   * the principal owner's context when owner isolation is on. The kernel reads past row security, so it answers only
+   * where row security lets the reference read the owner's rows.
    */
-  private kernelAllowed(model: PublishedOntology, existing?: Sql) {
-    return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000;
+  private kernelAllowed(access: Access, model: PublishedOntology, existing?: Sql) {
+    return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000
+      && this.db.readsAsOwner(access.principal.owner);
   }
   /**
    * The kernel's answer, or undefined when the kernel failed, so that the reference answers. A routed query never fails
@@ -350,7 +353,7 @@ export class ObjectSets {
       () => this.evaluateSet(access, model, input, client), observedPage);
   }
   private async evaluateSet(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>, existing?: Sql) {
-    if (!this.kernelAllowed(model, existing)) return this.referenceEvaluate(access, model, input, existing);
+    if (!this.kernelAllowed(access, model, existing)) return this.referenceEvaluate(access, model, input, existing);
     const cursor = input.cursor ? kernelCursor(input.cursor) : undefined;
     // A reference cursor continues on the reference.
     if (input.cursor && !cursor) {
@@ -458,7 +461,7 @@ export class ObjectSets {
       () => this.aggregateSet(access, model, input, client));
   }
   private async aggregateSet(access: Access, model: PublishedOntology, input: z.output<typeof aggregateSetSchema>, existing?: Sql) {
-    if (!this.kernelAllowed(model, existing)) return this.referenceAggregate(access, model, input, existing);
+    if (!this.kernelAllowed(access, model, existing)) return this.referenceAggregate(access, model, input, existing);
     if (this.kernels.mode === 'route') {
       const kernel = await this.kernels.registry.kernelFor(this.db, model, false);
       if (kernel) {
