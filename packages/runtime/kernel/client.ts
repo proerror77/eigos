@@ -50,6 +50,14 @@ function observeReads(access: Access, model: PublishedOntology, plan: KernelPlan
   return true;
 }
 
+/**
+ * The kernel could not answer: it could not be reached, holds no projection, or failed on the query. The reference
+ * answers instead. `lost` means the kernel can answer nothing until it loads the projection again.
+ */
+export class KernelFailed extends Error {
+  constructor(message: string, readonly lost: boolean) { super(message); this.name = 'KernelFailed'; }
+}
+
 /** A running query kernel on the loopback interface. */
 export class KernelClient {
   private constructor(readonly url: string, private readonly child?: ChildProcess) {}
@@ -81,14 +89,24 @@ export class KernelClient {
     await exited;
   }
   /**
-   * Undefined when the kernel leaves the query to the reference: the reference's evaluation fails (422), or the kernel
-   * cannot answer from the version the query needs (409).
+   * Undefined when the kernel leaves the query to the reference: the reference's evaluation fails, or the kernel cannot
+   * read the request (422); or the kernel cannot answer from the version the query needs (409). Throws `KernelFailed`
+   * when the kernel cannot be reached or fails.
    */
   private async post<T>(path: string, body: unknown): Promise<T | undefined> {
-    const response = await fetch(this.url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const value = await response.json() as T & { error?: string };
-    if (response.status === 422 || response.status === 409) return undefined;
-    if (!response.ok) throw new Error(`Kernel ${path} failed: ${value.error ?? response.status}`);
+    let status: number, text: string;
+    try {
+      const response = await fetch(this.url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      status = response.status;
+      text = await response.text();
+    } catch (error) {
+      throw new KernelFailed(`Kernel ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
+    if (status === 422 || status === 409) return undefined;
+    let value: (T & { error?: string }) | undefined;
+    try { value = JSON.parse(text) as T & { error?: string }; } catch { value = undefined; }
+    // 503: the kernel holds no projection, after it restarted.
+    if (status < 200 || status > 299 || value === undefined) throw new KernelFailed(`Kernel ${path} failed with ${status}: ${value?.error ?? text.slice(0, 300)}`, status === 503);
     return value;
   }
   /**

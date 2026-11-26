@@ -14,8 +14,6 @@ export function kernelMode(): KernelMode {
 }
 
 type Instance = { client: KernelClient; ready: Promise<void>; state: 'loading' | 'ready' | 'failed'; used: number; failedAt?: number };
-/** How long a projection that failed to load stays on the reference path before the next attempt. */
-const retryAfterMs = 60_000;
 
 /**
  * The query kernels this process uses, each holding one projection that it loads on first use and then keeps current.
@@ -27,19 +25,21 @@ const retryAfterMs = 60_000;
 export class KernelRegistry {
   private readonly instances = new Map<string, Instance>();
   private exitHook = false;
+  /** `retryAfterMs` is how long a projection whose kernel failed to load it, or was lost, stays on the reference path. */
   constructor(private readonly url = process.env.EIGOS_KERNEL_URL, private readonly binary = process.env.EIGOS_KERNEL_BIN,
-    private readonly limit = Number(process.env.EIGOS_KERNEL_INSTANCES ?? 2), private readonly database = process.env.EIGOS_KERNEL_DATABASE_URL) {}
+    private readonly limit = Number(process.env.EIGOS_KERNEL_INSTANCES ?? 2), private readonly database = process.env.EIGOS_KERNEL_DATABASE_URL,
+    private readonly retryAfterMs = 60_000) {}
 
   /**
    * A kernel holding the model's projection of `db`, or undefined while it loads (unless `wait`), after it failed to
    * load, or when no kernel is configured.
    */
   async kernelFor(db: Database, model: PublishedOntology, wait: boolean): Promise<KernelClient | undefined> {
-    const database = this.database ?? (db.pool.options as { connectionString?: string }).connectionString;
+    const database = this.databaseOf(db);
     if (!database || !this.url && !this.binary) return undefined;
-    const key = JSON.stringify([database, db.schema, model.projection]);
+    const key = this.key(db, model);
     let instance = this.instances.get(key);
-    if (instance?.state === 'failed' && Date.now() - instance.failedAt! > retryAfterMs) { this.close(key); instance = undefined; }
+    if (instance?.state === 'failed' && Date.now() - instance.failedAt! >= this.retryAfterMs) { this.close(key); instance = undefined; }
     instance ??= await this.open(key, db, model, database);
     instance.used = Date.now();
     if (wait) await instance.ready;
@@ -77,10 +77,21 @@ export class KernelRegistry {
 
   /** Loads the model's projection again, from storage, into the kernel that holds it. */
   async reload(db: Database, model: PublishedOntology) {
-    const database = this.database ?? (db.pool.options as { connectionString?: string }).connectionString;
-    const instance = this.instances.get(JSON.stringify([database, db.schema, model.projection]));
-    if (instance?.state === 'ready') await instance.client.load(db, model, database!);
+    const instance = this.instances.get(this.key(db, model));
+    if (instance?.state === 'ready') await instance.client.load(db, model, this.databaseOf(db)!);
   }
+
+  /**
+   * Sets aside the kernel of the model's projection after it was lost, for example because the kernel service
+   * restarted: queries go to the reference until the retry delay passes, and the next query then opens it again.
+   */
+  lost(db: Database, model: PublishedOntology) {
+    const instance = this.instances.get(this.key(db, model));
+    if (instance?.state === 'ready') { instance.state = 'failed'; instance.failedAt = Date.now(); }
+  }
+
+  private databaseOf(db: Database) { return this.database ?? (db.pool.options as { connectionString?: string }).connectionString; }
+  private key(db: Database, model: PublishedOntology) { return JSON.stringify([this.databaseOf(db), db.schema, model.projection]); }
 
   private close(key: string) {
     const instance = this.instances.get(key);
