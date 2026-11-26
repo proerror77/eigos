@@ -671,7 +671,10 @@ enum Output {
 #[derive(Deserialize)]
 struct MemberSpec { r#type: String, #[serde(default)] track: bool, markings: Option<String> }
 
+/// Unknown fields are refused (422, so the client answers from the reference): a field this kernel does not know could
+/// change the answer, as a Scenario does.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(default)] members: Vec<MemberSpec>,
   #[serde(default)] rows: HashMap<String, Predicate>, #[serde(default)] derived: HashMap<String, Vec<DerivedSpec>>,
   /// The projection the planner compiled for; a kernel holding another one leaves the query to the reference.
@@ -1475,13 +1478,16 @@ async fn query(snapshot: &Snapshot, request: QueryRequest, overlay: Option<Arc<O
   }
 }
 
+/// What this kernel answers: 1, Object Set pages and aggregations; 2, also query pages (C4b) and Scenario overlays (C5a).
+const PROTOCOL: u32 = 2;
+
 async fn health(State(state): State<Shared>) -> Json<Value> {
   let snapshot = state.snapshot.read().await.clone();
   Json(match snapshot {
-    Some(s) => json!({ "status": "ok", "loaded": true, "loads": state.loads.load(std::sync::atomic::Ordering::Relaxed),
+    Some(s) => json!({ "status": "ok", "protocol": PROTOCOL, "loaded": true, "loads": state.loads.load(std::sync::atomic::Ordering::Relaxed),
       "projection": s.request.projection, "objects": s.objects, "edges": s.edge_count,
       "changed": s.types.values().map(|t| t.changed.len()).sum::<usize>() + s.edges.values().map(|l| l.changed.len()).sum::<usize>() }),
-    None => json!({ "status": "ok", "loaded": false }),
+    None => json!({ "status": "ok", "protocol": PROTOCOL, "loaded": false }),
   })
 }
 

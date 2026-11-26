@@ -778,6 +778,12 @@ test('the query kernel reads a Scenario\'s edits over the live data like the ref
     await (await draft()).edit(route('a'), await revision(view, route('a')), { distance: 1 });
     for (const set of sets.slice(0, 3)) await compareSet(g, undefined, set);
     await compareQuery(g, undefined, { type: 'Route', orderBy: [{ property: 'distance' }] });
+    // A kernel that predates Scenario overlays would answer from the live data, so the Scenario stays on the reference.
+    // A client of the same kernel whose health reports no protocol, with nothing cached.
+    const predates = Object.assign(Object.create(f.kernel) as KernelClient, { protocol: undefined, health: async () => ({ status: 'ok', loaded: true }) });
+    assert.equal(await evaluateWithKernel(predates, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }), undefined);
+    assert((await evaluateWithKernel(f.kernel, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }))?.items.length);
+    assert.equal((await f.kernel.health()).protocol, 2);
     // The reference reports a Scenario that is no longer open, so the kernel leaves it to the reference.
     const current = Number((await f.db.query<{ revision: string }>(`SELECT revision FROM ${f.db.schema}.scenarios WHERE id=$1`, [scene.id])).rows[0]!.revision);
     await scenarios.discard(access, f.model, scene.id, current);

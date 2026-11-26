@@ -84,6 +84,16 @@ export class KernelClient {
   }
   /** A client for a kernel service already running at `url`. */
   static connect(url: string) { return new KernelClient(url.replace(/\/$/, '')); }
+  private protocol?: Promise<number>;
+  /**
+   * Whether the kernel answers protocol `level`: 2 adds query pages and Scenario overlays. A kernel that predates them
+   * would ignore a Scenario and answer from the live data, so a Scenario goes to the reference instead. A restarted
+   * kernel is reached through a new client, which asks again.
+   */
+  async supports(level: number) {
+    this.protocol ??= this.health().then(health => health.protocol ?? 1, () => 0);
+    return await this.protocol >= level;
+  }
   /** The kernel process ID, when this client started it. */
   get pid() { return this.child?.pid; }
   /** Asks the kernel process this client started to stop, without waiting for it. */
@@ -143,7 +153,7 @@ export class KernelClient {
       output, ...version });
   }
   async health() {
-    return await (await fetch(this.url + '/health')).json() as { loaded: boolean; loads?: number; projection?: string; objects?: number; edges?: number; changed?: number };
+    return await (await fetch(this.url + '/health')).json() as { loaded: boolean; protocol?: number; loads?: number; projection?: string; objects?: number; edges?: number; changed?: number };
   }
   /** The last commit the kernel has applied for each owner. */
   async positions() { return await (await fetch(this.url + '/positions')).json() as Record<string, number>; }
@@ -185,7 +195,7 @@ export async function evaluateWithKernel(kernel: KernelClient, model: PublishedO
   const shown = input.view ? viewShown(access, model, input.view) : true;
   if (shown === undefined) return undefined;
   if (!shown) return { items: [] as ObjectData[], total: 0, elapsedMs: 0 };
-  const version = await versionOf(model, access, graph);
+  const version = await versionOf(kernel, model, access, graph);
   if (!version) return undefined;
   const plan = await compileSet(model, access, graph, input.set);
   if (!plan) return undefined;
@@ -213,7 +223,8 @@ async function hydrate(graph: Objects, refs: readonly ObjectRef[]): Promise<Obje
  * The version a query needs, read before it starts: every commit of the owner visible then, and in a Scenario its
  * revision. Undefined for a Scenario the reference reports as unavailable, closed, expired or of another publication.
  */
-async function versionOf(model: PublishedOntology, access: Access, graph: Objects): Promise<KernelVersion | undefined> {
+async function versionOf(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects): Promise<KernelVersion | undefined> {
+  if (model.scenario && !await kernel.supports(2)) return undefined;
   const owner = access.principal.owner;
   const minCommit = Number(await latestCommit(graph.db, owner, graph.client));
   if (!model.scenario) return { projection: model.projection, minCommit };
@@ -247,7 +258,7 @@ export async function aggregateWithKernel(kernel: KernelClient, model: Published
     return { count: 0, elapsedMs: 0, items: input.groupBy.length ? [] : [{ group: {},
       metrics: Object.fromEntries(Object.entries(input.metrics).map(([name, metric]) => [name, metric.op === 'count' ? 0 : null])) }] };
   }
-  const version = await versionOf(model, access, graph);
+  const version = await versionOf(kernel, model, access, graph);
   if (!version) return undefined;
   const plan = await compileSet(model, access, graph, input.set);
   const output = plan && compileAggregate(model, access, plan, input);
@@ -273,7 +284,7 @@ export async function queryWithKernel(kernel: KernelClient, model: PublishedOnto
   const { limit, cursor: _cursor, select, ...members } = query;
   try { for (const field of select ?? []) model.propertyPath(query.type, field); }
   catch (error) { if (error instanceof InvalidInput || error instanceof NotFound) return undefined; throw error; }
-  const version = await versionOf(model, access, graph);
+  const version = await versionOf(kernel, model, access, graph);
   if (!version) return undefined;
   const plan = await compileSet(model, access, graph, { op: 'query', query: members });
   const output = plan && compileQueryOrder(model, access, plan, query, input.offset, limit);
@@ -306,7 +317,7 @@ export async function queryWithKernel(kernel: KernelClient, model: PublishedOnto
  */
 export async function followWithKernel(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects,
   input: { ref: ObjectRef; link: string; view: string; maximum: number }) {
-  const version = await versionOf(model, access, graph);
+  const version = await versionOf(kernel, model, access, graph);
   if (!version) return undefined;
   const plan = await compileFollow(model, access, graph, input.ref, input.link, input.view);
   if (!plan) return undefined;
