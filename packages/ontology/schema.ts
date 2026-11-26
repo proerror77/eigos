@@ -109,6 +109,9 @@ export const ontologySchema = z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
     submissionCriteria: z.array(z.strictObject({
       function: name, arguments: z.record(name, value), message: z.string().min(1).max(500).optional(),
+      // Palantir's "Execution context" condition: a criterion for one context is checked only there. A merge replays
+      // a Scenario's Actions on the live data, so their live criteria apply then.
+      executionContext: z.enum(['scenario', 'live']).optional(),
     })),
     rules: z.array(z.discriminatedUnion('op', [
       z.strictObject({ op: z.literal('createObject'), object: reference, properties: z.record(name, value) }),

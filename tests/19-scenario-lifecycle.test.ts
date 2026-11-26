@@ -246,6 +246,63 @@ test('generic Scenario merge rechecks staged Action submission criteria against 
   } finally { await f.close(); }
 });
 
+test('submission criteria apply in the execution context they name, and a merge rechecks live criteria', async () => {
+  const f = await lifecycleFixture();
+  try {
+    const text = { type: 'string' };
+    const object = { type: 'object', properties: { type: text, id: text }, required: ['type', 'id'], additionalProperties: false };
+    const parameters = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+    const condition = {
+      apiName: 'RequestIsOpen', description: 'Confirm that the request is open', version: '1',
+      parameters: parameters({ request: object }), returns: { type: 'boolean' }, dependencies: { objectTypes: ['RideRequest'] },
+    };
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(condition);
+    const result = { type: 'Route', id: { parameter: 'route', path: ['id'] } };
+    const stage = (apiName: string, executionContext: 'live' | 'scenario', name: string) => ({
+      apiName, description: `Rename a route when the request is open in the ${executionContext} context`,
+      parameters: parameters({ route: object, request: object, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route', request: 'RideRequest' },
+      submissionCriteria: [{ function: condition.apiName, arguments: { request: { parameter: 'request' } }, executionContext, message: `The request must be open (${executionContext})` }],
+      rules: [{ op: 'editObject', object: { parameter: 'route' }, expectedRevision: { parameter: 'revision' }, properties: { name: { literal: name } } }],
+      result,
+    });
+    document.actionTypes.push(stage('RenameWhenLiveOpen', 'live', 'Renamed live-checked') as never, stage('RenameWhenProposedOpen', 'scenario', 'Renamed scenario-checked') as never, {
+      apiName: 'MergeRenamedRoute', description: 'Merge reviewed route renames',
+      parameters: parameters({ route: object, scenarioId: text, revision: { type: 'integer' } }),
+      objectParameters: { route: 'Route' }, submissionCriteria: [],
+      rules: [{ op: 'applyScenario', scenario: { parameter: 'scenarioId' }, expectedRevision: { parameter: 'revision' }, objectTypes: ['Route'], linkTypes: [] }],
+      result,
+    } as never);
+    const capabilities = createCapabilities(f.db, f.source, { functions: [{ definition: condition, implementationId: 'request-is-open-1',
+      handler: async (input, context) => (await context.objects.read(input.request as ObjectRef)).properties.status === 'requested' }] });
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const live = new Objects(f.db, model, await access());
+    const route = { type: 'Route', id: 'route-in-context' }, request = { type: 'RideRequest', id: 'request-in-context' };
+    await live.create(route, { id: route.id, name: 'Before' });
+    await live.create(request, { id: request.id, name: 'Before', status: 'quoted', requestedAt: new Date().toISOString() });
+    const scene = await f.scenarios.create(await access(), model, { requestId: 'contexts', name: 'Execution contexts' });
+    const view = await f.scenarios.view(await access(), model, scene.id);
+    // The request is not open. A live criterion does not apply in the Scenario, and a Scenario criterion does not apply live.
+    await capabilities.actions.apply(await access(), view, 'RenameWhenLiveOpen', { route, request, revision: 1 }, 'scenario-live-checked');
+    await assert.rejects(capabilities.actions.apply(await access(), model, 'RenameWhenLiveOpen', { route, request, revision: 1 }, 'live-live-checked'), /must be open \(live\)/);
+    await assert.rejects(capabilities.actions.apply(await access(), view, 'RenameWhenProposedOpen', { route, request, revision: 2 }, 'scenario-scenario-checked'), /must be open \(scenario\)/);
+    // Merging replays the Scenario's Actions on the live data, where their live criteria apply again.
+    const inspected = await f.scenarios.inspect(await access(), model, scene.id);
+    const merge = async () => capabilities.actions.apply(await access(), model, 'MergeRenamedRoute', { route, scenarioId: scene.id, revision: inspected.revision }, 'merge-renamed-route');
+    await assert.rejects(merge(), /submission criteria|must be open/);
+    assert.equal((await live.read(route)).properties.name, 'Before');
+    await live.edit(request, 1, { status: 'requested' });
+    await merge();
+    assert.equal((await live.read(route)).properties.name, 'Renamed live-checked');
+    // The Scenario criterion does not stop the Action on live data.
+    await capabilities.actions.apply(await access(), model, 'RenameWhenProposedOpen', { route, request, revision: 2 }, 'live-scenario-checked');
+    assert.equal((await live.read(route)).properties.name, 'Renamed scenario-checked');
+  } finally { await f.close(); }
+});
+
 test('Scenario replay uses ordered draft objects and links, rechecks live data and preserves the reviewed rebased delta', async () => {
   const f = await lifecycleFixture();
   try {
