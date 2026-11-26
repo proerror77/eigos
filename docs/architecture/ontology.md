@@ -85,6 +85,8 @@ flowchart TD
 
 这些职责对应 Foundry 的 Metadata、Object databases、Object Set Service、Actions、Object Data Funnel 和 Functions。这里采用单个 PostgreSQL 存储服务，定义解析与来源连接器通过进程内模块实现。[官方运行架构](https://www.palantir.com/docs/foundry/object-backend/overview)
 
+查询执行按路线 C 演进：PostgreSQL 保留权威状态，Funnel 从提交日志维护查询结构，自有的 DataFusion 查询服务执行 Ontology 专用规划生成的计划，现有路径作为参考实现和回退。分工、计划映射、读取版本和分阶段验收见 [查询内核](query-kernel.md)。
+
 ## 滴滴业务链
 
 ```mermaid
