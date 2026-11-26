@@ -47,8 +47,8 @@ jobs:
         run: |
           cargo build --release --locked --manifest-path kernel/Cargo.toml
           mkdir -p "$RUNNER_TEMP/release"
-          cp kernel/target/release/eigos-kernel "$RUNNER_TEMP/release/eigos-kernel"
-          strip "$RUNNER_TEMP/release/eigos-kernel"
+          cp kernel/target/release/eigos-kernel kernel/target/release/eigos-archive "$RUNNER_TEMP/release/"
+          strip "$RUNNER_TEMP/release/eigos-kernel" "$RUNNER_TEMP/release/eigos-archive"
       - name: Check that the binary starts and listens on loopback
         run: |
           binary="$RUNNER_TEMP/release/eigos-kernel"
@@ -59,6 +59,13 @@ jobs:
           curl --fail --silent "http://127.0.0.1:$port/health" | jq -e '.status == "ok" and .loaded == false'
           kill -TERM "$pid"
           wait "$pid" || true
+      - name: Check that the archive codec writes a row and reads it back
+        run: |
+          archive="$RUNNER_TEMP/release/eigos-archive"
+          echo '{"owner":"o","xact":"1","commit_seq":"1","committed_at":"2026-01-01T00:00:00.000000Z"}' |
+            "$archive" write change_commits "$RUNNER_TEMP/check.parquet" | jq -e '.rows == 1'
+          "$archive" read change_commits '{}' "$RUNNER_TEMP/check.parquet" | jq -e '.commit_seq == "1" and .committed_at == "2026-01-01T00:00:00.000000Z"'
+          rm "$RUNNER_TEMP/check.parquet"
       - name: Publish an immutable release for the source commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,10 +74,11 @@ jobs:
           tag="kernel-${SOURCE_SHA:0:12}"
           cd "$RUNNER_TEMP/release"
           sha256sum eigos-kernel > eigos-kernel.sha256
+          sha256sum eigos-archive > eigos-archive.sha256
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "$tag already exists; a release is never replaced" >&2
             exit 1
           fi
-          gh release create "$tag" eigos-kernel eigos-kernel.sha256 --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+          gh release create "$tag" eigos-kernel eigos-kernel.sha256 eigos-archive eigos-archive.sha256 --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
             --title "Query kernel ${SOURCE_SHA:0:12}" \
             --notes "Query kernel built from $SOURCE_SHA on ubuntu-24.04 (x86_64, glibc 2.39). SHA-256: $(cut -d' ' -f1 eigos-kernel.sha256)"

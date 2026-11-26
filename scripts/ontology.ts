@@ -106,6 +106,32 @@ else {
         links: result.links.map(entry => ({ ...entry, owner: hide(entry.owner) })),
         differences: result.differences.map(entry => ({ ...entry, owner: hide(entry.owner), id: hide(entry.id) })) }));
       if (!result.consistent) process.exitCode = 1;
+    } else if (command === 'archive-logs' || command === 'audit') {
+      // archive-logs: maintenance. Archives each owner's commit log months older than --days (default 90) to Parquet
+      // under --archive, then deletes the archived rows; --dry-run only lists the months. It needs a role that sees every
+      // owner (postgres) and the kernel crate's eigos-archive (--binary or EIGOS_ARCHIVE_BIN).
+      // audit: read-only. One owner's edit or link history across the tables and the archive, as NDJSON in history order.
+      const flag = (name: string) => process.argv.find(arg => arg.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
+      const { ArchiveCodec, LogRetention, auditHistory } = await import('../packages/runtime/log-retention.js');
+      const { createHash } = await import('node:crypto');
+      const binary = flag('binary') ?? process.env.EIGOS_ARCHIVE_BIN, archive = flag('archive') ?? process.env.EIGOS_LOG_ARCHIVE_DIR;
+      const hide = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 12);
+      if (command === 'archive-logs') {
+        if (!archive || !binary) throw new Error('Give --archive=<directory> and --binary=<eigos-archive>, or EIGOS_LOG_ARCHIVE_DIR and EIGOS_ARCHIVE_BIN');
+        const retention = new LogRetention(db, { days: Number(flag('days') ?? 90), archive, codec: new ArchiveCodec(binary) });
+        if (process.argv.includes('--dry-run'))
+          console.log(JSON.stringify({ months: (await retention.plan(flag('owner'))).map(month => ({ ...month, owner: hide(month.owner) })) }));
+        else console.log(JSON.stringify({ archived: (await retention.run({ owner: flag('owner'), limit: flag('limit') === undefined ? undefined : Number(flag('limit')) }))
+          .map(month => ({ ...month, owner: hide(month.owner) })) }));
+      } else {
+        const owner = flag('owner'), table = flag('table') ?? 'edit_history';
+        if (!owner || (table !== 'edit_history' && table !== 'link_history')) throw new Error('Give --owner=<subject> and --table=edit_history|link_history');
+        const filter = Object.fromEntries(Object.entries({ owner, type: flag('type'), id: flag('id'), fromType: flag('from-type'), fromId: flag('from-id'),
+          toType: flag('to-type'), toId: flag('to-id'), requestId: flag('request'), taskId: flag('task'), from: flag('from'), to: flag('to') })
+          .filter(([, value]) => value !== undefined)) as { owner: string };
+        const rows = await db.withOwner(owner, () => auditHistory(db, archive, binary ? new ArchiveCodec(binary) : undefined, table, filter));
+        for (const row of rows) console.log(JSON.stringify(row));
+      }
     } else if (command === 'grant-business') {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified owner');
       await setGrants(db, owner, businessGrants(model, db.sandboxEnabled));

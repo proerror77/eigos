@@ -11,7 +11,10 @@ export type ReplayCount = {
   missing: number;
   /** Rows the last committed write deleted, which the tables still hold. */
   resurrected: number;
-  /** Rows with no write in this projection's history: carried over when the projection was created. Not compared. */
+  /**
+   * Rows with no write in this projection's history: carried over when the projection was created, or whose writes the
+   * commit log retention archived (`log_archives`). Not compared.
+   */
   carried: number;
 };
 export type ReplayDifference = { kind: 'object' | 'link'; owner: string; name: string; id: string; problem: 'differs' | 'missing' | 'resurrected' };
