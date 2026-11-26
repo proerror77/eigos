@@ -9,7 +9,10 @@ import type { Database } from '../database.js';
 import type { PublishedOntology } from '../metadata.js';
 import { projectView } from '../object-view.js';
 import type { Objects } from '../objects.js';
-import { compileAggregate, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
+import type { z } from 'zod';
+import { nestedValue } from '../query-filter.js';
+import type { querySchema } from '../objects.js';
+import { compileAggregate, compileQueryOrder, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
 
 /** What the kernel read of one type: the rows the reference reads to evaluate the same set. */
 type Reads = { type: string; count: number; rank?: number | null; compartments?: string[]; ids?: string[]; overLimit?: true; markings?: string[];
@@ -19,6 +22,8 @@ type Reads = { type: string; count: number; rank?: number | null; compartments?:
 /** `membership` digests the members, so a cursor can tell whether they changed between pages. */
 type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; membership: string; reads: Reads; commit: number; elapsedMs: number };
 type AggregateResponse = { count: number; items: { group: Record<string, unknown>; metrics: Record<string, number | null> }[]; reads: Reads; commit: number; elapsedMs: number };
+/** `membership` digests the members and the values they are ordered by. */
+type QueryResponse = { total: number; refs: ObjectRef[]; membership: string; reads: Reads; commit: number; elapsedMs: number };
 /**
  * The version a query needs: the projection it was compiled for, and the owner's latest commit when it started, which
  * the kernel applies before it answers, waiting at most `waitMs`.
@@ -130,6 +135,10 @@ export class KernelClient {
     return this.post<AggregateResponse>('/query', { owner, set: plan.set, rows: plan.rows, derived: plan.derived, members: [...plan.members.values()],
       output, ...version });
   }
+  query(owner: string, plan: KernelPlan, output: NonNullable<ReturnType<typeof compileQueryOrder>>, version?: KernelVersion) {
+    return this.post<QueryResponse>('/query', { owner, set: plan.set, rows: plan.rows, derived: plan.derived, members: [...plan.members.values()],
+      output, ...version });
+  }
   async health() {
     return await (await fetch(this.url + '/health')).json() as { loaded: boolean; loads?: number; projection?: string; objects?: number; edges?: number; changed?: number };
   }
@@ -222,4 +231,41 @@ export async function aggregateWithKernel(kernel: KernelClient, model: Published
     for (const value of Object.values(item.metrics))
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Conflict('Numeric aggregation overflow');
   return { count: response.count, items: response.items, commit: response.commit, elapsedMs: response.elapsedMs };
+}
+
+/**
+ * One page of a query with the kernel, as `Objects.query` gives a query the reference evaluates completely: the members
+ * in the reference's order, read through `graph`, each projected into the query's type and its selected fields.
+ * Undefined leaves the query to the reference: it has no kernel plan; the reference's evaluation would fail; a member
+ * is gone or hidden; or the owner committed after the kernel answered, so the objects read could be newer than the
+ * order.
+ */
+export async function queryWithKernel(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects,
+  input: { query: z.output<typeof querySchema>; offset: number }) {
+  const { query } = input;
+  const { limit, cursor: _cursor, select, ...members } = query;
+  try { for (const field of select ?? []) model.propertyPath(query.type, field); }
+  catch (error) { if (error instanceof InvalidInput || error instanceof NotFound) return undefined; throw error; }
+  const version = await versionOf(model, access, graph);
+  const plan = await compileSet(model, access, graph, { op: 'query', query: members });
+  const output = plan && compileQueryOrder(model, access, plan, query, input.offset, limit);
+  if (!plan || !output) return undefined;
+  const response = await kernel.query(access.principal.owner, plan, output, version);
+  if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
+  const objects = await hydrate(graph, response.refs);
+  if (!objects || Number(await latestCommit(graph.db, access.principal.owner, graph.client)) !== response.commit) return undefined;
+  const contract = model.interfaces.get(query.type);
+  const definitions = contract?.properties ?? model.object(query.type).properties;
+  const items = objects.map(object => {
+    // As the reference projects each match: every field of the query's type, null where the type maps none.
+    const projected = { ...object, properties: Object.fromEntries(Object.keys(definitions).map(field => {
+      const local = model.propertyName(object.ref.type, query.type, field);
+      const label = contract?.properties[field]?.classification;
+      const visible = Boolean(local) && access.canSeeModelData(label);
+      if (visible) access.observeClassification(label);
+      return [field, visible ? object.properties[local!] ?? null : null];
+    })) };
+    return select ? { ...projected, properties: Object.fromEntries(select.map(field => [field, nestedValue(projected.properties, field)])) } : projected;
+  });
+  return { items, total: response.total, membership: response.membership, commit: response.commit, elapsedMs: response.elapsedMs };
 }

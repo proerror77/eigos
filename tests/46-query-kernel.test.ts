@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
-import { aggregateWithKernel, evaluateWithKernel, KernelClient } from '../packages/runtime/kernel/client.js';
+import { aggregateWithKernel, evaluateWithKernel, KernelClient, queryWithKernel } from '../packages/runtime/kernel/client.js';
 import { latestCommit } from '../packages/runtime/change-feed.js';
 import { compileSet } from '../packages/runtime/kernel/plan.js';
 import { KernelRegistry } from '../packages/runtime/kernel/registry.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
-import { Objects } from '../packages/runtime/objects.js';
+import { Objects, querySchema } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
 
 // The kernel binary is built with `cargo build --release --manifest-path kernel/Cargo.toml`.
@@ -231,6 +231,46 @@ async function compareAggregate(f: Setup, clearance: Clearance, input: Record<st
     return { count: result.count, items: result.items };
   });
   same(kernel, await measured(f, clearance, access => f.sets.aggregate(access, f.model, input)), JSON.stringify({ clearance, input }));
+}
+
+/** Runs an operation with `Objects.query` using the kernel as `use` says, then restores the process's setting. */
+async function withQueryKernels<T>(use: ReturnType<typeof Objects.kernels>, operation: () => Promise<T>) {
+  const previous = Objects.kernels;
+  Objects.kernels = () => use;
+  try { return await operation(); } finally { Objects.kernels = previous; }
+}
+const noKernel = { mode: 'off' as const, registry: { kernelFor: async () => undefined } };
+/** Every page of a query on the reference, three objects at a time. */
+async function referenceQuery(f: { db: Setup['db']; model: Setup['model'] }, access: Access, query: Record<string, unknown>) {
+  return withQueryKernels(noKernel, async () => {
+    const items = [];
+    let cursor: string | undefined;
+    do {
+      const page = await new Objects(f.db, f.model, access).query({ ...query, limit: 3, cursor } as never);
+      items.push(...page.items);
+      cursor = page.cursor;
+    } while (cursor);
+    return items;
+  });
+}
+/** Every page of a query with the kernel, three objects at a time. */
+async function kernelQuery(f: { kernel: KernelClient; model: Setup['model'] }, access: Access, graph: Objects, query: Record<string, unknown>) {
+  const parsed = querySchema.parse({ ...query, limit: 3 });
+  const items = [];
+  let offset = 0, total = 0;
+  do {
+    const result = await queryWithKernel(f.kernel, f.model, access, graph, { query: parsed, offset });
+    assert(result, JSON.stringify(query) + ' has a kernel plan');
+    items.push(...result.items);
+    total = result.total;
+    offset += 3;
+  } while (offset < total);
+  return items;
+}
+/** Compares a query on both paths: its objects in order, observed classification, recorded dependencies and read markings. */
+async function compareQuery(f: Setup, clearance: Clearance, query: Record<string, unknown>) {
+  same(await measured(f, clearance, (access, graph) => kernelQuery(f, access, graph, query)),
+    await measured(f, clearance, access => referenceQuery(f, access, query)), JSON.stringify({ clearance, query }));
 }
 
 test('the query kernel applies object policies, markings, property security and model clearance like the reference', { skip: !binary }, async () => {
@@ -599,6 +639,112 @@ test('each query the kernel answers sees every write completed before it started
     const [, answered] = await Promise.all([writes, queries]);
     assert(answered >= 6, `the kernel answered ${answered} of 8 queries during the writes`);
     await compareSet(f, undefined, written);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel orders and projects the queries the reference evaluates completely, like the reference', { skip: !binary }, async () => {
+  const f = await setup();
+  try {
+    const graph = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    // Strings JavaScript orders by UTF-16 code unit, unlike their UTF-8 bytes: a supplementary character sorts before
+    // the halfwidth and fullwidth forms and the private use area.
+    for (const [id, name] of [['u1', '\uFF08paren'], ['u2', '\u{1F600} smile'], ['u3', '\uE000private'], ['u4', 'zebra'], ['u5', '\u00E9t\u00E9']] as const)
+      await graph.create(route(id), { id, name, lanes: 7 });
+    const queries: Record<string, unknown>[] = [
+      { type: 'Route', orderBy: [{ property: 'distance' }] },
+      { type: 'Route', orderBy: [{ property: 'distance', direction: 'desc' }] },
+      { type: 'Route', orderBy: [{ property: 'lanes', direction: 'desc' }, { property: 'distance' }] },
+      { type: 'Route', orderBy: [{ property: 'open' }, { property: 'name', direction: 'desc' }] },
+      { type: 'Route', orderBy: [{ property: 'open', direction: 'desc' }] },
+      { type: 'Route', orderBy: [{ property: 'name' }] },
+      { type: 'Route', orderBy: [{ property: 'name', direction: 'desc' }] },
+      // Without an order, the identifiers order as JSON-encoded type and id bytes.
+      { type: 'Route', filter: { op: 'gte', property: 'lanes', value: 0 } },
+      { type: 'Route', filter: { op: 'contains', property: 'name', value: 'lane' }, orderBy: [{ property: 'distance', direction: 'desc' }] },
+      { type: 'Route', where: { open: true }, orderBy: [{ property: 'lanes' }], select: ['name', 'lanes'] },
+      { type: 'Route', orderBy: [{ property: 'lanes' }, { property: 'lanes', direction: 'desc' }], select: ['distance'] },
+      { type: 'Route', from: { object: request('r1'), link: 'route' }, orderBy: [{ property: 'distance' }] },
+      { type: 'RideRequest', orderBy: [{ property: 'requestedAt', direction: 'desc' }] },
+      { type: 'RideRequest', filter: { op: 'eq', property: 'serviceClass', value: null }, orderBy: [{ property: 'status' }] },
+    ];
+    for (const query of queries) for (const clearance of clearances) await compareQuery(f as unknown as Setup, clearance, query);
+    // Orders and fields the reference compares itself stay on the reference.
+    const access = await Access.load(f.db, principal);
+    for (const query of [
+      { type: 'Place', orderBy: [{ property: 'coordinates.lat' }] },
+      { type: 'Route', orderBy: [{ property: 'name' }], select: ['nope'] },
+      { type: 'Route', orderBy: [{ property: 'distance' }], intervalOverlap: { start: 'name', end: 'name', from: '2026-01-01T00:00:00Z', until: '2026-02-01T00:00:00Z' } },
+    ]) assert.equal(await queryWithKernel(f.kernel, f.model, access, graph, { query: querySchema.parse({ ...query, limit: 3 }), offset: 0 }), undefined, JSON.stringify(query));
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel orders queries by policies, masked cells, derived fields and Interfaces like the reference', { skip: !binary }, async () => {
+  const secured = await securedSetup();
+  try {
+    for (const query of [
+      { type: 'Route', orderBy: [{ property: 'distance', direction: 'desc' }] },
+      { type: 'Route', orderBy: [{ property: 'lanes' }, { property: 'name' }] },
+      { type: 'Route', filter: { op: 'eq', property: 'open', value: true }, orderBy: [{ property: 'distance' }] },
+    ]) for (const clearance of clearances) await compareQuery(secured, clearance, query);
+  } finally { await secured.kernel.stop(); await secured.close(); }
+  const f = await derivedSetup(addInterfaces);
+  try {
+    for (const query of [
+      { type: 'Route', orderBy: [{ property: 'originCity' }, { property: 'distance', direction: 'desc' }] },
+      { type: 'Route', orderBy: [{ property: 'doubleLanes', direction: 'desc' }, { property: 'distance' }] },
+      { type: 'Route', filter: { op: 'eq', property: 'originCount', value: 1 }, orderBy: [{ property: 'distance' }] },
+      { type: 'Place', orderBy: [{ property: 'totalDistance', direction: 'desc' }] },
+      { type: 'Place', orderBy: [{ property: 'routeCount' }, { property: 'rating', direction: 'desc' }] },
+      { type: 'Measured', orderBy: [{ property: 'size', direction: 'desc' }] },
+      { type: 'Measured', orderBy: [{ property: 'label' }] },
+      { type: 'Measured', orderBy: [{ property: 'tag' }, { property: 'size' }], select: ['label', 'tag'] },
+      { type: 'Measured', filter: { op: 'gte', property: 'size', value: 1 }, orderBy: [{ property: 'label', direction: 'desc' }] },
+    ]) for (const clearance of clearances) await compareQuery(f as unknown as Setup, clearance, query);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('queries answer through the kernel when routed, page with kernel cursors, and fall back to the reference', { skip: !binary }, async () => {
+  const f = await setup();
+  try {
+    const access = await Access.load(f.db, principal);
+    const routed = { mode: 'route' as const, registry: { kernelFor: async () => f.kernel } };
+    const unavailable = { mode: 'route' as const, registry: { kernelFor: async () => undefined } };
+    const query = { type: 'Route', orderBy: [{ property: 'distance', direction: 'desc' }] };
+    const pages = (use: ReturnType<typeof Objects.kernels>, input: Record<string, unknown> = query) => withQueryKernels(use, async () => {
+      const items = [];
+      let cursor: string | undefined;
+      do { const page = await new Objects(f.db, f.model, access).query({ ...input, limit: 2, cursor } as never); items.push(...page.items); cursor = page.cursor; } while (cursor);
+      return items;
+    });
+    const first = (use: ReturnType<typeof Objects.kernels>, cursor?: string, input: Record<string, unknown> = query) =>
+      withQueryKernels(use, () => new Objects(f.db, f.model, access).query({ ...input, limit: 2, cursor } as never));
+    const isKernel = (cursor?: string) => Boolean(cursor && (JSON.parse(Buffer.from(cursor, 'base64url').toString()) as { kernel?: unknown }).kernel);
+    // Paging through kernel cursors gives the reference's objects in the reference's order.
+    assert.deepEqual(await pages(routed), await pages(noKernel));
+    const page = await first(routed);
+    assert(isKernel(page.cursor), 'the kernel answers with its own cursor');
+    // A query the reference reads page by page from storage stays there.
+    assert(!isKernel((await first(routed, undefined, { type: 'Route' })).cursor));
+    // A reference cursor continues on the reference, and a kernel cursor only on the kernel.
+    const fromReference = await first(unavailable);
+    assert.deepEqual((await first(routed, fromReference.cursor)).items, (await first(noKernel, fromReference.cursor)).items);
+    await assert.rejects(first(unavailable, page.cursor), /cursor expired/);
+    await assert.rejects(first(noKernel, page.cursor), /cursor expired/);
+    await assert.rejects(first(routed, page.cursor, { ...query, orderBy: [{ property: 'lanes' }] }), /another query/);
+    // A changed order value between pages makes the kernel cursor stale, as a changed member does.
+    const writer = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const second = page.items[1]!;
+    await writer.edit(second.ref, second.revision, { distance: 100 });
+    await assert.rejects(first(routed, page.cursor), /changed since the previous page/);
+    const again = await first(routed);
+    await writer.create(route('n1'), { id: 'n1', name: 'new', distance: 2 });
+    await assert.rejects(first(routed, again.cursor), /changed since the previous page/);
+    assert.deepEqual(await pages(routed), await pages(noKernel));
+    // In shadow mode the reference answers, and a strict comparison finds no difference.
+    const strict = process.env.EIGOS_KERNEL_SHADOW_STRICT;
+    process.env.EIGOS_KERNEL_SHADOW_STRICT = 'true';
+    try { assert.deepEqual(await pages({ mode: 'shadow', registry: { kernelFor: async () => f.kernel } }), await pages(noKernel)); }
+    finally { if (strict === undefined) delete process.env.EIGOS_KERNEL_SHADOW_STRICT; else process.env.EIGOS_KERNEL_SHADOW_STRICT = strict; }
   } finally { await f.kernel.stop(); await f.close(); }
 });
 

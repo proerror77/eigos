@@ -661,3 +661,42 @@ export function compileAggregate(model: Ontology, access: Access, plan: KernelPl
     throw error;
   }
 }
+
+/**
+ * One page of a query's members in the order the reference gives a query it evaluates completely, or undefined. Each
+ * member type contributes the order fields read through the query's type: an Interface maps them to the type's own
+ * properties, stored or derived, which are null where the type maps none or property security hides them. Nested
+ * fields, lists and fields whose kinds differ across member types, other than integers with numbers, stay on the
+ * reference, which compares them itself. Ordering reads nothing beyond the members, so it records nothing either.
+ */
+export function compileQueryOrder(model: Ontology, access: Access, plan: KernelPlan, query: Pick<Query, 'type' | 'orderBy'>, offset: number, limit: number) {
+  const scope = scopes.get(plan);
+  if (!scope || scope.model !== model || scope.access !== access) return undefined;
+  try {
+    const view = query.type, order = query.orderBy ?? [];
+    const fields = [...new Set(order.map(item => item.property))];
+    const kinds: Record<string, FieldKind> = {};
+    const parts: KernelAggregatePart[] = [];
+    for (const type of plan.types) {
+      if (!showsType(model, view, type) || !scope.readable(type)) return undefined;
+      const partFields: KernelAggregatePart['fields'] = [];
+      for (const field of fields) {
+        if (field.includes('.')) return undefined;
+        const column = localField(model, type, view, field);
+        if (column === undefined) { partFields.push({ name: field }); continue; }
+        const cell = scope.cell(type, column, false), kind = scope.kind(type, column);
+        if (!cell || !kind || kind === 'strings') return undefined;
+        const merged = mergeKinds(kinds[field], kind);
+        if (!merged) return undefined;
+        kinds[field] = merged;
+        partFields.push({ name: field, column, ...(cell.hidden ? { hidden: true as const } : cell.policy ? { policy: cell.policy } : {}) });
+      }
+      parts.push({ type, fields: partFields });
+    }
+    for (const field of fields) kinds[field] ??= 'number';
+    return { kind: 'query' as const, offset, limit, parts, kinds, order: order.map(item => ({ name: item.property, desc: item.direction === 'desc' })) };
+  } catch (error) {
+    if (referenceError(error)) return undefined;
+    throw error;
+  }
+}
