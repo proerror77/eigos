@@ -73,11 +73,33 @@
 
 ### 模板与工具链
 
-- **`templates/function-rust`：** 用 `cargo component` 和 `wit-bindgen`，目标 `wasm32-wasip2`，在 CI 里编译并调用一次。
-- **`templates/function-ts`：** 用 ComponentizeJS（`jco componentize`）。
-  - 先做技术验证：组件大小、冷启动时间，以及在我们的宿主上能否运行。
-  - 不通过时，F1 先只支持 Rust，TypeScript 改为后续阶段。
+- **`templates/function-rust`：** 用 `wit-bindgen`，目标 `wasm32-wasip2`（rustc 直接产出组件），在 CI 里编译并调用一次。
+- **`templates/function-ts`：** 用 ComponentizeJS 的 API，关闭 `http` 和 `fetch-event`。
 - EIGOS 不在服务器上编译源码，组件由作者自己构建后上传。
+
+### 技术验证（2026-11-27，已通过）
+
+原型在丢弃分支 [`prototype/f1-function-host`](https://github.com/proerror77/eigos/tree/prototype/f1-function-host/function-host-prototype) 上，`./run.sh` 可以重现。环境是 Apple Silicon、wasmtime 50.0.1、wit-bindgen 0.63.0、ComponentizeJS 0.23.0。
+
+| | Rust | TypeScript |
+| --- | --- | --- |
+| 组件大小 | 63 KB | 12.0 MB |
+| 冷编译 / 预编译后反序列化 | 22 ms / 0.2 ms | 1.9 s / 10.4 ms（预编译产物 37.8 MB） |
+| 每次调用：新建实例 + 调用 | < 0.1 ms | 0.6 + 0.1 ms |
+| 100 万次循环 | 1.4 ms | 56.5 ms |
+| fuel、内存、截止时间三种上限 | 都能中止 | 都能中止；内存超限时函数收到 `out of memory` 错误 |
+
+**结论：** TypeScript 能在自建的 wasmtime 宿主中、按 EIGOS 的 WIT world 运行，三种上限都有效，所以 F1 以 TypeScript 为主，同时提供 Rust 模板。
+
+验证得出的设计要求：
+1. **预编译：** 组件在上传或发布时编译一次，预编译结果按 SHA-256 缓存。冷编译 1.9 s 不能放在调用路径上；反序列化只要 10 ms。
+2. **fuel 的折算：** 两种语言在测试机上都约为每毫秒 15–22 M fuel，TypeScript 调用在执行函数代码前还要先用掉约 10 M。上限要在生产主机上按 CPU 时间重新标定。
+3. **错误：** TypeScript 直接 `throw new Error()` 会让组件 trap。只有抛出的值带 `payload` 时，才会映射成 `err`。模板提供 `fail(code, message)` 来抛出这样的值。
+4. **WASI 接口：** 宿主只链接 cli 的标准输入输出、终端、环境与退出，以及 clocks、random、io。TypeScript 组件还导入 filesystem，宿主提供一个没有任何预开放目录的文件系统；任何时候都不链接 sockets。
+5. **构建工具：**
+   - preview2-shim 0.31 默认没有任何预开放目录，模板的构建脚本要把工作目录开放给 ComponentizeJS 的拼接器；
+   - `tsc` 要忽略仓库的 tsconfig。
+6. **性能预期：** StarlingMonkey 以解释方式执行 JavaScript，计算密集的 TypeScript 约比 Rust 慢 40 倍。文档要写明这一点，计算密集的函数建议用 Rust。
 
 ### 测试与验收
 
