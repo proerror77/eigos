@@ -4,6 +4,7 @@ import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../../core/i
 import { combineClassification, marksClassification, sensitivityRank, type Classification } from '../../ontology/classification.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { Access } from '../access.js';
+import { latestCommit } from '../change-feed.js';
 import type { Database } from '../database.js';
 import type { PublishedOntology } from '../metadata.js';
 import { projectView } from '../object-sets.js';
@@ -14,8 +15,14 @@ import { compileAggregate, compileSet, loadedColumns, showsType, type KernelPlan
 type Reads = { type: string; count: number; rank?: number | null; compartments?: string[]; ids?: string[]; overLimit?: true; markings?: string[];
   /** Some rows read are rows the reference reads with their derived values. */
   enriched?: true }[];
-type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; reads: Reads; elapsedMs: number };
-type AggregateResponse = { count: number; items: { group: Record<string, unknown>; metrics: Record<string, number | null> }[]; reads: Reads; elapsedMs: number };
+/** `commit` is the owner's last commit the answer reflects. */
+type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; reads: Reads; commit: number; elapsedMs: number };
+type AggregateResponse = { count: number; items: { group: Record<string, unknown>; metrics: Record<string, number | null> }[]; reads: Reads; commit: number; elapsedMs: number };
+/**
+ * The version a query needs: the projection it was compiled for, and the owner's latest commit when it started, which
+ * the kernel applies before it answers, waiting at most `waitMs`.
+ */
+export type KernelVersion = { projection: string; minCommit: number; waitMs?: number };
 
 /**
  * Records what the reference records for every row it reads, or returns false so the reference evaluates the set:
@@ -45,9 +52,9 @@ function observeReads(access: Access, model: PublishedOntology, plan: KernelPlan
 /** A running query kernel on the loopback interface. */
 export class KernelClient {
   private constructor(readonly url: string, private readonly child?: ChildProcess) {}
-  /** Starts the kernel binary on a free loopback port. */
-  static async start(binary: string): Promise<KernelClient> {
-    const child = spawn(binary, [], { env: { ...process.env, EIGOS_KERNEL_PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
+  /** Starts the kernel binary on a free loopback port, with extra environment settings. */
+  static async start(binary: string, env: Record<string, string> = {}): Promise<KernelClient> {
+    const child = spawn(binary, [], { env: { ...process.env, ...env, EIGOS_KERNEL_PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
     const lines = createInterface({ input: child.stdout! });
     const port = await new Promise<number>((resolve, reject) => {
       child.once('exit', code => reject(new Error('Kernel exited with ' + code)));
@@ -63,11 +70,14 @@ export class KernelClient {
     this.child.kill('SIGTERM');
     await exited;
   }
-  /** Undefined when the kernel answers that the reference's evaluation fails, so the reference reports its own error. */
+  /**
+   * Undefined when the kernel leaves the query to the reference: the reference's evaluation fails (422), or the kernel
+   * cannot answer from the version the query needs (409).
+   */
   private async post<T>(path: string, body: unknown): Promise<T | undefined> {
     const response = await fetch(this.url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const value = await response.json() as T & { error?: string };
-    if (response.status === 422) return undefined;
+    if (response.status === 422 || response.status === 409) return undefined;
     if (!response.ok) throw new Error(`Kernel ${path} failed: ${value.error ?? response.status}`);
     return value;
   }
@@ -81,13 +91,19 @@ export class KernelClient {
     if (!loaded) throw new Error('Kernel load failed');
     return loaded;
   }
-  page(owner: string, plan: KernelPlan, offset: number, limit: number) {
+  page(owner: string, plan: KernelPlan, offset: number, limit: number, version?: KernelVersion) {
     return this.post<PageResponse>('/query', { owner, set: plan.set, rows: plan.rows, derived: plan.derived, members: [...plan.members.values()],
-      output: { kind: 'page', offset, limit } });
+      output: { kind: 'page', offset, limit }, ...version });
   }
-  aggregate(owner: string, plan: KernelPlan, output: NonNullable<ReturnType<typeof compileAggregate>>) {
-    return this.post<AggregateResponse>('/query', { owner, set: plan.set, rows: plan.rows, derived: plan.derived, members: [...plan.members.values()], output });
+  aggregate(owner: string, plan: KernelPlan, output: NonNullable<ReturnType<typeof compileAggregate>>, version?: KernelVersion) {
+    return this.post<AggregateResponse>('/query', { owner, set: plan.set, rows: plan.rows, derived: plan.derived, members: [...plan.members.values()],
+      output, ...version });
   }
+  async health() {
+    return await (await fetch(this.url + '/health')).json() as { loaded: boolean; projection?: string; objects?: number; edges?: number; changed?: number };
+  }
+  /** The last commit the kernel has applied for each owner. */
+  async positions() { return await (await fetch(this.url + '/positions')).json() as Record<string, number>; }
 }
 
 /**
@@ -120,15 +136,21 @@ export async function evaluateWithKernel(kernel: KernelClient, model: PublishedO
   const shown = input.view ? viewShown(access, model, input.view) : true;
   if (shown === undefined) return undefined;
   if (!shown) return { items: [] as ObjectData[], total: 0, elapsedMs: 0 };
+  const version = await versionOf(model, access, graph);
   const plan = await compileSet(model, access, graph, input.set);
   if (!plan) return undefined;
-  const response = await kernel.page(access.principal.owner, plan, input.offset ?? 0, input.limit);
+  const response = await kernel.page(access.principal.owner, plan, input.offset ?? 0, input.limit, version);
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
   // The reference shows every member in the view, and fails for a member of a type the view cannot show.
   if (input.view && response.types.some(type => !showsType(model, input.view!, type))) return undefined;
   const items: ObjectData[] = [];
   for (const ref of response.refs) items.push(projectView(access, model, await graph.read(ref), input.view));
-  return { items, total: response.total, elapsedMs: response.elapsedMs };
+  return { items, total: response.total, commit: response.commit, elapsedMs: response.elapsedMs };
+}
+
+/** The version a query needs, read before it starts: every commit of the owner visible then. */
+async function versionOf(model: PublishedOntology, access: Access, graph: Objects): Promise<KernelVersion> {
+  return { projection: model.projection, minCommit: Number(await latestCommit(graph.db, access.principal.owner, graph.client)) };
 }
 
 /** Aggregates an Object Set with the kernel. Undefined means the reference aggregates it, as for `evaluateWithKernel`. */
@@ -143,13 +165,14 @@ export async function aggregateWithKernel(kernel: KernelClient, model: Published
     return { count: 0, elapsedMs: 0, items: input.groupBy.length ? [] : [{ group: {},
       metrics: Object.fromEntries(Object.entries(input.metrics).map(([name, metric]) => [name, metric.op === 'count' ? 0 : null])) }] };
   }
+  const version = await versionOf(model, access, graph);
   const plan = await compileSet(model, access, graph, input.set);
   const output = plan && compileAggregate(model, access, plan, input);
   if (!plan || !output) return undefined;
-  const response = await kernel.aggregate(access.principal.owner, plan, output);
+  const response = await kernel.aggregate(access.principal.owner, plan, output, version);
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
   for (const item of response.items)
     for (const value of Object.values(item.metrics))
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Conflict('Numeric aggregation overflow');
-  return { count: response.count, items: response.items, elapsedMs: response.elapsedMs };
+  return { count: response.count, items: response.items, commit: response.commit, elapsedMs: response.elapsedMs };
 }

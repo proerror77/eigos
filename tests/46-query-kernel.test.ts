@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { aggregateWithKernel, evaluateWithKernel, KernelClient } from '../packages/runtime/kernel/client.js';
+import { latestCommit } from '../packages/runtime/change-feed.js';
 import { compileSet } from '../packages/runtime/kernel/plan.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -460,4 +461,61 @@ test('the query kernel evaluates Interfaces, Interface navigation and views like
       }
     }
   } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel follows the commit log, so each query sees every commit of its owner made before it started', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  // A second kernel folds every change into its base rows at once.
+  const compacting = await KernelClient.start(binary!, { EIGOS_KERNEL_COMPACT: '0' });
+  try {
+    await compacting.load(f.db, f.model, process.env.EIGOS_TEST_DATABASE_URL!);
+    const loaded = await f.kernel.health();
+    const writer = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const sets = [
+      { op: 'query', query: { type: 'Route' } },
+      { op: 'query', query: { type: 'Place', filter: { op: 'gte', property: 'routeCount', value: 1 } } },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Place' } }, path: [{ link: 'departingRoutes' }] },
+      { op: 'query', query: { type: 'Measured', filter: { op: 'gt', property: 'size', value: 3 } } },
+      { op: 'query', query: { type: 'Route', filter: { op: 'eq', property: 'originCity', value: 'Beijing' } } },
+    ];
+    const step = async (name: string, write: () => Promise<unknown>) => {
+      await write();
+      for (const kernel of [f.kernel, compacting]) for (const set of sets) {
+        try { await compareSet({ ...f, kernel }, undefined, set); }
+        catch (error) { throw new Error(`${name}: ${(error as Error).message}`); }
+      }
+    };
+    const revision = async (ref: { type: string; id: string }) => (await writer.readStored(ref)).revision;
+    const observation = (id: string, city: string) => ({ id, name: id, city, address: 'A', coordinates: { lat: 31, lng: 121 },
+      coordinateSystem: 'GCJ02', sourceBinding: 'test', observedAt: new Date().toISOString() });
+    await step('loaded', async () => {});
+    await step('created and linked', async () => {
+      await writer.create(route('h'), { id: 'h', name: 'route h', distance: 7, lanes: 2, teams: ['ops'] });
+      await writer.link({ type: 'RouteOrigin', from: route('h'), to: place('p4') });
+    });
+    await step('edited', async () => writer.edit(route('a'), await revision(route('a')), { distance: 9 }));
+    await step('relinked', async () => {
+      await writer.unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+      await writer.link({ type: 'RouteOrigin', from: route('b'), to: place('p2') });
+    });
+    await step('removed', async () => writer.remove(route('g'), await revision(route('g'))));
+    await step('observed from a source', async () => writer.ingestBatch([{ ref: place('p5'), properties: observation('p5', 'Beijing') }], 'test'));
+    await step('deleted by the source', async () => writer.ingestBatch([{ ref: place('p5'), properties: null }], 'test'));
+    // Access is evaluated for each query, so a revoked marking hides its rows at once.
+    await step('marking revoked', async () => f.db.query(`DELETE FROM ${f.db.schema}.security_memberships WHERE subject=$1 AND kind='marking' AND name='M1'`, [principal.owner]));
+    // The kernels applied the commits rather than reloading the projection.
+    const latest = Number(await latestCommit(f.db, principal.owner, f.db.pool));
+    for (const kernel of [f.kernel, compacting]) {
+      assert.equal((await kernel.positions())[principal.owner], latest, 'applied every commit of the owner');
+      assert.equal((await kernel.health()).objects, loaded.objects, 'no reload');
+    }
+    assert((await f.kernel.health()).changed! > 0, 'the default kernel holds the changes as overlays');
+    assert.equal((await compacting.health()).changed, 0, 'the compacting kernel folded them into its base rows');
+    // A kernel holding another projection, or one that cannot reach the needed commit in time, leaves the query to the reference.
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
+    const plan = (await compileSet(f.model, access, graph, { op: 'query', query: { type: 'Route' } } as never))!;
+    assert.equal(await f.kernel.page(principal.owner, plan, 0, 10, { projection: 'another', minCommit: 0 }), undefined);
+    assert.equal(await f.kernel.page(principal.owner, plan, 0, 10, { projection: f.model.projection, minCommit: latest + 1, waitMs: 50 }), undefined);
+    assert((await f.kernel.page(principal.owner, plan, 0, 10, { projection: f.model.projection, minCommit: latest }))?.commit === latest);
+  } finally { await compacting.stop(); await f.kernel.stop(); await f.close(); }
 });
