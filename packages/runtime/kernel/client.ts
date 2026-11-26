@@ -113,7 +113,7 @@ export class KernelClient {
       output, ...version });
   }
   async health() {
-    return await (await fetch(this.url + '/health')).json() as { loaded: boolean; projection?: string; objects?: number; edges?: number; changed?: number };
+    return await (await fetch(this.url + '/health')).json() as { loaded: boolean; loads?: number; projection?: string; objects?: number; edges?: number; changed?: number };
   }
   /** The last commit the kernel has applied for each owner. */
   async positions() { return await (await fetch(this.url + '/positions')).json() as Record<string, number>; }
