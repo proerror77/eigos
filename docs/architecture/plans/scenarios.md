@@ -16,6 +16,8 @@
 
 ### 自动同步
 
+**状态：** 已实现，见 [Scenario 生命周期指南](../../guides/scenario-lifecycle.md#自动同步)。同步以方案创建者的身份执行 rebase，引入之前创建的方案不参与。
+
 - **数据：** `scenarios` 增加以下列：
   - `sync_position bigint`：方案上次同步到的 owner 提交位置；
   - `sync_state text`：`current`、`behind` 或 `conflict`；

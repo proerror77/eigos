@@ -26,6 +26,19 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 声明式 Action 还支持 `deleteObject`、`removeLink` 和 `editStruct`。删除与 Struct 编辑要求对象的当前 revision。Struct 编辑合并指定字段，并通过对象属性 Schema 重新校验整个值。关系删除检查已发布的端点类型和当前实例权限。
 
+## 自动同步
+
+打开的持久方案会自动跟上正式数据，与 Palantir 每 [10 分钟自动 rebase](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario/) 一次相同。Palantir 没有写明遇到冲突时怎么办；EIGOS 遇到冲突就停止自动同步，并在方案上记下原因。
+
+- **触发：** Indexer 每 10 分钟最多检查一个方案一次。方案记录自己同步到的 owner 提交位置（`sync_position`）。
+  - 这之后的提交改动了方案暂存的对象，或者在暂存关系的端点上改动了同类型的关系，就以方案创建者的身份执行 `rebase`。
+  - 其余提交只推进位置，不改变方案的修订号。
+- **兼容的改动：** 方案没有编辑的字段取正式数据的新值，方案自己的编辑保留，修订号加一。
+- **冲突：** 正式数据改了方案编辑过的同一个字段，或者新建与删除冲突，或者发布已经变了，方案的 `sync_state` 就变为 `conflict`，`sync_error` 记下原因，此后不再自动同步。
+  - 作者解决冲突后显式调用 `rebase`。成功后 `sync_state` 回到 `current`，自动同步继续。
+  - 认领之后作者正好有新的编辑，这一轮不算冲突，下一轮再试。
+- **旧方案：** 引入自动同步之前创建的方案没有记录创建者，不参与自动同步，仍可显式 `rebase`。
+
 ## 跨账号审阅
 
 持久方案的创建者可调用 `invite_scenario_reviewers({id,revision,reviewers})` 指定其他已验证身份。元数据共享继续使用 `share_scenario`。设置审阅者后，正式合并需要其中一人批准当前修订。

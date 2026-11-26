@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../core/identity.js';
+import { Conflict, NotFound, digest, type Principal } from '../core/identity.js';
 import { objectRefSchema, type LinkData, type ObjectRef } from '../ontology/schema.js';
 import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scenario-decision.js';
 import { Access, PermissionDenied, type Requirement } from './access.js';
@@ -12,6 +12,7 @@ import { decisionEvidenceSchema, replayRead, type DecisionObservation } from './
 import { bumpScenario, checkScenario, lockEdits, objectLinks, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { scenarioMetadataRead, syncScenarioMetadata, removeScenarioMetadata } from './scenario-metadata.js';
 import { appendTrace } from './execution-trace.js';
+import { latestCommit } from './change-feed.js';
 import { changeDigest } from './action-values.js';
 import { cognitiveContextSchema, cognitiveStepSchema, decisionVersion, requireDecisionVersion, workflowMerge } from './cognitive-workflow.js';
 
@@ -93,6 +94,12 @@ export async function initializeScenarioLifecycle(db: Database) {
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS reviewers jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS workflow_run_id uuid;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS journal_steps integer NOT NULL DEFAULT 0;
+    -- S1 automatic sync: the creator's principal, the owner's last commit the Scenario was synced with, and its state.
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS principal jsonb;
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS sync_position bigint;
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS sync_state text NOT NULL DEFAULT 'current';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS sync_error text;
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS synced_at timestamptz;
     ALTER TABLE ${db.schema}.scenario_objects ADD COLUMN IF NOT EXISTS edited_fields jsonb;
     ALTER TABLE ${db.schema}.scenario_actions ADD COLUMN IF NOT EXISTS input jsonb;
     ALTER TABLE ${db.schema}.scenario_actions ADD COLUMN IF NOT EXISTS executor_kind text;
@@ -434,9 +441,11 @@ export class Scenarios {
         sessionExpires=session.expires_at;
       }
       const creation=digest({...input,release:model.release,...(workflow ? { workflow: workflow.runId } : {})});
-      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,description,session_id,expires_at,creation_digest,workflow_run_id,reviewers)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,LEAST(now()+$9*interval '1 second',$10::timestamptz),$11,$12,$13) ON CONFLICT(owner,request_id) DO NOTHING`,
-        [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation,workflow?.runId ?? null,JSON.stringify(workflow?.reviewers ?? [])],client);
+      // Automatic sync rebases as the creator, from the commit the Scenario starts at.
+      const creator={owner,scopes:[...access.principal.scopes],...(access.principal.memberAccess?{memberAccess:true}:{})};
+      await this.db.query(`INSERT INTO ${this.db.schema}.scenarios(id,owner,request_id,name,release,kind,description,session_id,expires_at,creation_digest,workflow_run_id,reviewers,principal,sync_position)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,LEAST(now()+$9*interval '1 second',$10::timestamptz),$11,$12,$13,$14,(SELECT coalesce(max(commit_seq),0) FROM ${this.db.schema}.change_commits WHERE owner=$2)) ON CONFLICT(owner,request_id) DO NOTHING`,
+        [randomUUID(),owner,input.requestId,input.name,model.release,input.kind,input.description,input.sessionId??null,input.ttlSeconds??31*86400,sessionExpires,creation,workflow?.runId ?? null,JSON.stringify(workflow?.reviewers ?? []),creator],client);
       const row = (await this.db.query(`SELECT id,name,release,revision,state,expires_at,kind,description,creation_digest FROM ${this.db.schema}.scenarios WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0]!;
       if (row.creation_digest?row.creation_digest!==creation:row.name !== input.name || row.release !== model.release) throw new Conflict('Scenario request ID already has different input');
       await syncScenarioMetadata(this.db,model,String(row.id),client);
@@ -846,6 +855,63 @@ export class Scenarios {
     };
     return existing ? inspect(existing) : this.db.transaction(inspect);
   }
+  /**
+   * S1, automatic sync: brings one open persisted Scenario up to the live data, as Palantir rebases a scenario every 10
+   * minutes, and reports whether it claimed one. Live commits since the Scenario's last sync that edit one of its staged
+   * objects, or change a link of a staged link's type at one of its ends, rebase it as its creator. Other commits only
+   * advance its position. A conflict, or a Scenario its publication no longer allows, stops automatic sync and is
+   * recorded on the Scenario; an explicit rebase resolves it.
+   */
+  async syncOne(metadata: Metadata): Promise<boolean> {
+    const s = this.db.schema;
+    const claimed = await this.db.transaction(async client => {
+      const row = (await this.db.query(`SELECT id,owner,release,revision,principal,sync_position::text FROM ${s}.scenarios
+        WHERE kind='persisted' AND state='open' AND expires_at>now() AND sync_state='current' AND principal IS NOT NULL
+          AND (synced_at IS NULL OR synced_at<=now()-interval '10 minutes')
+        ORDER BY synced_at NULLS FIRST, id FOR UPDATE SKIP LOCKED LIMIT 1`, [], client)).rows[0];
+      if (row) await this.db.query(`UPDATE ${s}.scenarios SET synced_at=now() WHERE id=$1`, [row.id], client);
+      return row as { id: string; owner: string; release: string; revision: string; principal: Principal; sync_position: string | null } | undefined;
+    });
+    if (!claimed) return false;
+    const { id, owner } = claimed;
+    const record = (state: string, error: string | null, position?: string) => this.db.query(`UPDATE ${s}.scenarios SET sync_state=$3,sync_error=$4,
+      sync_position=coalesce($5::bigint,sync_position) WHERE owner=$1 AND id=$2`, [owner, id, state, error, position ?? null]);
+    await this.db.withOwner(owner, async () => {
+      const latest = await latestCommit(this.db, owner, this.db.pool);
+      const after = claimed.sync_position;
+      // A Scenario from before automatic sync has no position, so it is rebased once to find out.
+      if (after !== null && BigInt(latest) <= BigInt(after)) return;
+      if (after !== null && !(await this.stagedTouched(owner, id, after, latest))) { await record('current', null, latest); return; }
+      const model = await metadata.active();
+      if (model.release !== claimed.release) { await record('conflict', 'Scenario publication changed; create a new scenario'); return; }
+      try {
+        await this.rebase(await Access.load(this.db, claimed.principal), model, id, Number(claimed.revision));
+      } catch (error) {
+        const current = (await this.db.query(`SELECT revision FROM ${s}.scenarios WHERE owner=$1 AND id=$2`, [owner, id])).rows[0];
+        // An edit since the claim moved the revision: the next sync tries again.
+        if (Number(current?.revision) !== Number(claimed.revision)) return;
+        if (error instanceof Conflict || error instanceof PermissionDenied || error instanceof NotFound) {
+          await record('conflict', error.message.slice(0, 500));
+          return;
+        }
+        throw error;
+      }
+    });
+    return true;
+  }
+  /** Whether live commits after `after` through `through` touched the Scenario's staged objects or staged links' ends. */
+  private async stagedTouched(owner: string, id: string, after: string, through: string) {
+    const s = this.db.schema;
+    const { rows: [row] } = await this.db.query<{ touched: boolean }>(`WITH commits AS (
+        SELECT xact FROM ${s}.change_commits WHERE owner=$1 AND commit_seq>$2::bigint AND commit_seq<=$3::bigint)
+      SELECT EXISTS (SELECT 1 FROM commits c JOIN ${s}.edit_history h ON h.xact=c.xact AND h.owner=$1
+          JOIN ${s}.scenario_objects d ON d.scenario_id=$4 AND d.owner=$1 AND d.type=h.type AND d.id=h.id)
+        OR EXISTS (SELECT 1 FROM commits c JOIN ${s}.link_history l ON l.xact=c.xact AND l.owner=$1
+          JOIN ${s}.scenario_links d ON d.scenario_id=$4 AND d.owner=$1 AND d.type=l.type
+            AND ((d.from_type,d.from_id)=(l.from_type,l.from_id) OR (d.to_type,d.to_id)=(l.to_type,l.to_id))) AS touched`,
+      [owner, after, through, id]);
+    return Boolean(row?.touched);
+  }
   async rebase(access: Access, model: PublishedOntology, id: string, revision: number) {
     z.number().int().positive().parse(revision);
     const owner = access.principal.owner;
@@ -897,6 +963,9 @@ export class Scenarios {
         if (await this.linkConflict(model, owner, item, client)) throw new Conflict('Scenario link conflicts with current data or cardinality');
       }
       if (rebased) await bumpScenario(this.db, view, owner, client);
+      // A rebase brings the Scenario up to the owner's latest commit, and resolves a conflict that stopped automatic sync.
+      await this.db.query(`UPDATE ${this.db.schema}.scenarios SET sync_state='current',sync_error=NULL,synced_at=now(),
+        sync_position=(SELECT coalesce(max(commit_seq),0) FROM ${this.db.schema}.change_commits WHERE owner=$1) WHERE owner=$1 AND id=$2`, [owner, id], client);
       await access.refresh(client);
       return { id, revision: revision + Number(rebased) };
     });

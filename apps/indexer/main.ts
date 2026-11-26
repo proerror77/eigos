@@ -39,7 +39,8 @@ async function deliverEffects() {
 }
 const dispatch = () => dispatchAutomation({
   cleanup: () => scenarios.cleanup(),
-  scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules(), () => subscriptions.scanOne()],
+  scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules(), () => subscriptions.scanOne(),
+    () => scenarios.syncOne(metadata)],
   run: signal => automation.runOne(signal),
 }, controller.signal);
 async function reviewProcesses() {

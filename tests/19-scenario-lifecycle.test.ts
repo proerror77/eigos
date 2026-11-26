@@ -7,6 +7,7 @@ import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { scenarioObjectType } from '../packages/ontology/scenario-definition.js';
 import { scenarioMetadataRead, scenarioMetadataQuery } from '../packages/runtime/scenario-metadata.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { latestCommit } from '../packages/runtime/change-feed.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { PARequests } from '../packages/runtime/pa.js';
 import { OntologyClient, OntologyHttpError } from '../packages/sdk/client.js';
@@ -27,6 +28,55 @@ async function lifecycleFixture(driver=new PlanningFixtureAgent()){
   const access=await Access.load(f.db,principal);
   return {...f,model,access,scenarios:new Scenarios(f.db)};
 }
+
+test('open persisted Scenarios follow compatible live changes and stop at a conflict until an explicit rebase', async () => {
+  const f = await lifecycleFixture();
+  try {
+    const document = structuredClone(f.model.document);
+    document.objectTypes.find(type => type.apiName === 'Route')!.properties.distance = { description: 'Synthetic distance', schema: { type: 'number' }, required: false };
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const live = new Objects(f.db, model, await access());
+    const route = { type: 'Route', id: 'synced-route' }, other = { type: 'Route', id: 'unrelated-route' };
+    await live.create(route, { id: route.id, name: 'Before', distance: 1 });
+    await live.create(other, { id: other.id, name: 'Unrelated', distance: 1 });
+    const scene = await f.scenarios.create(await access(), model, { requestId: 'auto-sync', name: 'Synced proposal' });
+    const draft = new Objects(f.db, await f.scenarios.view(await access(), model, scene.id), await access());
+    await draft.edit(route, 1, { name: 'Proposed' });
+    const state = async () => (await f.db.query<{ revision: string; sync_state: string; sync_error: string | null; sync_position: string }>(
+      `SELECT revision::text, sync_state, sync_error, sync_position::text FROM ${f.db.schema}.scenarios WHERE id=$1`, [scene.id])).rows[0]!;
+    const sync = async () => { await f.db.query(`UPDATE ${f.db.schema}.scenarios SET synced_at=NULL WHERE id=$1`, [scene.id]); return f.scenarios.syncOne(f.metadata); };
+    const read = async () => (await new Objects(f.db, await f.scenarios.view(await access(), model, scene.id), await access()).read(route)).properties;
+    // A commit that does not touch the Scenario's objects only advances its position.
+    const staged = await state();
+    await live.edit(other, 1, { distance: 2 });
+    assert.equal(await sync(), true);
+    assert.equal((await state()).revision, staged.revision);
+    assert.equal((await state()).sync_position, await latestCommit(f.db, principal.owner, f.db.pool));
+    // A compatible live change to a staged object is brought into the Scenario, which keeps its own edit.
+    await live.edit(route, 1, { distance: 5 });
+    assert.equal(await sync(), true);
+    assert.deepEqual({ name: (await read()).name, distance: (await read()).distance }, { name: 'Proposed', distance: 5 });
+    assert.equal((await state()).sync_state, 'current');
+    assert.equal(Number((await state()).revision), Number(staged.revision) + 1);
+    // A live change to the field the Scenario edited conflicts: sync stops and records why, until an explicit rebase.
+    await live.edit(route, 2, { name: 'Live rename' });
+    assert.equal(await sync(), true);
+    const stopped = await state();
+    assert.equal(stopped.sync_state, 'conflict');
+    assert.match(stopped.sync_error ?? '', /same property/);
+    assert.equal((await read()).name, 'Proposed');
+    assert.equal(await sync(), false, 'a conflicted Scenario is not synced again');
+    // The author takes the live value for that field; an explicit rebase then succeeds and resumes automatic sync.
+    const author = new Objects(f.db, await f.scenarios.view(await access(), model, scene.id), await access());
+    await author.edit(route, (await author.read(route)).revision, { name: 'Live rename' });
+    const current = await f.scenarios.inspect(await access(), model, scene.id);
+    await f.scenarios.rebase(await access(), model, scene.id, current.revision);
+    assert.equal((await state()).sync_state, 'current');
+    assert.equal((await read()).name, 'Live rename');
+  } finally { await f.close(); }
+});
 
 test('temporary scenarios are bound to owned sessions and close and TTL cleanup remove their deltas',async()=>{
   const f=await lifecycleFixture();try{
