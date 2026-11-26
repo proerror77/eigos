@@ -66,12 +66,25 @@ export class KernelFailed extends Error {
   constructor(message: string, readonly lost: boolean) { super(message); this.name = 'KernelFailed'; }
 }
 
+/**
+ * Every kernel process this process started that still runs. They are stopped when this process exits, whoever started
+ * them: a kernel holds this process's output stream, so one left running would also keep a reader of it waiting.
+ */
+const running = new Set<ChildProcess>();
+let stopAtExit = false;
+
 /** A running query kernel on the loopback interface. */
 export class KernelClient {
   private constructor(readonly url: string, private readonly child?: ChildProcess) {}
   /** Starts the kernel binary on a free loopback port, with extra environment settings. */
   static async start(binary: string, env: Record<string, string> = {}): Promise<KernelClient> {
     const child = spawn(binary, [], { env: { ...process.env, ...env, EIGOS_KERNEL_PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    running.add(child);
+    child.once('exit', () => running.delete(child));
+    if (!stopAtExit) {
+      stopAtExit = true;
+      process.once('exit', () => { for (const kernel of running) if (kernel.exitCode === null) kernel.kill('SIGTERM'); });
+    }
     const lines = createInterface({ input: child.stdout! });
     const port = await new Promise<number>((resolve, reject) => {
       child.once('exit', code => reject(new Error('Kernel exited with ' + code)));

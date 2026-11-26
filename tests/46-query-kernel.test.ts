@@ -980,6 +980,16 @@ test('the kernel answers only in the principal owner\'s context when owner isola
   } finally { isolation.ownerIsolation = false; await f.kernel.stop(); await f.close(); }
 });
 
+test('concurrent queries for one projection share one kernel process', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  const registry = new KernelRegistry(undefined, binary, 2, process.env.EIGOS_TEST_DATABASE_URL);
+  try {
+    const clients = await Promise.all(Array.from({ length: 6 }, () => registry.kernelFor(f.db, f.model, true)));
+    assert(clients.every(Boolean), 'every query gets the kernel once it has loaded');
+    assert.equal(new Set(clients.map(client => client!.pid)).size, 1, 'one kernel process holds the projection');
+  } finally { await registry.stop(); await f.kernel.stop(); await f.close(); }
+});
+
 test('a kernel service that already holds the projection is used without loading it again', { skip: !binary }, async () => {
   const f = await derivedSetup();
   try {

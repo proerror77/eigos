@@ -13,7 +13,8 @@ export function kernelMode(): KernelMode {
   return mode;
 }
 
-type Instance = { client: KernelClient; ready: Promise<void>; state: 'loading' | 'ready' | 'failed'; used: number; failedAt?: number };
+/** `client` is set once the kernel runs; `closed` marks an instance set aside while its kernel was still starting. */
+type Instance = { client?: KernelClient; ready: Promise<void>; state: 'loading' | 'ready' | 'failed'; used: number; failedAt?: number; closed?: true };
 
 /**
  * The query kernels this process uses, each holding one projection that it loads on first use and then keeps current.
@@ -24,7 +25,6 @@ type Instance = { client: KernelClient; ready: Promise<void>; state: 'loading' |
  */
 export class KernelRegistry {
   private readonly instances = new Map<string, Instance>();
-  private exitHook = false;
   /** `retryAfterMs` is how long a projection whose kernel failed to load it, or was lost, stays on the reference path. */
   constructor(private readonly url = process.env.EIGOS_KERNEL_URL, private readonly binary = process.env.EIGOS_KERNEL_BIN,
     private readonly limit = Number(process.env.EIGOS_KERNEL_INSTANCES ?? 2), private readonly database = process.env.EIGOS_KERNEL_DATABASE_URL,
@@ -40,45 +40,45 @@ export class KernelRegistry {
     const key = this.key(db, model);
     let instance = this.instances.get(key);
     if (instance?.state === 'failed' && Date.now() - instance.failedAt! >= this.retryAfterMs) { this.close(key); instance = undefined; }
-    instance ??= await this.open(key, db, model, database);
+    instance ??= this.open(key, db, model, database);
     instance.used = Date.now();
     if (wait) await instance.ready;
     return instance.state === 'ready' ? instance.client : undefined;
   }
 
-  private async open(key: string, db: Database, model: PublishedOntology, database: string): Promise<Instance> {
-    let client: KernelClient;
+  /**
+   * Registers the instance before anything is awaited, so concurrent queries for one projection share one kernel; a
+   * kernel started for an instance set aside meanwhile is stopped.
+   */
+  private open(key: string, db: Database, model: PublishedOntology, database: string): Instance {
     if (this.url) {
       // A kernel service holds one projection, so loading another replaces it.
       for (const other of [...this.instances.keys()]) this.instances.delete(other);
-      client = KernelClient.connect(this.url);
     } else {
       while (this.instances.size >= Math.max(1, this.limit)) {
         const [oldest] = [...this.instances.entries()].sort(([, a], [, b]) => a.used - b.used)[0]!;
         this.close(oldest);
       }
-      client = await KernelClient.start(this.binary!);
-      if (!this.exitHook) {
-        this.exitHook = true;
-        process.once('exit', () => { for (const instance of this.instances.values()) instance.client.kill(); });
-      }
     }
-    const instance: Instance = { client, state: 'loading', used: Date.now(), ready: Promise.resolve() };
-    // A kernel service may already hold the projection, loaded by another process of this deployment; it keeps it
-    // current itself, so loading it again would only repeat the work.
-    const load = async () => {
+    const instance: Instance = { state: 'loading', used: Date.now(), ready: Promise.resolve() };
+    this.instances.set(key, instance);
+    const start = async () => {
+      const client = this.url ? KernelClient.connect(this.url) : await KernelClient.start(this.binary!);
+      instance.client = client;
+      if (instance.closed) { await client.stop(); throw new Error('Kernel set aside while it started'); }
+      // A kernel service may already hold the projection, loaded by another process of this deployment; it keeps it
+      // current itself, so loading it again would only repeat the work.
       if (this.url && (await client.health()).projection === model.projection) return;
       await client.load(db, model, database);
     };
-    instance.ready = load().then(() => { instance.state = 'ready'; }, () => { instance.state = 'failed'; instance.failedAt = Date.now(); });
-    this.instances.set(key, instance);
+    instance.ready = start().then(() => { instance.state = 'ready'; }, () => { instance.state = 'failed'; instance.failedAt = Date.now(); });
     return instance;
   }
 
   /** Loads the model's projection again, from storage, into the kernel that holds it. */
   async reload(db: Database, model: PublishedOntology) {
     const instance = this.instances.get(this.key(db, model));
-    if (instance?.state === 'ready') await instance.client.load(db, model, this.databaseOf(db)!);
+    if (instance?.state === 'ready') await instance.client!.load(db, model, this.databaseOf(db)!);
   }
 
   /**
@@ -96,7 +96,9 @@ export class KernelRegistry {
   private close(key: string) {
     const instance = this.instances.get(key);
     this.instances.delete(key);
-    if (instance && !this.url) void instance.client.stop();
+    if (!instance) return;
+    instance.closed = true;
+    if (instance.client && !this.url) void instance.client.stop();
   }
 
   /** Stops every kernel process this registry started. */
