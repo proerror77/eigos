@@ -224,6 +224,13 @@ export class Access {
     }
     return rule;
   }
+  /** A cell's visibility as `cellRule` decides it, without recording the check. */
+  cellVisibility(model: Ontology, type: string, field: string): { visible: false } | { visible: true; policy?: ObjectPolicy['read'] } {
+    const classification = model.object(type).properties[field]?.classification;
+    const target = resource(model.document.id, 'property', `${type}/${field}`);
+    if (!this.canSeeModelData(classification) || !this.allows({ ontology: model.document.id, permission: 'view_property', resource: target })) return { visible: false };
+    return { visible: true, policy: this.policies.get(model.document.id + '/' + type)?.properties[field] };
+  }
   /** A cell's visibility for this principal as `cellSql` evaluates it, with the same effects. */
   cellRule(model: Ontology, type: string, field: string): { visible: false } | { visible: true; policy?: ObjectPolicy['read'] } {
     const classification = model.object(type).properties[field]?.classification;
