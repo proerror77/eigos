@@ -15,7 +15,7 @@ import { Objects, querySchema } from './objects.js';
 import { matchingTransition, processRelatedPath, relatedProcessObjects, processRuleSchema, processStatusSchema, processTarget, processTriggerSchema, readProcessStatus } from './process-automation.js';
 import { processLogTarget } from '../ontology/process-definition.js';
 import { withoutExternalDispatch } from './external-operations.js';
-import { readProcessTransitions } from './process-logs.js';
+import { processStart, readCommittedTransitions, readProcessTransitions, type ProcessPosition } from './process-logs.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { lockEdits } from './scenario-store.js';
 import { Scenarios } from './scenarios.js';
@@ -182,6 +182,8 @@ export async function initializeAutomation(db: Database) {
     CREATE TABLE IF NOT EXISTS ${db.schema}.object_rules(id uuid PRIMARY KEY,owner text NOT NULL,ontology text NOT NULL,name text NOT NULL,body jsonb NOT NULL,revision integer NOT NULL,enabled boolean NOT NULL DEFAULT false,last_scan timestamptz,error text);
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS scopes jsonb;
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_cursor bigint;
+    -- A process rule's position is (process_commit, process_cursor); commit 0 is history from before the commit journal.
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_commit bigint NOT NULL DEFAULT 0;
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS effect_release text REFERENCES ${db.schema}.releases(digest);
     UPDATE ${db.schema}.object_rules SET enabled=false,error='Re-save the rule to record its original authorization scopes' WHERE scopes IS NULL AND enabled;
     CREATE TABLE IF NOT EXISTS ${db.schema}.rule_matches(rule_id uuid NOT NULL REFERENCES ${db.schema}.object_rules(id),type text NOT NULL,id text NOT NULL,matched boolean NOT NULL,revision bigint NOT NULL,PRIMARY KEY(rule_id,type,id));
@@ -354,7 +356,7 @@ export class Automation {
       }
       const result = input.id
         ? await this.db.query(
-            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
+            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL,process_commit=0 WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
             [
               id,
               access.principal.owner,
@@ -387,10 +389,10 @@ export class Automation {
         [id,model.release],client);
       if (target) {
         await this.db.setOwner(client, graph.owner);
-        await graph.lockWrites();
-        const [latest] = await readProcessTransitions(this.db, model, graph.owner, target, client, {});
-        await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
-          [id, ('replayFrom' in input ? input.replayFrom : undefined) ?? latest?.sequence ?? '0'], client);
+        // Commit numbers follow visibility, so the start needs no write lock: a transition that commits later is after it.
+        const start = await processStart(this.db, graph.owner, target, client, 'replayFrom' in input ? input.replayFrom : undefined);
+        await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_commit=$2,process_cursor=$3 WHERE id=$1`,
+          [id, start.commit, start.sequence], client);
       }
       await access.refresh(client);
       return { ...input, id, revision: Number(result.rows[0]!.revision) };
@@ -822,7 +824,8 @@ export class Automation {
         this.authorize(access, model, body.steps);
         const graph = new Objects(this.db, model, access, client);
         if ('process' in input) {
-          await this.scanProcess(graph, String(rule.id), Number(rule.revision), String(rule.process_cursor), input, body);
+          await this.scanProcess(graph, String(rule.id), Number(rule.revision),
+            { commit: String(rule.process_commit), sequence: String(rule.process_cursor) }, input, body);
         } else {
           await this.scanMatches(graph, String(rule.id), Number(rule.revision), input, body);
         }
@@ -923,13 +926,12 @@ export class Automation {
       throw error;
     }
   }
-  private async scanProcess(graph: Objects, ruleId: string, revision: number, cursor: string,
+  private async scanProcess(graph: Objects, ruleId: string, revision: number, position: ProcessPosition,
     input: z.output<typeof processRule>, body: z.output<typeof workflowSchema>) {
     const { access, client, model, owner } = graph;
     const target = processTarget(graph, input.process);
-    // A writer cannot allocate a journal sequence for this owner/release until the checkpoint commits.
-    await graph.lockWrites();
-    const page = await readProcessTransitions(this.db, model, owner, target, client, { after: cursor, limit: 100 });
+    // Reading in commit order cannot pass a transition that commits later, so the scan does not block writers.
+    const { transitions: page, position: next } = await readCommittedTransitions(this.db, model, owner, target, client, position, 100);
     const related = 'effect' in input ? input.effect.related : undefined;
     if ('effect' in input && related)
       this.relatedContract(graph, target.objectType, target.type, input.effect.action, related, input.effect.input);
@@ -970,8 +972,9 @@ export class Automation {
             bound, object, JSON.stringify(access.principal.scopes), availableAt, trigger], client);
       }
     }
-    if (page.length) await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_cursor=$2 WHERE id=$1`,
-      [ruleId, page.at(-1)!.sequence], client);
+    if (next.commit !== position.commit || next.sequence !== position.sequence)
+      await this.db.query(`UPDATE ${this.db.schema}.object_rules SET process_commit=$2,process_cursor=$3 WHERE id=$1`,
+        [ruleId, next.commit, next.sequence], client);
   }
   private async verifyProcessTrigger(graph: Objects, object: ObjectRef, trigger: ProcessTrigger, firstStep: boolean) {
     const { access, client, model, owner } = graph;
@@ -981,7 +984,7 @@ export class Automation {
       [trigger.ruleId, owner, model.document.id, trigger.revision], client);
     if (!current.rowCount) throw new ProcessTriggerInactive('Process rule changed or was disabled');
     const target = processTarget(graph, trigger.process);
-    // Acquire the rule lock before the owner write lock, as in scanProcess and rule updates.
+    // The rule lock comes before the owner write lock; scans and rule updates take only the rule lock.
     await graph.lockWrites();
     const log = await matchingTransition(graph, trigger.process, trigger.sequence);
     if (!log || typeof log.properties.processId !== 'string')

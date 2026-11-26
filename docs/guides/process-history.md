@@ -70,6 +70,6 @@ Scenario 内的编辑不进入正式 `edit_history`，因此不会变成已发�
 
 ## 升级与验证
 
-数据库管理角色先执行现有 `npm run db:upgrade`，在 `edit_history` 增加 nullable 的 `action`、`request_id`、`task_id`、`observed_at` 四列，再按现有候选准备、审核和激活机制发布定义。使用既有历史表授权，查询节点也需要其 SELECT 权限。日志本身不增加写入表。
+数据库管理角色先执行现有 `npm run db:upgrade`，在 `edit_history` 增加 nullable 的 `action`、`request_id`、`task_id`、`observed_at` 四列和记录所属事务的 `xact` 列，再按现有候选准备、审核和激活机制发布定义。使用既有历史表授权，查询节点也需要其 SELECT 权限。日志本身不增加写入表。
 
 回归覆盖 `tests/06-worker.test.ts`、`10-scheduling.test.ts`、`12-indexing.test.ts` 与构建后的进程 E2E。测试用合成模型决策替身连接生产 Harness 的真实 MCP 传输，验证发现、直接能力执行、PA 暂停续接、排程、日志查询及显式合并；它不证明真实模型的规划质量。供应商与日历回包明确为合成数据，不代表真实报名、日历写入、叫车或付款。

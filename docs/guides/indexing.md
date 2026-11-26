@@ -16,7 +16,7 @@
 
 ## 来源值与用户编辑
 
-对象保存的值由来源基线与用户逐属性编辑合成。`source_values` 按来源保存基线，`object_edits` 保存编辑值、编辑时间和删除标记。`Objects` 的创建、修改、删除与来源入库在同一个事务内调用这些规则，并写入不可变的 `edit_history` 记录。
+对象保存的值由来源基线与用户逐属性编辑合成。`source_values` 按来源保存基线，`object_edits` 保存编辑值、编辑时间和删除标记。`Objects` 的创建、修改、删除与来源入库在同一个事务内调用这些规则，并写入不可变的 `edit_history` 记录。关系增删写入 `link_history`。两类历史行都记录所属事务，提交时在 `change_commits` 中按 owner 获得提交序号，消费者据此按提交顺序读取。
 
 | 策略 | 合成行为 |
 | --- | --- |
@@ -35,8 +35,8 @@
 
 ## 存储升级与权限
 
-初始化函数为现有 PostgreSQL schema 添加 `source_values`、`object_edits`、`edit_policies`、`edit_history`、`index_streams`、`index_transactions`、`materializations`、`materialized_objects` 和 `materialized_links`。
+初始化函数为现有 PostgreSQL schema 添加 `source_values`、`object_edits`、`edit_policies`、`edit_history`、`link_history`、`change_commits`、`change_journal`、`index_streams`、`index_transactions`、`materializations`、`materialized_objects` 和 `materialized_links`。
 
-数据库管理角色执行初始化和 `edit_policies` 配置。运行角色需要来源与编辑状态表的 SELECT、INSERT、UPDATE、DELETE，历史表的 SELECT、INSERT 及其 identity sequence 的 USAGE，索引表的 SELECT、INSERT、UPDATE，物化表的 SELECT、INSERT。发布管理角色还需要复制候选状态时的写权限。公开读取都经过运行服务的对象与属性权限判断。
+数据库管理角色执行初始化和 `edit_policies` 配置。运行角色需要来源与编辑状态表的 SELECT、INSERT、UPDATE、DELETE，历史表（`edit_history`、`link_history`、`change_commits`）的 SELECT、INSERT 及其 identity sequence 的 USAGE，`change_journal` 的 SELECT，索引表的 SELECT、INSERT、UPDATE，物化表的 SELECT、INSERT。发布管理角色还需要复制候选状态时的写权限。公开读取都经过运行服务的对象与属性权限判断。
 
 回归覆盖顺序消费、精确重传、授权撤销后的回滚和恢复、两类冲突策略、用户及来源删除语义，以及物化历史值在属性权限变化后的重新过滤。

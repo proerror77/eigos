@@ -3,7 +3,7 @@ import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } fro
 import { observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
-import { recordObjectEdit, resolveSourceEdits } from './edit-history.js';
+import { journalLinks, recordObjectEdit, resolveSourceEdits } from './edit-history.js';
 import { z } from 'zod';
 import { Conflict, NotFound, PermissionDenied, InvalidInput, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
@@ -765,8 +765,10 @@ export class Objects {
     // Deleting an object deletes its relationships with objects this commit has not locked.
     if (removed.length) this.requireExclusive('source deletion');
     if (removed.length) {
-      await this.db.query(`DELETE FROM ${this.db.schema}.links l USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
-        WHERE l.projection=$1 AND l.owner=$2 AND ((l.from_type=k.type AND l.from_id=k.id) OR (l.to_type=k.type AND l.to_id=k.id))`,[...scope,rows(removed)],this.client);
+      const values: unknown[] = [...scope,rows(removed)];
+      await this.db.query(`WITH removed AS (DELETE FROM ${this.db.schema}.links l USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
+        WHERE l.projection=$1 AND l.owner=$2 AND ((l.from_type=k.type AND l.from_id=k.id) OR (l.to_type=k.type AND l.to_id=k.id))
+        RETURNING l.type,l.from_type,l.from_id,l.to_type,l.to_id) ${journalLinks(this,'unlink','removed','$1','$2',values,source)}`,values,this.client);
       await this.db.query(`DELETE FROM ${this.db.schema}.objects o USING jsonb_to_recordset($3::jsonb) AS k(type text,id text)
         WHERE o.projection=$1 AND o.owner=$2 AND o.type=k.type AND o.id=k.id`,[...scope,rows(removed)],this.client);
     }
@@ -844,10 +846,13 @@ export class Objects {
       return;
     }
     try {
-      await this.db.query(`INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
+      // Only relationships this commit adds are journaled; an existing one is left as it is.
+      const values: unknown[] = [this.owner, JSON.stringify(rows), this.model.projection];
+      await this.db.query(`WITH added AS (INSERT INTO ${this.db.schema}.links(owner,type,from_type,from_id,to_type,to_id,single_from,single_to,projection)
         SELECT $1,type,from_type,from_id,to_type,to_id,single_from,single_to,$3 FROM jsonb_to_recordset($2::jsonb)
         AS input(type text,from_type text,from_id text,to_type text,to_id text,single_from boolean,single_to boolean)
-        ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING`, [this.owner, JSON.stringify(rows), this.model.projection], this.client);
+        ON CONFLICT(projection,owner,type,from_type,from_id,to_type,to_id) DO NOTHING
+        RETURNING type,from_type,from_id,to_type,to_id) ${journalLinks(this,'link','added','$3','$1',values)}`, values, this.client);
     } catch (error) {
       const databaseError = error as { code?: string; constraint?: string } | null;
       if (databaseError?.code === '23505' &&
@@ -865,7 +870,9 @@ export class Objects {
     const definition = this.model.links.get(edge.type);
     if (!definition || definition.from.type !== edge.from.type || definition.to.type !== edge.to.type) throw new InvalidInput('Invalid link endpoints');
     if (this.model.scenario) return stageLink(this.db, this.model, this.owner, edge, true, this.client, this.change?.scenarioEdits);
-    await this.db.query(`DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`, [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id], this.client);
+    const values: unknown[] = [this.model.projection, this.owner, edge.type, edge.from.type, edge.from.id, edge.to.type, edge.to.id];
+    await this.db.query(`WITH removed AS (DELETE FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7
+      RETURNING type,from_type,from_id,to_type,to_id) ${journalLinks(this,'unlink','removed','$1','$2',values)}`, values, this.client);
   }
   async remove(ref: ObjectRef, revision: number): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).remove(ref, revision));
