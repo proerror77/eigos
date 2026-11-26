@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { satisfies } from './function-versions.js';
 import { compileTypes } from './type-system.js';
 import { expandImports } from './resource-mapping.js';
 import { actionParametersCompatible } from './action-compatibility.js';
@@ -24,6 +25,12 @@ const required = <T>(map: ReadonlyMap<string, T>, name: string): T => {
   const item = map.get(name);
   if (!item) throw new Error(`Unknown ontology resource ${name}`);
   return item;
+};
+
+/** A Function an Action refers to, which must have a version in the range the Action accepts. */
+const acceptedVersion = <T extends { apiName: string; version?: string }>(action: string, fn: T, range: string | undefined): T => {
+  if (range && !satisfies(fn.version, range)) throw new Error(`${action} accepts ${fn.apiName} ${range}, but the ontology has ${fn.version ?? 'no version'}`);
+  return fn;
 };
 
 export class Ontology {
@@ -137,8 +144,9 @@ export class Ontology {
       if (new Set(action.effects?.map(effect => effect.name)).size !== (action.effects?.length ?? 0)) throw new Error('Duplicate Action effect name');
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
-      for (const criterion of action.submissionCriteria) required(this.functions, criterion.function);
-      if (action.function && !required(this.functions, action.function).edits) throw new Error('Function-backed Actions require an ontology edit Function');
+      for (const criterion of action.submissionCriteria) acceptedVersion(action.apiName, required(this.functions, criterion.function), criterion.functionVersion);
+      if (action.function && !acceptedVersion(action.apiName, required(this.functions, action.function), action.functionVersion).edits)
+        throw new Error('Function-backed Actions require an ontology edit Function');
       for (const rule of action.rules ?? []) {
         if (rule.op === 'createObject') {
           const object = this.object(rule.object.type);

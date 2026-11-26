@@ -1,4 +1,5 @@
 import { requireReleaseEvaluation, type ReleaseCheck } from './release-evaluation.js';
+import { versionProblem } from '../ontology/function-versions.js';
 import { copyEditState } from './edit-history.js';
 import { copySemanticIndexes, semanticFingerprint } from './semantic-publication.js';
 import { migrateProjectionState } from './projection-migration.js';
@@ -73,14 +74,25 @@ export class Metadata {
       const current = (await this.db.query(`SELECT r.digest,r.projection FROM ${this.db.schema}.ontology o JOIN ${this.db.schema}.releases r ON r.digest=o.release WHERE o.id=$1`, [model.document.id], client)).rows[0];
       if(current){
         const history=(await this.db.query(`SELECT body FROM ${this.db.schema}.releases WHERE body->>'id'=$1 AND state IN ('active','retired')`,[model.document.id],client)).rows;
+        const released=new Set<string>();
         for(const record of history){
           const previous=new Ontology(record.body,{published:true});
+          for(const fn of previous.resolvedDocument.functionTypes)released.add(JSON.stringify([fn.apiName,fn.version??null]));
           for(const value of model.resourceDocument.valueTypes??[]){const old=previous.resourceDocument.valueTypes?.find(item=>item.apiName===value.apiName&&item.version===value.version);if(old&&digest(old.schema)!==digest(value.schema))throw new Conflict('Value Type constraints require a new version');}
           // Palantir: versions of a Function are immutable once released, so a changed component Function needs a new version.
           for(const fn of model.resolvedDocument.functionTypes){
             const old=previous.resolvedDocument.functionTypes.find(item=>item.apiName===fn.apiName&&item.version===fn.version);
             if(old&&(old.implementation||fn.implementation)&&digest(old)!==digest(fn))throw new Conflict(`Function versions are immutable: release ${fn.apiName} as a new version`);
           }
+        }
+        // A version released before may come back unchanged. A new one follows the active release's: above it, and a new
+        // major version for a breaking change, as Palantir's function versioning asks.
+        const baseline=await this.get(current.digest,client);
+        for(const fn of model.resolvedDocument.functionTypes){
+          const old=baseline.resolvedDocument.functionTypes.find(item=>item.apiName===fn.apiName);
+          if(!old||!old.implementation&&!fn.implementation||released.has(JSON.stringify([fn.apiName,fn.version??null])))continue;
+          const problem=versionProblem(old,fn);
+          if(problem)throw new Conflict(problem);
         }
       }
       if (current?.projection) await checkSavedObjectSets(this.db, client, await this.get(current.digest, client), model);

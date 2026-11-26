@@ -58,6 +58,8 @@ export const componentImplementationSchema = z.strictObject({
   }),
 });
 export const semanticVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+/** A version range a consumer accepts: `1.2.3` exactly, `~1.2.3` its later patches, `^1.2.3` later versions until the next major. */
+export const versionRange = /^[~^]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const actionConstraint = z.strictObject({ parameters: jsonSchema, objectParameters: z.record(name, name), required: z.boolean() });
 
 const machineryState = z.string().min(1).max(200);
@@ -126,6 +128,8 @@ export const ontologySchema = z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
     submissionCriteria: z.array(z.strictObject({
       function: name, arguments: z.record(name, value), message: z.string().min(1).max(500).optional(),
+      // The versions of the Function this criterion accepts, as Palantir's Actions accept a range of compatible versions.
+      functionVersion: z.string().regex(versionRange).optional(),
       // Palantir's "Execution context" condition: a criterion for one context is checked only there. A merge replays
       // a Scenario's Actions on the live data, so their live criteria apply then.
       executionContext: z.enum(['scenario', 'live']).optional(),
@@ -139,7 +143,7 @@ export const ontologySchema = z.strictObject({
       z.strictObject({ op: z.literal('editStruct'), object: parameter, expectedRevision: value, property:name, fields:z.record(name,value) }),
       z.strictObject({ op: z.literal('applyScenario'), scenario:value, expectedRevision:value, objectTypes:z.array(name),linkTypes:z.array(name) }),
     ])).min(1).optional(),
-    result: reference.optional(), function: name.optional(),
+    result: reference.optional(), function: name.optional(), functionVersion: z.string().regex(versionRange).optional(),
     effects: z.array(z.strictObject({ name, handler: name, payload: z.record(name, value) })).max(20).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({
