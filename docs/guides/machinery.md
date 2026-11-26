@@ -50,6 +50,49 @@ Workbench 的「流程运行 → Machinery」和 Ontology MCP 使用同一份分
 
 首次分析可以直接从观察到的状态与转换起步。指定 `minCases`、频次覆盖率和 `exclude` 可筛选挖掘结果。发布参考模型后，报告列出观察到但未建模的转换、已建模但在样本中未观察到的转换和瓶颈。编辑器可将挖掘结果带入参考模型。`ontology_machinery_propose_model` 只创建绑定观察版本的定义分支，继续沿用候选准备、独立审阅和发布。通过同一分析请求传入 `candidate`，可以在同一批已授权记录上比较两个模型的路径一致性。实际更换 Action 顺序或调用策略的收益需在 [Agent 回归评估](agent-evaluations.md) 或隔离 Scenario 中另测。
 
+## 视图、选择与指标
+
+依据 Palantir 的 [Analyze and monitor](https://www.palantir.com/docs/foundry/machinery/analyze-and-monitor/)。
+
+### 四种视图
+
+分析请求带上 `view: { kind, scope }`，结果里的 `view` 就是对应的视图：每个节点和每条边各有一个 `value`。Palantir 预设了同样四种视图，分别显示曾经计数、当前计数、历史停留时长和当前停留时长。
+
+| `kind` / `scope` | 节点 | 边 |
+| --- | --- | --- |
+| `count` / `historical` | 曾经处于该状态的流程数 | 经过该转换的流程数 |
+| `count` / `current` | 现在处于该状态的流程数 | 最后一次转换就是这条边的流程数 |
+| `duration` / `historical` | 已结束停留的 P50，另附 P95 和最大值 | 经过该转换的流程数 |
+| `duration` / `current` | 仍在进行的停留的 P50，另附 P95 和最大值 | 最后一次转换就是这条边的流程数 |
+
+- **停留目标着色：** 状态配置了 `dwellSeconds` 时，时长视图给节点着色。历史视图看 P95，当前视图看最长的一次，超过目标为 `red`，否则为 `green`。
+- **Sankey：** `transitions[].cases` 是每条边的流量，可以直接映射为 Sankey 图的边宽，与 Palantir 用边宽表示 flow frequency 一致。
+
+### 选择流程
+
+`filter` 除了原有的单个 `state`、`edge` 以外，还可以多选：
+- **节点：** `states: [...]`。与 `current: true` 一起使用时，选出现在处于其中某个状态的流程；否则选出曾经处于其中某个状态的流程。
+- **边：** `edges: [...]`。`edgeMode: "through"`（默认）选出曾经经过其中某条转换的流程，`"last"` 只选最后一次转换是其中某条的流程。
+
+这对应 Palantir 的 “Processes currently in selected states / ever in selected states”，以及边的 “ever went through a transition or just the last transition”。选出的流程用 `ontology_save_machinery_cases` 保存为 Object Set，供下游的分析、Automation 和 Action 使用。
+
+### 节点和边的指标
+
+流程模型可以各声明一个节点指标和一个边指标，与 Palantir 的 “one node metric … an optional edge metric” 相同：
+
+```json
+"metrics": {
+  "node": { "label": "Distance", "aggregation": { "op": "sum", "property": "distance" }, "unit": "km",
+            "colors": [{ "min": 0, "color": "green" }, { "min": 10, "color": "red" }] },
+  "edge": { "label": "Routes", "aggregation": { "op": "count" } }
+}
+```
+
+- **聚合对象：** 被跟踪的业务对象，例如上例中的 Route，而不是 ProcessLog。`sum`、`min`、`max` 和 `avg` 只能聚合数值属性，定义校验会检查。
+- **计算范围：** 与 Palantir 一样，只在一致的流程上计算。节点聚合现在处于该状态的流程，边聚合经过该转换的流程。没有这样的流程时，值为 `null`。
+- **执行：** 聚合就是 Object Set 聚合，在分析快照之后执行，所以路由允许时由查询内核回答。超过 1 万个对象时，这一项不聚合，标记为 `truncated`。调用方无权读取被聚合的属性时，这一项标记为 `denied`，分析的其余部分照常返回。
+- **着色：** `colors` 取值达到的最高一档 `min` 对应的颜色。结果里的 `metrics.node.values` 和 `metrics.edge.values` 带有 `value`、`cases`，以及可选的 `color`。
+
 ## 时间和权限
 
 - 以提交记录时间 `recordedAt` 确定半开窗口 `[from,to)`。时间线也保留可见的来源观察时间。对按时间顺序索引的外部历史，选择 `durationClock: "observedAt"` 可按来源时间差计算耗时，仍以记账时间选择报告窗口。来源时间回退或被隐藏时，对应停留时长保持未知。窗口开始前最后一条记录用于还原当时状态。缺失的停留时间保持未知。路径统计只包括窗口中确实发生转换的实例，当前库存还可以包括窗口内没有转换的实例。

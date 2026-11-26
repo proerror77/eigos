@@ -65,6 +65,11 @@ export function validateMachineryModel(model: Ontology, type: ObjectRef['type'],
     transitions.add(key);
     if (edge.action) model.action(edge.action);
   }
+  for (const metric of [specification.metrics?.node, specification.metrics?.edge]) {
+    if (!metric || metric.aggregation.op === 'count') continue;
+    const kind = model.object(target.objectType).properties[metric.aggregation.property]?.schema.type;
+    if (kind !== 'number' && kind !== 'integer') throw new Error('Machinery metrics aggregate a numeric property of the tracked object type');
+  }
   const children = new Set<string>();
   for (const child of specification.subprocesses ?? []) {
     const navigation = model.navigation(target.objectType, child.link);

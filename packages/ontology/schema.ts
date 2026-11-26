@@ -66,6 +66,20 @@ const machineryState = z.string().min(1).max(200);
 export const machineryEdgeSchema = z.strictObject({
   from: machineryState.nullable(), to: machineryState.nullable(),
 });
+/**
+ * A number Machinery shows on each node or edge, after Palantir's node and edge metrics: an aggregation over the tracked
+ * objects of conforming processes, with optional formatting and conditional colors (the highest `min` reached wins).
+ */
+export const machineryMetricSchema = z.strictObject({
+  label: z.string().min(1).max(100),
+  aggregation: z.discriminatedUnion('op', [
+    z.strictObject({ op: z.literal('count') }),
+    z.strictObject({ op: z.enum(['sum', 'min', 'max', 'avg']), property: name }),
+  ]),
+  decimals: z.number().int().min(0).max(6).optional(),
+  unit: z.string().min(1).max(20).optional(),
+  colors: z.array(z.strictObject({ min: z.number(), color: z.enum(['green', 'amber', 'red']) })).max(5).optional(),
+});
 export const machineryModelSchema = z.strictObject({
   states: z.array(z.strictObject({
     name: machineryState,
@@ -76,6 +90,7 @@ export const machineryModelSchema = z.strictObject({
     action: name.optional(),
   })).max(500),
   subprocesses: z.array(z.strictObject({ link: name, process: name })).max(20).optional(),
+  metrics: z.strictObject({ node: machineryMetricSchema.optional(), edge: machineryMetricSchema.optional() }).optional(),
 });
 
 export const agentProfileSchema = z.strictObject({

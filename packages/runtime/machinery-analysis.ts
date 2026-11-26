@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Conflict, digest } from '../core/identity.js';
+import { Conflict, PermissionDenied, digest } from '../core/identity.js';
 import { processLogTarget, validateMachineryModel, type MachineryModel, type ProcessLogTarget } from '../ontology/process-definition.js';
 import { machineryEdgeSchema, machineryModelSchema, objectRefSchema, ontologyName, type ObjectRef } from '../ontology/schema.js';
 import type { Access } from './access.js';
@@ -29,10 +29,17 @@ export const machineryAnalysisSchema = z.strictObject({
     coveragePercent: z.number().int().min(1).max(100).default(100),
     exclude: z.array(machineryEdgeSchema).max(500).default([]),
   }).optional(),
+  // One of Palantir's four views: ever or current counts, and historical or current durations, per node and edge.
+  view: z.strictObject({ kind: z.enum(['count', 'duration']), scope: z.enum(['historical', 'current']) }).optional(),
   filter: z.strictObject({
     state: state.optional(),
     current: z.boolean().default(false),
     edge: machineryEdgeSchema.optional(),
+    // Processes currently in one of these states with `current`, otherwise ever in one of them.
+    states: z.array(state).min(1).max(200).optional(),
+    // Processes that ever went through one of these transitions, or whose last transition is one of them.
+    edges: z.array(machineryEdgeSchema).min(1).max(500).optional(),
+    edgeMode: z.enum(['through', 'last']).default('through'),
     path: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     conformance: z.enum(['conforming', 'deviation', 'unknown']).optional(),
     duration: z.strictObject({ state, minMs: milliseconds.default(0), maxExclusiveMs: milliseconds.optional() }).optional(),
@@ -216,6 +223,13 @@ function matches(item: ProcessCase, filter: Input['filter']) {
   if (!filter) return true;
   if (filter.state && (filter.current ? item.current !== filter.state : !item.states.includes(filter.state))) return false;
   if (filter.edge && !item.events.some(event => event.from === filter.edge!.from && event.to === filter.edge!.to)) return false;
+  if (filter.states && !(filter.current ? item.current !== null && filter.states.includes(item.current)
+    : item.states.some(name => filter.states!.includes(name)))) return false;
+  if (filter.edges) {
+    const selected = new Set(filter.edges.map(edge => edgeKey(edge.from, edge.to))), last = item.events.at(-1);
+    if (filter.edgeMode === 'last' ? !last || !selected.has(edgeKey(last.from, last.to))
+      : !item.events.some(event => selected.has(edgeKey(event.from, event.to)))) return false;
+  }
   if (filter.path && item.path !== filter.path) return false;
   if (filter.conformance && item.conformance !== filter.conformance) return false;
   const duration = filter.duration;
@@ -240,7 +254,7 @@ function distribution(values: number[]) {
 
 function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableModel>) {
   const states = new Map<string, { ever: number; current: number; closed: number[]; open: number[]; unknown: number; clipped: number; breaches: number; target?: number; terminal: boolean }>();
-  const transitions = new Map<string, { from: string | null; to: string | null; count: number; cases: number;
+  const transitions = new Map<string, { from: string | null; to: string | null; count: number; cases: number; last: number;
     expected: boolean | null; action?: string; observedActions: Record<string, number>; observedSources: Record<string, number> }>();
   const paths = new Map<string, { id: string; states: string[]; partial: boolean; count: number }>();
   const stateFor = (name: string) => {
@@ -254,7 +268,7 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
   };
   for (const state of reference?.states ?? []) stateFor(state.name);
   for (const edge of reference?.transitions ?? []) transitions.set(edgeKey(edge.from, edge.to), {
-    ...edge, count: 0, cases: 0, expected: true, observedActions: Object.create(null), observedSources: Object.create(null),
+    ...edge, count: 0, cases: 0, last: 0, expected: true, observedActions: Object.create(null), observedSources: Object.create(null),
   });
   for (const item of cases) {
     if (item.events.length) {
@@ -274,7 +288,7 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
     for (const event of item.events) {
       const key = edgeKey(event.from, event.to);
       if (!transitions.has(key)) transitions.set(key, {
-        from: event.from, to: event.to, count: 0, cases: 0, expected: reference ? false : null,
+        from: event.from, to: event.to, count: 0, cases: 0, last: 0, expected: reference ? false : null,
         observedActions: Object.create(null), observedSources: Object.create(null),
       });
       const row = transitions.get(key)!;
@@ -284,6 +298,8 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
       distinctEdges.add(key);
     }
     for (const key of distinctEdges) transitions.get(key)!.cases++;
+    const last = item.events.at(-1);
+    if (last) transitions.get(edgeKey(last.from, last.to))!.last++;
   }
   const stateRows = [...states].map(([name, item]) => ({
     name, ever: item.ever, current: item.current, historical: distribution(item.closed), currentDuration: distribution(item.open),
@@ -311,6 +327,67 @@ function summarize(cases: ProcessCase[], reference: ReturnType<typeof readableMo
   };
 }
 
+/**
+ * One of Palantir's four Machinery views. Counts: processes ever in each state and through each transition (historical),
+ * or now in each state and whose last transition each edge is (current). Durations: the P50 of finished stays
+ * (historical) or of ongoing ones (current), colored against the state's dwell target by the P95 or the longest.
+ */
+function view(summary: ReturnType<typeof summarize>, input: Input['view']) {
+  if (!input) return undefined;
+  const current = input.scope === 'current';
+  const nodes = summary.states.map(row => {
+    if (input.kind === 'count') return { state: row.name, value: current ? row.current : row.ever };
+    const stats = current ? row.currentDuration : row.historical, worst = current ? stats.maxMs : stats.p95Ms;
+    const color = row.dwellSeconds === null || worst === null ? undefined : worst > row.dwellSeconds * 1000 ? 'red' : 'green';
+    return { state: row.name, value: stats.p50Ms, p95Ms: stats.p95Ms, maxMs: stats.maxMs, cases: stats.count, ...(color ? { color } : {}) };
+  });
+  return { kind: input.kind, scope: input.scope, nodes,
+    edges: summary.transitions.map(edge => ({ from: edge.from, to: edge.to, value: current ? edge.last : edge.cases })) };
+}
+
+type Metric = NonNullable<NonNullable<MachineryModel['metrics']>['node']>;
+/**
+ * The model's node and edge metrics, over the tracked objects of conforming processes as in Palantir: a node aggregates
+ * the processes now in its state, an edge those that went through it. The aggregation is an Object Set aggregation, so
+ * the query kernel answers it when routing allows; a selection over 10,000 objects is not aggregated.
+ */
+async function customMetrics(db: Database, access: Access, model: PublishedOntology, metrics: MachineryModel['metrics'],
+  cases: ProcessCase[], summary: ReturnType<typeof summarize>) {
+  if (!metrics?.node && !metrics?.edge) return undefined;
+  const conforming = cases.filter(item => item.conformance === 'conforming'), sets = new ObjectSets(db);
+  const measure = async (metric: Metric, objects: ObjectRef[]) => {
+    if (!objects.length) return { value: null, cases: 0 };
+    if (objects.length > 10000) return { value: null, cases: objects.length, truncated: true };
+    let value: number | null;
+    try {
+      const result = await sets.aggregate(access, model, { set: { op: 'refs', objects }, metrics: { value: metric.aggregation } });
+      value = (result.items[0]?.metrics.value ?? null) as number | null;
+    } catch (error) {
+      // A caller who may not read the aggregated property still gets the rest of the analysis.
+      if (error instanceof PermissionDenied) return { value: null, cases: objects.length, denied: true };
+      throw error;
+    }
+    const color = value === null ? undefined : [...metric.colors ?? []].sort((a, b) => b.min - a.min).find(rule => value >= rule.min)?.color;
+    return { value, cases: objects.length, ...(color ? { color } : {}) };
+  };
+  const describe = ({ colors: _colors, ...metric }: Metric) => metric;
+  const output: { node?: ReturnType<typeof describe> & { values: unknown[] }; edge?: ReturnType<typeof describe> & { values: unknown[] } } = {};
+  // One aggregation at a time, so that a model with many states does not take many connections.
+  if (metrics.node) {
+    const values = [];
+    for (const row of summary.states)
+      values.push({ state: row.name, ...await measure(metrics.node, conforming.filter(item => item.current === row.name).map(item => item.object)) });
+    output.node = { ...describe(metrics.node), values };
+  }
+  if (metrics.edge) {
+    const values = [];
+    for (const row of summary.transitions) values.push({ from: row.from, to: row.to, ...await measure(metrics.edge,
+      conforming.filter(item => item.events.some(event => event.from === row.from && event.to === row.to)).map(item => item.object)) });
+    output.edge = { ...describe(metrics.edge), values };
+  }
+  return output;
+}
+
 function mine(summary: ReturnType<typeof summarize>, reference: MachineryModel | undefined, input: Input['mining']) {
   const excluded = new Set(input?.exclude.map(edge => edgeKey(edge.from, edge.to)));
   const observed = summary.transitions.filter(edge => edge.cases >= (input?.minCases ?? 1) &&
@@ -334,7 +411,7 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     throw new Conflict('Select one object, Object Set or subprocess focus');
   const target = targetFor(model, input.type);
   if (input.object && input.object.type !== target.objectType) throw new Conflict('Object type differs from the process type');
-  return db.transaction(async client => {
+  const analysis = await db.transaction(async client => {
     await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
     await db.setOwner(client, access.principal.owner);
     await access.refresh(client);
@@ -400,7 +477,7 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
         readableModel(access, model, target, input.candidate)).conformance,
       evidence: 'observed-transitions',
     } : undefined;
-    return { release: model.release, type: target.type, objectType: target.objectType,
+    const result = { release: model.release, type: target.type, objectType: target.objectType,
       from: new Date(from).toISOString(), to: new Date(end).toISOString(), windowClock: input.externalSource ? 'observedAt' : 'recordedAt', durationClock: input.durationClock,
       ...(collectMembers ? {members:cases.map(item=>item.object)} : {}),
       reference, ...summary, mined: mine(summary, baseline, input.mining), comparison,
@@ -410,5 +487,9 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
         ...(input.object ? { timeline: history, episodes } : {}),
       })),
     };
+    return { result: { ...result, ...(input.view ? { view: view(summary, input.view) } : {}) }, cases, summary, metrics: baseline?.metrics };
   });
+  // After the snapshot, so that the aggregations can go through the query kernel.
+  const metrics = await customMetrics(db, access, model, analysis.metrics, analysis.cases, analysis.summary);
+  return { ...analysis.result, ...(metrics ? { metrics } : {}) };
 }
