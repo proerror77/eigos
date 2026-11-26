@@ -193,7 +193,7 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 
 ### Scenario（C5a）
 
-在 Scenario 中，Object Set 求值、聚合和 `Objects.query` 也经过内核。内核把 Scenario 的改动作为这次查询的叠加层，叠在当前版本上，语义与参考实现的 `viewTables` 相同：
+在 Scenario 中，Object Set 求值、聚合、`Objects.query` 和 `Objects.follow` 也经过内核。内核把 Scenario 的改动作为这次查询的叠加层，叠在当前版本上，语义与参考实现的 `viewTables` 相同：
 - **对象：** 正式数据中 Scenario 没有暂存的行，加上 Scenario 暂存的、仍然存在的行。暂存的删除会去掉这一行。
 - **边：** 先去掉 Scenario 暂存的边，以及在单值端被暂存的新边替换的正式边，再加上 Scenario 新增的边。这里的暂存只算与正式数据不同的改动。
   - 单值端由 Link 定义的基数决定（`cardinality: 'one'`），规划层随请求传入。
@@ -205,6 +205,9 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 - 内核在一个 REPEATABLE READ 只读事务里读出这个 owner 在该修订号下的改动。修订号已经变了，就返回 409，交回参考实现。
 - 读出的叠加层按投影、owner 和 Scenario 缓存，修订号不变时复用。
 - 补读页内对象之后再核对一次修订号；查询期间 Scenario 有新的编辑，这一页交回参考实现。
+- **协议版本：** 内核在 `/health` 报告协议版本：1 只支持 Object Set 页和聚合，2 还支持查询页和 Scenario 叠加层。
+  - 客户端只把 Scenario 交给协议 2 的内核。更早的内核会忽略 `scenario` 字段，按正式数据回答。
+  - 内核拒绝不认识的请求字段（422），客户端随即交回参考实现。
 
 **检查与依赖：**
 - Scenario 不可用、已关闭、已过期或属于另一个发布时，由参考实现报告它自己的错误。
