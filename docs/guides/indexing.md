@@ -27,6 +27,25 @@
 
 旧对象首次编辑时保留当时的基线，因此升级前的数据可继续参与合成。发布准备与追赶通过 `copyEditState` 复制当前来源和用户编辑状态，包含有效类型的 tombstone。历史读取跨同一 Ontology 的发布保留连续性，并根据当前对象可见性和历史行的属性策略过滤内容。
 
+## 变化订阅（Funnel 05.4）
+
+`ChangeSubscriptions`（`packages/runtime/change-subscriptions.ts`）让订阅方只在相关提交之后被唤醒，不漏，也不重复。
+
+- **订阅：**
+  - 订阅由足迹和位置组成。足迹是一组对象类型和链接类型，也可以给出一个 Object Set 查询，由 `queryFootprint` 推出它的派生属性读取的类型和链接；位置是这个 owner 已经唤醒过的最后一个提交。
+  - 订阅时，位置从 owner 的最新提交开始。
+  - 主体必须能读取每个被订阅的类型，能看到每个被订阅的链接，并且有 `tasks:write`，因为每次唤醒都是一个任务。
+  - 同一个 `requestId` 再次订阅，得到的是同一个订阅。
+- **唤醒：**
+  - Indexer 的扫描每秒最多检查每个订阅一次，用 `footprintChanges` 读取位置之后的提交窗口，每次最多 500 个提交。
+  - 窗口里有提交改动了足迹，就以订阅的主体身份，在订阅的会话里提交一个唤醒任务。任务的消息是 JSON：`{ event: 'ontology_changes', subscription, commits: { after, through }, types, links }`，其中 `types` 和 `links` 是窗口改动到的那一部分足迹。
+  - 没有改动足迹的提交，只推进位置。
+- **不漏、不重复：**
+  - 唤醒任务的 `requestId` 是 `subscription:<id>:<after>`。位置推进在提交这个任务的同一个事务里完成，条件是位置还是读到的值。
+  - 并发的分发器读到同一个起点时，只有一个能推进位置，另一个的任务按 `requestId` 去重，窗口因此首尾相接。
+- **权限：** 唤醒任务按订阅主体此刻的权限重新读取数据，订阅本身不保存数据。
+- **接口：** `subscribe(access, model, input)`、`cancel(access, id)`、`list(access)`。Agent 的唤醒（06.5）和 Machinery 的局部重规划（M3）建在它之上。
+
 ## 重放验收（Funnel 05.5）
 
 `replay-check` 检查提交日志能否解释活动投影中的行，只读，在一个 REPEATABLE READ 快照里完成：
