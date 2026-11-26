@@ -39,6 +39,13 @@ const accountGrantKeys = new Set([
 const grantKey = (grant: Grant) => `${grant.permission}:${grant.resource}`;
 const accountActionPermissions = new Set<Permission>(['view_objects', 'apply_action', 'execute_function', 'read_source']);
 
+/** Which rows of a type a principal may read; see `Access.rowRule`. */
+export type RowRule =
+  | { kind: 'deny' }
+  | { kind: 'unsupported' }
+  | { kind: 'rows'; policy?: ObjectPolicy['read']; markingsProperty?: string; tracked: boolean; markings: string[]; subject: string; groups: string[];
+      clearance?: { rank: number; compartments: string[]; availableMarks: string[]; classificationProperty?: string } };
+
 /** Resource grants and object/property visibility, independent of OAuth transport scopes. */
 export class Access {
   private policies = new Map<string, ObjectPolicy>();
@@ -193,11 +200,44 @@ export class Access {
       && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) });
   }
   /**
-   * Whether this principal sees only some rows of the type: an object policy, markings, a model clearance over row
-   * classifications, document chunks and process logs all filter rows. It evaluates the reference row filter, with
-   * the same type-level effects a query of the type has.
+   * The rows of the type this principal may read, as rules another query engine can evaluate: `rowSql` in structured
+   * form, with the same type-level effects. Document chunks and process logs filter rows through other objects, so
+   * only the reference evaluates them.
    */
-  rowFiltered(model: Ontology, type: string) { return this.rowSql(model, type, []) !== '(TRUE AND TRUE)'; }
+  rowRule(model: Ontology, type: string): RowRule {
+    this.trackSecurity(model, type);
+    const definitionLabel = model.object(type).classification;
+    if (!this.canSeeModelData(definitionLabel)) return { kind: 'deny' };
+    this.observeClassification(definitionLabel);
+    if (type === documentChunkType || processLogTarget(model, type)) return { kind: 'unsupported' };
+    const key = model.document.id + '/' + type, policy = this.policies.get(key);
+    const rule: Extract<RowRule, { kind: 'rows' }> = { kind: 'rows', policy: policy?.read, markingsProperty: policy?.markingsProperty,
+      tracked: this.policies.has(key), markings: [...this.security.markings], subject: this.security.subject, groups: [...this.security.groups] };
+    const clearance = this.modelClearance();
+    if (clearance) {
+      const definition = model.object(type);
+      if (!allowsClassification(clearance, combineClassification(model.document.classification, definition.classification))) return { kind: 'deny' };
+      const rank = sensitivityRank[clearance.sensitivity];
+      const available = Object.entries(sensitivityRank).flatMap(([label, level]) => level <= rank ? [label] : []);
+      rule.clearance = { rank, compartments: [...clearance.compartments], classificationProperty: definition.classificationProperty,
+        availableMarks: [...available, ...clearance.compartments.filter(name => !Object.hasOwn(sensitivityRank, name))] };
+    }
+    return rule;
+  }
+  /** A cell's visibility for this principal as `cellSql` evaluates it, with the same effects. */
+  cellRule(model: Ontology, type: string, field: string): { visible: false } | { visible: true; policy?: ObjectPolicy['read'] } {
+    const classification = model.object(type).properties[field]?.classification;
+    if (!this.canSeeModelData(classification) || !this.property(model, type, field)) return { visible: false };
+    this.observeClassification(classification);
+    return { visible: true, policy: this.policies.get(model.document.id + '/' + type)?.properties[field] };
+  }
+  /** Records the row dependencies the reference records for every row of a policy-bound type it reads. */
+  trackRows(model: Ontology, type: string, ids: readonly string[]) {
+    const key = model.object(type).primaryKey;
+    for (const id of ids) this.trackRow(model, type, { [key]: id });
+  }
+  /** Records the markings of rows read elsewhere, as reading each row does. */
+  observeReadMarkings(markings: readonly string[]) { for (const marking of markings) this.readMarkings.add(marking); }
   /** Whether a property's cells are subject to property security, so its visibility can differ per object. */
   hasPropertySecurity(model: Ontology, type: string, property: string) { return this.properties.has(`${model.document.id}/property/${type}/${property}`); }
   hasObjectPolicy(model: Ontology, type: string) { return type === documentChunkType || Boolean(model.object(type).classificationProperty) || this.policies.has(model.document.id + '/' + type); }

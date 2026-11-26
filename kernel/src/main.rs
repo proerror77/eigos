@@ -8,13 +8,16 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 
 use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
-use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, RecordBatch, StringBuilder};
+use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::common::{Column, TableReference};
 use datafusion::datasource::MemTable;
 use datafusion::functions::core::expr_fn::coalesce;
 use datafusion::functions::unicode::expr_fn::strpos;
 use datafusion::functions_aggregate::expr_fn::{avg, count, max, min, sum};
+use datafusion::functions_nested::expr_fn::{array_has_all, array_has_any, cardinality, make_array};
+use datafusion::common::ScalarValue;
+use datafusion::logical_expr::when;
 use datafusion::logical_expr::{lit, Expr, JoinType};
 use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
 use futures_util::{pin_mut, TryStreamExt};
@@ -30,7 +33,7 @@ fn invalid(error: impl ToString) -> Failure { failure(StatusCode::BAD_REQUEST, e
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "lowercase")]
-enum Kind { String, Integer, Number, Boolean }
+enum Kind { String, Integer, Number, Boolean, Strings }
 
 #[derive(Deserialize)]
 struct ColumnDef { name: String, kind: Kind }
@@ -45,6 +48,12 @@ struct Snapshot { ctx: SessionContext, kinds: HashMap<String, HashMap<String, Ki
 type Shared = Arc<RwLock<Option<Snapshot>>>;
 
 fn column(name: &str) -> Expr { Expr::Column(Column::new_unqualified(name)) }
+fn data_type(kind: Kind) -> DataType {
+  match kind {
+    Kind::String => DataType::Utf8, Kind::Integer => DataType::Int64, Kind::Number => DataType::Float64, Kind::Boolean => DataType::Boolean,
+    Kind::Strings => DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+  }
+}
 fn object_table(kind: &str) -> TableReference { TableReference::bare(format!("o:{kind}")) }
 fn edge_table(link: &str) -> TableReference { TableReference::bare(format!("l:{link}")) }
 /// The canonical reference key: `canonical({type,id})` orders by the JSON-encoded id, then the JSON-encoded type.
@@ -75,13 +84,11 @@ async fn load(request: LoadRequest) -> Result<Snapshot, Failure> {
     let mut fields = vec![Field::new("$owner", DataType::Utf8, false), Field::new("$id", DataType::Utf8, false),
       Field::new("$key", DataType::Utf8, false), Field::new("$revision", DataType::Int64, false)];
     for c in &kind.columns {
-      fields.push(Field::new(&c.name, match c.kind {
-        Kind::String => DataType::Utf8, Kind::Integer => DataType::Int64, Kind::Number => DataType::Float64, Kind::Boolean => DataType::Boolean,
-      }, true));
+      fields.push(Field::new(&c.name, data_type(c.kind), true));
     }
     if kind.classification.is_some() {
       fields.push(Field::new("$rank", DataType::Int64, true));
-      fields.push(Field::new("$compartments", DataType::Utf8, true));
+      fields.push(Field::new("$compartments", data_type(Kind::Strings), true));
       classified.insert(kind.name.clone());
     }
     let table: SchemaRef = Arc::new(Schema::new(fields));
@@ -140,19 +147,20 @@ async fn load(request: LoadRequest) -> Result<Snapshot, Failure> {
   Ok(Snapshot { ctx, kinds, classified, links: request.links, objects, edges, bytes })
 }
 
-enum ValueBuilder { String(StringBuilder), Integer(Int64Builder), Number(Float64Builder), Boolean(BooleanBuilder) }
+enum ValueBuilder { String(StringBuilder), Integer(Int64Builder), Number(Float64Builder), Boolean(BooleanBuilder), Strings(ListBuilder<StringBuilder>) }
 
 struct ObjectBuilder { owner: StringBuilder, id: StringBuilder, key: StringBuilder, revision: Int64Builder, values: Vec<ValueBuilder>,
-  label: Option<(Int64Builder, StringBuilder)>, len: usize }
+  label: Option<(Int64Builder, ListBuilder<StringBuilder>)>, len: usize }
 
 impl ObjectBuilder {
   fn new(columns: &[ColumnDef], classified: bool) -> Self {
     let values = columns.iter().map(|c| match c.kind {
       Kind::String => ValueBuilder::String(StringBuilder::new()), Kind::Integer => ValueBuilder::Integer(Int64Builder::new()),
       Kind::Number => ValueBuilder::Number(Float64Builder::new()), Kind::Boolean => ValueBuilder::Boolean(BooleanBuilder::new()),
+      Kind::Strings => ValueBuilder::Strings(ListBuilder::new(StringBuilder::new())),
     }).collect();
     Self { owner: StringBuilder::new(), id: StringBuilder::new(), key: StringBuilder::new(), revision: Int64Builder::new(), values,
-      label: classified.then(|| (Int64Builder::new(), StringBuilder::new())), len: 0 }
+      label: classified.then(|| (Int64Builder::new(), ListBuilder::new(StringBuilder::new()))), len: 0 }
   }
   fn push(&mut self, kind: &str, owner: &str, id: &str, revision: i64, properties: &Value, columns: &[ColumnDef],
     classification: Option<&str>, ranks: &HashMap<String, i64>) {
@@ -168,16 +176,25 @@ impl ObjectBuilder {
         ValueBuilder::Integer(b) => b.append_option(value.and_then(Value::as_i64)),
         ValueBuilder::Number(b) => b.append_option(value.and_then(Value::as_f64)),
         ValueBuilder::Boolean(b) => b.append_option(value.and_then(Value::as_bool)),
+        ValueBuilder::Strings(b) => match value.and_then(Value::as_array) {
+          Some(items) => { for item in items { b.values().append_option(item.as_str()); } b.append(true); }
+          None => b.append(false),
+        },
       }
     }
     if let (Some((rank, compartments)), Some(name)) = (self.label.as_mut(), classification) {
       // A row classification is `{sensitivity, compartments}`; a missing one adds nothing to the observed label.
       let label = properties.get(name).filter(|v| !v.is_null());
       rank.append_option(label.and_then(|l| l.get("sensitivity")).and_then(Value::as_str).and_then(|s| ranks.get(s).copied()));
-      let mut tags: Vec<&str> = label.and_then(|l| l.get("compartments")).and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-      tags.sort_unstable();
-      compartments.append_option((!tags.is_empty()).then(|| tags.join(",")));
+      match label {
+        Some(l) => {
+          for tag in l.get("compartments").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()).unwrap_or_default() {
+            compartments.values().append_value(tag);
+          }
+          compartments.append(true);
+        }
+        None => compartments.append(false),
+      }
     }
     self.len += 1;
   }
@@ -187,6 +204,7 @@ impl ObjectBuilder {
       arrays.push(match builder {
         ValueBuilder::String(b) => Arc::new(b.finish()), ValueBuilder::Integer(b) => Arc::new(b.finish()),
         ValueBuilder::Number(b) => Arc::new(b.finish()), ValueBuilder::Boolean(b) => Arc::new(b.finish()),
+        ValueBuilder::Strings(b) => Arc::new(b.finish()),
       });
     }
     if let Some((rank, compartments)) = self.label.as_mut() {
@@ -212,6 +230,10 @@ enum Predicate {
   Lte { column: String, value: f64 },
   In { column: String, values: Vec<Value> },
   Contains { column: String, value: String },
+  /// Every element of a string list is one of `values`; a missing list is empty.
+  Subset { column: String, values: Vec<String> },
+  /// A string list holds at least one of `values`.
+  HasAny { column: String, values: Vec<String> },
 }
 
 #[derive(Deserialize)]
@@ -236,16 +258,28 @@ enum SetNode {
 #[derive(Deserialize)]
 struct Metric { name: String, op: String, column: Option<String> }
 
+/// A field an aggregation reads through a mask: hidden for every row, or shown only where a cell policy permits.
+#[derive(Deserialize)]
+struct Mask { column: String, hidden: bool, policy: Option<Predicate> }
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum Output {
   Page { offset: usize, limit: usize },
   #[serde(rename_all = "camelCase")]
-  Aggregate { r#type: String, group_by: Vec<String>, metrics: Vec<Metric> },
+  Aggregate { r#type: String, group_by: Vec<String>, metrics: Vec<Metric>, #[serde(default)] masks: Vec<Mask> },
 }
 
+/// What one member type reports: the ids of every member when its rows are tracked, and the markings its members carry.
 #[derive(Deserialize)]
-struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(default)] members: Vec<String> }
+struct MemberSpec { r#type: String, #[serde(default)] track: bool, markings: Option<String> }
+
+#[derive(Deserialize)]
+struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(default)] members: Vec<MemberSpec>,
+  #[serde(default)] rows: HashMap<String, Predicate> }
+
+/// The owner a query reads and the row predicate of each type, applied to every read of that type's table.
+struct Ctx { owner: String, rows: HashMap<String, Predicate> }
 
 fn literal(kind: Kind, value: &Value) -> Result<Expr, Failure> {
   Ok(match (kind, value) {
@@ -257,8 +291,14 @@ fn literal(kind: Kind, value: &Value) -> Result<Expr, Failure> {
   })
 }
 
+fn string_list(values: &[String]) -> Expr { make_array(values.iter().map(|v| lit(v.clone())).collect()) }
+
 fn predicate(p: &Predicate, kinds: &HashMap<String, Kind>) -> Result<Expr, Failure> {
-  let kind_of = |name: &str| kinds.get(name).copied().ok_or_else(|| invalid(format!("Unknown column {name}")));
+  // `$rank` and `$compartments` hold a classified type's row classification.
+  let kind_of = |name: &str| match name {
+    "$rank" => Ok(Kind::Integer), "$compartments" => Ok(Kind::Strings),
+    _ => kinds.get(name).copied().ok_or_else(|| invalid(format!("Unknown column {name}"))),
+  };
   Ok(match p {
     Predicate::All { predicates } => predicates.iter().map(|q| predicate(q, kinds)).collect::<Result<Vec<_>, _>>()?
       .into_iter().reduce(Expr::and).unwrap_or(lit(true)),
@@ -284,6 +324,15 @@ fn predicate(p: &Predicate, kinds: &HashMap<String, Kind>) -> Result<Expr, Failu
       kind_of(name)?;
       coalesce(vec![strpos(column(name), lit(value.clone())).gt(lit(0i64)), lit(false)])
     }
+    Predicate::Subset { column: name, values } => {
+      if kind_of(name)? != Kind::Strings { return Err(invalid(format!("{name} is not a string list"))); }
+      let empty = column(name).is_null().or(cardinality(column(name)).eq(lit(0u64)));
+      if values.is_empty() { empty } else { empty.or(coalesce(vec![array_has_all(string_list(values), column(name)), lit(false)])) }
+    }
+    Predicate::HasAny { column: name, values } => {
+      if kind_of(name)? != Kind::Strings { return Err(invalid(format!("{name} is not a string list"))); }
+      if values.is_empty() { lit(false) } else { coalesce(vec![array_has_any(column(name), string_list(values)), lit(false)]) }
+    }
   })
 }
 
@@ -295,9 +344,10 @@ fn refs_frame(ctx: &SessionContext, refs: &[(String, String)]) -> Result<DataFra
   ctx.read_batch(batch).map_err(internal)
 }
 
-async fn objects(snapshot: &Snapshot, owner: &str, kind: &str, filter: Option<&Predicate>) -> Result<DataFrame, Failure> {
+async fn objects(snapshot: &Snapshot, owner: &Ctx, kind: &str, filter: Option<&Predicate>) -> Result<DataFrame, Failure> {
   let kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
-  let mut frame = snapshot.ctx.table(object_table(kind)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.to_string()))).map_err(internal)?;
+  let mut frame = snapshot.ctx.table(object_table(kind)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
+  if let Some(rows) = owner.rows.get(kind) { frame = frame.filter(predicate(rows, kinds)?).map_err(internal)?; }
   if let Some(p) = filter { frame = frame.filter(predicate(p, kinds)?).map_err(internal)?; }
   Ok(frame)
 }
@@ -312,7 +362,7 @@ fn distinct_union(ctx: &SessionContext, frames: Vec<DataFrame>) -> Result<DataFr
   iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?.distinct().map_err(internal)
 }
 
-fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a str, node: &'a SetNode) -> futures_util::future::BoxFuture<'a, Result<DataFrame, Failure>> {
+fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> futures_util::future::BoxFuture<'a, Result<DataFrame, Failure>> {
   Box::pin(async move {
     let ctx = &snapshot.ctx;
     match node {
@@ -353,7 +403,7 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a str, node: &'a SetNode) -> f
             let sources = current.clone().filter(column("$type").eq(lit(m.source.clone()))).map_err(internal)?
               .select(vec![column("$id").alias("source")]).map_err(internal)?;
             let (from, to) = if m.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
-            let edges = ctx.table(edge_table(&m.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.to_string()))).map_err(internal)?
+            let edges = ctx.table(edge_table(&m.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
               .join(sources, JoinType::LeftSemi, &[from], &["source"], None).map_err(internal)?
               .select(vec![column(to).alias("target")]).map_err(internal)?;
             let targets = objects(snapshot, owner, &m.target, m.filter.as_ref()).await?
@@ -384,26 +434,56 @@ async fn rows(frame: DataFrame) -> Result<Vec<Value>, Failure> {
  * sensitivity rank and every compartment its members carry. The caller observes the combined label, as the reference
  * observes each member it reads.
  */
-async fn members(snapshot: &Snapshot, owner: &str, set: &DataFrame, types: &[String]) -> Result<Vec<Value>, Failure> {
+/// The distinct strings of a string-list column over `frame`'s rows, sorted.
+async fn distinct_strings(frame: DataFrame, name: &str) -> Result<Vec<String>, Failure> {
+  let values = rows(frame.filter(column(name).is_not_null()).map_err(internal)?.select(vec![column(name)]).map_err(internal)?.distinct().map_err(internal)?).await?;
+  let mut out: Vec<String> = values.iter().flat_map(|row| row[name].as_array().cloned().unwrap_or_default())
+    .filter_map(|item| item.as_str().map(String::from)).collect();
+  out.sort();
+  out.dedup();
+  Ok(out)
+}
+
+/// The most member ids a tracked type reports, the reference's complete-evaluation limit.
+const TRACKED: usize = 10000;
+
+/**
+ * For each requested type present in the set: how many members it has; for a classified type, the highest row
+ * sensitivity rank and every compartment; for a tracked (policy-bound) type, every member id, or `overLimit`; and the
+ * markings its members carry. The caller records these as the reference does for each member it reads.
+ */
+async fn members(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, specs: &[MemberSpec]) -> Result<Vec<Value>, Failure> {
   let mut out = Vec::new();
-  for kind in types {
+  for spec in specs {
+    let kind = &spec.r#type;
     if !snapshot.kinds.contains_key(kind) { continue; }
     let ids = set.clone().filter(column("$type").eq(lit(kind.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
     let rows_frame = objects(snapshot, owner, kind, None).await?.join(ids, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
-    if !snapshot.classified.contains(kind) {
-      let total = rows_frame.count().await.map_err(internal)?;
-      if total > 0 { out.push(json!({ "type": kind, "count": total })); }
-      continue;
-    }
-    let summary = rows(rows_frame.clone().aggregate(vec![], vec![count(lit(1i64)).alias("count"), max(column("$rank")).alias("rank")]).map_err(internal)?).await?;
-    let total = summary.first().and_then(|row| row["count"].as_i64()).unwrap_or(0);
+    let mut entry = serde_json::Map::new();
+    let total = if snapshot.classified.contains(kind) {
+      let summary = rows(rows_frame.clone().aggregate(vec![], vec![count(lit(1i64)).alias("count"), max(column("$rank")).alias("rank")]).map_err(internal)?).await?;
+      let total = summary.first().and_then(|row| row["count"].as_i64()).unwrap_or(0) as usize;
+      entry.insert("rank".into(), summary.first().and_then(|row| row.get("rank").cloned()).unwrap_or(Value::Null));
+      entry.insert("compartments".into(), json!(distinct_strings(rows_frame.clone(), "$compartments").await?));
+      total
+    } else {
+      rows_frame.clone().count().await.map_err(internal)?
+    };
     if total == 0 { continue; }
-    let labels = rows(rows_frame.filter(column("$compartments").is_not_null()).map_err(internal)?
-      .select(vec![column("$compartments")]).map_err(internal)?.distinct().map_err(internal)?).await?;
-    let mut tags: Vec<String> = labels.iter().flat_map(|row| row["$compartments"].as_str().unwrap_or("").split(',').filter(|t| !t.is_empty()).map(String::from).collect::<Vec<_>>()).collect();
-    tags.sort();
-    tags.dedup();
-    out.push(json!({ "type": kind, "count": total, "rank": summary[0].get("rank").cloned().unwrap_or(Value::Null), "compartments": tags }));
+    entry.insert("type".into(), json!(kind));
+    entry.insert("count".into(), json!(total));
+    if spec.track {
+      if total > TRACKED { entry.insert("overLimit".into(), json!(true)); }
+      else {
+        let listed = rows(rows_frame.clone().select(vec![column("$id")]).map_err(internal)?).await?;
+        entry.insert("ids".into(), json!(listed.iter().filter_map(|row| row["$id"].as_str()).collect::<Vec<_>>()));
+      }
+    }
+    if let Some(name) = &spec.markings {
+      if snapshot.kinds.get(kind).and_then(|k| k.get(name)) != Some(&Kind::Strings) { return Err(invalid(format!("{name} is not a string list"))); }
+      entry.insert("markings".into(), json!(distinct_strings(rows_frame, name).await?));
+    }
+    out.push(Value::Object(entry));
   }
   Ok(out)
 }
@@ -411,8 +491,9 @@ async fn members(snapshot: &Snapshot, owner: &str, set: &DataFrame, types: &[Str
 async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Failure> {
   let started = Instant::now();
   // The set is computed once and reused by the page, the total and the member statistics.
-  let set = set_frame(snapshot, &request.owner, &request.set).await?.cache().await.map_err(internal)?;
-  let observed = members(snapshot, &request.owner, &set, &request.members).await?;
+  let owner = Ctx { owner: request.owner.clone(), rows: request.rows };
+  let set = set_frame(snapshot, &owner, &request.set).await?.cache().await.map_err(internal)?;
+  let observed = members(snapshot, &owner, &set, &request.members).await?;
   match request.output {
     Output::Page { offset, limit } => {
       let total = set.clone().count().await.map_err(internal)?;
@@ -421,10 +502,25 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
       let refs: Vec<Value> = rows(page).await?.into_iter().map(|row| json!({ "type": row["$type"], "id": row["$id"] })).collect();
       Ok(json!({ "total": total, "refs": refs, "members": observed, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
-    Output::Aggregate { r#type, group_by, metrics } => {
+    Output::Aggregate { r#type, group_by, metrics, masks } => {
       let kinds = snapshot.kinds.get(&r#type).ok_or_else(|| invalid(format!("Type {} is not loaded", r#type)))?;
       let members = set.filter(column("$type").eq(lit(r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
-      let objects = objects(snapshot, &request.owner, &r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
+      let mut objects = objects(snapshot, &owner, &r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
+      // Masked fields read as the reference shows them: hidden fields are null, and a cell policy keeps the value only where it permits.
+      if !masks.is_empty() {
+        let mut projection = vec![column("$key")];
+        for name in kinds.keys() {
+          let null = || ScalarValue::try_from(&data_type(kinds[name])).map(lit).map_err(internal);
+          let value = match masks.iter().find(|m| &m.column == name) {
+            None => column(name),
+            Some(mask) if mask.hidden => null()?,
+            Some(Mask { policy: Some(policy), .. }) => when(predicate(policy, kinds)?, column(name)).otherwise(null()?).map_err(internal)?,
+            Some(_) => column(name),
+          };
+          projection.push(value.alias(name.clone()));
+        }
+        objects = objects.select(projection).map_err(internal)?;
+      }
       let mut aggregates = vec![min(column("$key")).alias("$first"), count(lit(1i64)).alias("$count")];
       for m in &metrics {
         let target = || m.column.as_ref().filter(|c| kinds.contains_key(*c)).map(|c| column(c)).ok_or_else(|| invalid(format!("Metric {} needs a loaded column", m.name)));
