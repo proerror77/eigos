@@ -1,0 +1,83 @@
+name: Function host release
+# Publishes the function host binary of one reviewed main commit for the production host (x86_64, Ubuntu 24.04,
+# glibc 2.39). It runs only when started by hand. The host downloads the binary and checks its SHA-256.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Main commit to publish (40 lowercase hex characters)
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: function-host-release-${{ inputs.source_sha }}
+  cancel-in-progress: false
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require a main commit whose CI succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo 'Give the full 40-character commit' >&2; exit 1; }
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$SOURCE_SHA...main" --jq .status)
+          [[ "$status" == ahead || "$status" == identical ]] || { echo "$SOURCE_SHA is not on main" >&2; exit 1; }
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SOURCE_SHA&status=success&per_page=1" --jq .total_count)
+          [[ "$runs" -gt 0 ]] || { echo "CI has not succeeded on $SOURCE_SHA" >&2; exit 1; }
+  binary:
+    needs: gate
+    # The production host's Ubuntu and glibc.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Build the function host from the exact source
+        run: |
+          cargo build --release --locked --manifest-path function-host/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/release"
+          cp function-host/target/release/eigos-function-host "$RUNNER_TEMP/release/eigos-function-host"
+      - name: Check that the binary starts, listens on loopback and runs a component
+        run: |
+          binary="$RUNNER_TEMP/release/eigos-function-host"
+          rustup target add wasm32-wasip2
+          function-host/fixtures/build.sh "$RUNNER_TEMP/fixtures"
+          EIGOS_FUNCTION_HOST_PORT=0 "$binary" > "$RUNNER_TEMP/listening.json" &
+          pid=$!
+          for _ in $(seq 50); do [[ -s "$RUNNER_TEMP/listening.json" ]] && break; sleep 0.1; done
+          port=$(jq -r 'select(.event == "function_host_listening") | .port' "$RUNNER_TEMP/listening.json")
+          curl --fail --silent "http://127.0.0.1:$port/health" | jq -e '.status == "ok" and .protocol == 1'
+          component="$RUNNER_TEMP/fixtures/echo_rust.wasm"
+          sha=$(sha256sum "$component" | cut -d' ' -f1)
+          curl --fail --silent -X POST -H "x-eigos-sha256: $sha" --data-binary @"$component" "http://127.0.0.1:$port/components" | jq -e '.sha256 == "'"$sha"'"'
+          curl --fail --silent -X POST -H 'content-type: application/json' \
+            -d '{"sha256":"'"$sha"'","input":"{\"values\":[1]}","limits":{"fuel":100000000,"memoryMb":64,"deadlineMs":2000}}' \
+            "http://127.0.0.1:$port/invoke" | jq -e '.output == "{\"echo\":{\"values\":[1]}}"'
+          kill -TERM "$pid"
+          wait "$pid" || true
+      - name: Publish an immutable release for the source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          tag="function-host-${SOURCE_SHA:0:12}"
+          cd "$RUNNER_TEMP/release"
+          sha256sum eigos-function-host > eigos-function-host.sha256
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$tag already exists; a release is never replaced" >&2
+            exit 1
+          fi
+          gh release create "$tag" eigos-function-host eigos-function-host.sha256 --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "Function host ${SOURCE_SHA:0:12}" \
+            --notes "Function host built from $SOURCE_SHA on ubuntu-24.04 (x86_64, glibc 2.39). SHA-256: $(cut -d' ' -f1 eigos-function-host.sha256)"
