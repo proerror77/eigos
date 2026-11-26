@@ -27,6 +27,27 @@
 
 旧对象首次编辑时保留当时的基线，因此升级前的数据可继续参与合成。发布准备与追赶通过 `copyEditState` 复制当前来源和用户编辑状态，包含有效类型的 tombstone。历史读取跨同一 Ontology 的发布保留连续性，并根据当前对象可见性和历史行的属性策略过滤内容。
 
+## 重放验收（Funnel 05.5）
+
+`replay-check` 检查提交日志能否解释活动投影中的行，只读，在一个 REPEATABLE READ 快照里完成：
+
+```bash
+DATABASE_URL=… node --import tsx scripts/ontology.ts replay-check [--owner=<subject>] [--show-identifiers]
+```
+
+- **做法：** 按提交顺序重放这个投影的 `edit_history` 和 `link_history`。
+  - 每个对象取最后一次已提交的写入：写入后的完整值，删除则为无；每条关系取最后一次 `link` 或 `unlink`。
+  - 再与 `objects`、`links` 表比对。
+  - 提交顺序就是 owner 的提交序号。提交日志建立之前的历史没有序号，按 `sequence` 排在最前，与消费者的读取顺序相同。
+- **每个类型和每个关系类型的计数：**
+  - `matched`：表中就是最后一次写入的结果；
+  - `differs`：表中的值与最后一次写入不同；
+  - `missing`：最后一次写入创建或修改了它，表中却没有；
+  - `resurrected`：最后一次写入删除了它，表中仍然存在；
+  - `carried`：这个投影的历史里没有它。这些行是发布时复制进来的，不参与比较。在日志之外直接写入的行，也会落在这一类。
+- **输出：** 前三类以外都算一致。有不一致时，命令以状态码 1 退出，并列出最多 20 个例子。owner 和 id 默认输出哈希，`--show-identifiers` 输出原值。
+- **owner 隔离：** 开启 owner 隔离时，运行时角色只能读取当前 owner 的行，所以要用 `--owner` 逐个检查；或者用可以绕过行级安全的只读角色检查全部 owner。
+
 ## 物化
 
 `Materializations.capture` 在可重复读事务中保存选定对象类型的最新合成值和类型间关系。来源值与用户编辑已经由对象运行层合成，物化保存捕获时的结果。调用者提交 `requestId`、`name` 和 `types`，相同请求可安全重传。单次物化最多 10000 个对象，超过上限会明确失败并回滚。
