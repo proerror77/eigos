@@ -566,6 +566,75 @@ test('Machinery reconstructs repeated paths, measures dwell and excludes a case 
   } finally { await f.close(); }
 });
 
+test('Machinery shows its four views, selects processes by state or last transition, and aggregates node and edge metrics', async () => {
+  const f = await processSetup();
+  try {
+    const definition = structuredClone(f.model.document);
+    definition.objectTypes.find(type => type.apiName === 'Route')!.properties.distance = {
+      description: 'Synthetic distance', schema: { type: 'number' }, required: false,
+    };
+    definition.objectTypes.find(type => type.apiName === 'RouteStateLog')!.machinery = {
+      states: [{ name: 'open' }, { name: 'stalled', dwellSeconds: 600 }, { name: 'done', terminal: true }],
+      transitions: [{ from: null, to: 'open' }, { from: 'open', to: 'stalled' }, { from: 'stalled', to: 'done' }],
+      metrics: {
+        node: { label: 'Distance', aggregation: { op: 'sum', property: 'distance' }, unit: 'km', colors: [{ min: 0, color: 'green' }, { min: 10, color: 'red' }] },
+        edge: { label: 'Routes', aggregation: { op: 'count' } },
+      },
+    };
+    const invalid = structuredClone(definition);
+    invalid.objectTypes.find(type => type.apiName === 'RouteStateLog')!.machinery!.metrics!.node!.aggregation = { op: 'sum', property: 'name' };
+    await assert.rejects(f.metadata.publish(invalid, f.capabilities, f.publisher), /numeric property of the tracked object type/);
+    const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const graph = new Objects(f.db, model, await Access.load(f.db, principal));
+    const [first, second, third] = ['metric-first', 'metric-second', 'metric-third'].map(id => ({ type: 'Route', id }));
+    for (const [ref, distance] of [[first, 4], [second, 6], [third, 12]] as const) await graph.create(ref!, { id: ref!.id, name: ref!.id, distance });
+    const move = async (ref: { type: string; id: string }, ...path: string[]) => {
+      for (const state of path) await f.actions.apply(await Access.load(f.db, principal), model, 'ChangeRouteState',
+        { route: ref, revision: (await graph.read(ref)).revision, state }, randomUUID());
+    };
+    await move(first!, 'open', 'stalled');
+    await move(second!, 'open', 'stalled', 'open');
+    await move(third!, 'open', 'stalled', 'done');
+    const now = Date.now();
+    const analyze = async (input: Record<string, unknown>) => analyzeMachinery(f.db, await Access.load(f.db, principal), model,
+      machineryAnalysisSchema.parse({ type: 'RouteStateLog', from: new Date(now - 3600000).toISOString(), to: new Date(now + 60000).toISOString(), ...input }));
+    type View = { nodes: { state: string; value: number | null; cases?: number; color?: string }[]; edges: { from: string | null; to: string | null; value: number }[] };
+    const nodes = (view: View) => Object.fromEntries(view.nodes.map(node => [node.state, node.value]));
+    const edges = (view: View) => Object.fromEntries(view.edges.map(edge => [`${edge.from}>${edge.to}`, edge.value]));
+
+    const ever = (await analyze({ view: { kind: 'count', scope: 'historical' } })).view!;
+    assert.deepEqual(nodes(ever), { open: 3, stalled: 3, done: 1 });
+    assert.deepEqual(edges(ever), { 'null>open': 3, 'open>stalled': 3, 'stalled>done': 1, 'stalled>open': 1 });
+    // Current counts: the state each process is in, and the transition each made last.
+    const current = (await analyze({ view: { kind: 'count', scope: 'current' } })).view!;
+    assert.deepEqual(nodes(current), { open: 1, stalled: 1, done: 1 });
+    assert.deepEqual(edges(current), { 'null>open': 0, 'open>stalled': 1, 'stalled>done': 1, 'stalled>open': 1 });
+    const waiting = ((await analyze({ view: { kind: 'duration', scope: 'current' } })).view! as View).nodes.find(node => node.state === 'stalled')!;
+    assert.equal(waiting.cases, 1);
+    assert.equal(waiting.color, 'green');
+    const finished = ((await analyze({ view: { kind: 'duration', scope: 'historical' } })).view! as View).nodes.find(node => node.state === 'stalled')!;
+    assert.equal(finished.cases, 2);
+
+    const selected = async (filter: Record<string, unknown>) => (await analyze({ filter })).cases.map(item => item.object.id).sort();
+    assert.deepEqual(await selected({ states: ['stalled', 'done'], current: true }), ['metric-first', 'metric-third']);
+    assert.deepEqual(await selected({ states: ['done', 'stalled'] }), ['metric-first', 'metric-second', 'metric-third']);
+    assert.deepEqual(await selected({ edges: [{ from: 'open', to: 'stalled' }], edgeMode: 'last' }), ['metric-first']);
+    assert.deepEqual(await selected({ edges: [{ from: 'stalled', to: 'open' }, { from: 'stalled', to: 'done' }], edgeMode: 'last' }),
+      ['metric-second', 'metric-third']);
+    assert.deepEqual(await selected({ edges: [{ from: 'stalled', to: 'open' }] }), ['metric-second']);
+
+    // Metrics cover conforming processes only, so the second route, which went back to open, counts nowhere.
+    const { metrics } = await analyze({});
+    assert.equal(metrics?.node?.label, 'Distance');
+    assert.equal(metrics?.node?.unit, 'km');
+    assert.deepEqual(metrics?.node?.values.map(row => { const { state, value, color } = row as { state: string; value: number | null; color?: string };
+      return [state, value, color ?? null]; }), [['open', null, null], ['stalled', 4, 'green'], ['done', 12, 'red']]);
+    assert.deepEqual(metrics?.edge?.values.map(row => { const { from, to, value } = row as { from: string | null; to: string | null; value: number | null };
+      return [from, to, value]; }), [[null, 'open', 2], ['open', 'stalled', 2], ['stalled', 'done', 1], ['stalled', 'open', null]]);
+  } finally { await f.close(); }
+});
+
 test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
   const f = await setup();
   try {
