@@ -213,6 +213,14 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 
 **权限：** 内核的数据库角色还需要 `scenarios`、`scenario_objects` 和 `scenario_links` 的 SELECT 权限。
 
+### `Objects.follow`（C5b）
+
+读取一个对象的关系时，条件与 `Objects.query` 相同，也经过内核：
+- **源对象：** 先按参考实现的顺序检查视图的 Interface 和导航，再由参考实现读取源对象及其派生属性。源对象不存在或不可读时，由参考实现报告。
+- **目标：** 内核在目标类型的行规则下计算目标，客户端按 id 逐字节排序，与参考实现的 `ORDER BY id COLLATE "C"` 一致。这个顺序与内核的页顺序（JSON 编码的键）不同，例如 `a` 和 `a!`。
+- **上限：** 目标多于 `maximum` 时交回参考实现，由它报告超出完整读取上限。
+- **补读：** 目标按 `Objects.readBatch` 补读，并核对补读期间 owner 没有新的提交、Scenario 没有新的编辑。
+
 ### `Objects.query`（C4b）
 
 `EIGOS_KERNEL` 同样决定 `Objects.query` 怎样使用内核，条件与 Object Set 相同。只有参考实现完整求值的查询才经过内核，也就是有 `filter` 或 `orderBy`、类型有派生属性，或者字段是嵌套路径的查询。其余查询由参考实现按页从存储读取，本来就是一条带键集分页的 SQL。

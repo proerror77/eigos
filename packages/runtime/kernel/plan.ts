@@ -494,6 +494,43 @@ export async function compileSet(model: Ontology, access: Access, graph: Objects
   }
 }
 
+/**
+ * The targets of one object's relationship, as `Objects.follow` reads them, or undefined. The reference checks the view's
+ * Interface and the navigation, reads the source object with its derived values through `graph`, then checks the
+ * target type, the Link and its label; a Link label beyond the clearance has no targets. The kernel computes only the
+ * targets, under the target type's row rule.
+ */
+export async function compileFollow(model: Ontology, access: Access, graph: Objects, ref: ObjectRef, link: string, view: string): Promise<KernelPlan | undefined> {
+  const scope = new Scope(model, access);
+  try {
+    if (view !== ref.type) access.definition(model, 'interface', view);
+    const navigation = model.navigation(ref.type, link, view);
+    if (scope.readable(ref.type) === undefined) return undefined;
+    await graph.read(ref);
+    access.read(model, navigation.target);
+    access.definition(model, 'link', navigation.link);
+    const label = model.links.get(navigation.link)?.classification;
+    let compiled: Compiled = empty();
+    if (access.canSeeModelData(label)) {
+      access.observeClassification(label);
+      const target = navigation.target;
+      const readable = scope.readable(target);
+      if (readable === undefined) return undefined;
+      if (readable) {
+        if (!scope.enrich(target)) return undefined;
+        compiled = { set: { op: 'traverse', set: { op: 'refs', refs: [ref], enrich: false },
+          steps: [[{ source: ref.type, link: navigation.link, forward: navigation.forward, target }]] }, types: new Set([target]) };
+      }
+    }
+    const plan = { ...compiled, rows: scope.rows, members: scope.members, derived: scope.derived, enriched: scope.enriched };
+    scopes.set(plan, scope);
+    return plan;
+  } catch (error) {
+    if (referenceError(error)) return undefined;
+    throw error;
+  }
+}
+
 type Compiled = { set: KernelSet; types: Set<string> };
 const empty = (): Compiled => ({ set: { op: 'empty' }, types: new Set() });
 

@@ -15,7 +15,7 @@ import { isSandboxResource } from '../ontology/sandbox.js';
 import { Database, type Sql } from './database.js';
 import { checkScenario, lockEdits, viewTables, stageObject, stageLink, type ScenarioMutation } from './scenario-store.js';
 import { isNumeric, storedPredicate, supportsStoredOrder, supportsStoredPredicate, type Metric } from './stored-query.js';
-import { queryWithKernel, type KernelClient } from './kernel/client.js';
+import { followWithKernel, queryWithKernel, type KernelClient } from './kernel/client.js';
 import { compareWithKernel, defaultKernelUse, encodeKernelCursor, kernelAnswer, kernelCursor, referenceOffset, type KernelCursor,
   type KernelUse } from './kernel/routing.js';
 
@@ -810,7 +810,34 @@ export class Objects {
     if (maximum !== undefined && (!Number.isInteger(maximum) || maximum < 1 || maximum > maxCompleteRelationships))
       throw new InvalidInput('Relationship read limit is out of range');
     return observeDecisionRead(this, { kind: 'follow', ref, link, as: view, ...(maximum === undefined ? {} : { maximum }) },
-      () => this.followObjects(ref, link, view, maximum ?? maxCompleteRelationships), observedObjects);
+      () => this.followTargets(ref, link, view, maximum ?? maxCompleteRelationships), observedObjects);
+  }
+  /**
+   * An object's relationship, through the query kernel as EIGOS_KERNEL says, on the same conditions as `query`: `route`
+   * answers from the kernel and `shadow` compares the kernel's answer with the reference's.
+   */
+  private async followTargets(ref: ObjectRef, link: string, view: string, maximum: number): Promise<ObjectData[]> {
+    const kernels = Objects.kernels();
+    const allowed = kernels.mode !== 'off' && this.client === this.db.pool && !capturingDecisionReads() && this.db.readsAsOwner(this.owner);
+    if (allowed && kernels.mode === 'route') {
+      const kernel = await kernels.registry.kernelFor(this.db, this.model, false);
+      const routed = kernel && await kernelAnswer(this.db, kernels.registry, this.model, () => this.kernelFollow(kernel, ref, link, view, maximum));
+      if (routed) return routed;
+    }
+    const targets = await this.followObjects(ref, link, view, maximum);
+    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, { follow: { ref, link, view, maximum } },
+      fork => new Objects(this.db, this.model, fork).followObjects(ref, link, view, maximum),
+      (client, fork) => new Objects(this.db, this.model, fork).kernelFollow(client, ref, link, view, maximum));
+    return targets;
+  }
+  /** The targets from the kernel, read with a fork of the access as `kernelQuery` reads a page. */
+  private async kernelFollow(kernel: KernelClient, ref: ObjectRef, link: string, view: string, maximum: number) {
+    const fork = await this.access.fork();
+    const targets = await followWithKernel(kernel, this.model, fork, new Objects(this.db, this.model, fork), { ref, link, view, maximum });
+    if (!targets) return undefined;
+    if (!await fork.canReturn(fork.dataRequirements())) throw new Conflict('Derived result permissions changed');
+    this.access.adoptReads(fork);
+    return targets;
   }
   private async followObjects(ref: ObjectRef, link: string, view: string, maximum: number): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);

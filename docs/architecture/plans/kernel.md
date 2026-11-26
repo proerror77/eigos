@@ -120,6 +120,8 @@
 
 ### C5b：多跳与 Search Around
 
+**状态：** `Objects.follow` 已经过内核，见 [查询内核指南](../../guides/query-kernel.md#objectsfollowc5b)。多跳执行顺序（按选择性先求值）和前沿上限的提前停止，等 Engine Benchmark 08 的夜间数据出来再决定是否需要。
+
 承接 OSS 03.2 留下的问题：候选分页 100 行、一万个对象时 JS 处理成为瓶颈、每次 `follow` 调用的固定开销。
 
 **做法：**

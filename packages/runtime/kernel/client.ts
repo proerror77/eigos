@@ -13,7 +13,7 @@ import type { Objects } from '../objects.js';
 import type { z } from 'zod';
 import { nestedValue } from '../query-filter.js';
 import type { querySchema } from '../objects.js';
-import { compileAggregate, compileQueryOrder, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
+import { compileAggregate, compileFollow, compileQueryOrder, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
 
 /** What the kernel read of one type: the rows the reference reads to evaluate the same set. */
 type Reads = { type: string; count: number; rank?: number | null; compartments?: string[]; ids?: string[]; overLimit?: true; markings?: string[];
@@ -296,4 +296,24 @@ export async function queryWithKernel(kernel: KernelClient, model: PublishedOnto
     return select ? { ...projected, properties: Object.fromEntries(select.map(field => [field, nestedValue(projected.properties, field)])) } : projected;
   });
   return { items, total: response.total, membership: response.membership, commit: response.commit, elapsedMs: response.elapsedMs };
+}
+
+/**
+ * One object's relationship with the kernel, as `Objects.follow` reads it: the targets in id order, byte by byte, read
+ * through `graph`. Undefined leaves it to the reference: there is no kernel plan, the reference's evaluation would fail,
+ * there are more targets than `maximum` (the reference reports that), a target is gone or hidden, or the owner committed
+ * or the Scenario changed while the targets were read.
+ */
+export async function followWithKernel(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects,
+  input: { ref: ObjectRef; link: string; view: string; maximum: number }) {
+  const version = await versionOf(model, access, graph);
+  if (!version) return undefined;
+  const plan = await compileFollow(model, access, graph, input.ref, input.link, input.view);
+  if (!plan) return undefined;
+  const response = await kernel.page(access.principal.owner, plan, 0, input.maximum + 1, version);
+  if (!response || !observeReads(access, model, plan, response.reads) || response.total > input.maximum) return undefined;
+  const refs = [...response.refs].sort((left, right) => Buffer.compare(Buffer.from(left.id), Buffer.from(right.id)));
+  const objects = await hydrate(graph, refs);
+  if (!objects || !await unchangedSince(graph, model, access.principal.owner, version, response.commit)) return undefined;
+  return objects;
 }
