@@ -51,8 +51,8 @@ jobs:
   tests:
     needs: suites
     runs-on: ubuntu-latest
-    # The query kernel suite compiles DataFusion first.
-    timeout-minutes: ${{ matrix.suite == '46' && 30 || 10 }}
+    # The query kernel suite compiles DataFusion first, and the function host suite compiles wasmtime.
+    timeout-minutes: ${{ (matrix.suite == '46' || matrix.suite == '49') && 30 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +98,14 @@ jobs:
         run: |
           cargo build --locked --manifest-path kernel/Cargo.toml
           echo "EIGOS_KERNEL_BIN=$GITHUB_WORKSPACE/kernel/target/debug/eigos-kernel" >> "$GITHUB_ENV"
+      - if: matrix.suite == '49'
+        name: Build the function host and its test components
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --locked --manifest-path function-host/Cargo.toml
+          function-host/fixtures/build.sh "$RUNNER_TEMP/function-fixtures"
+          echo "EIGOS_FUNCTION_HOST_BIN=$GITHUB_WORKSPACE/function-host/target/debug/eigos-function-host" >> "$GITHUB_ENV"
+          echo "EIGOS_FUNCTION_HOST_FIXTURES=$RUNNER_TEMP/function-fixtures" >> "$GITHUB_ENV"
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'

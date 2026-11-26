@@ -21,6 +21,7 @@
 ### 组成
 
 1. **函数宿主 `function-host/`：** Rust 二进制，基于 wasmtime 的组件模型，独立运行为一个用户单元，只监听 127.0.0.1。
+   - **状态：** 已实现，见 [函数宿主指南](../../guides/function-host.md)。运行时的接入是下一个 PR。
    - 它不连接数据库，不持有凭据，也不保存 Ontology 数据。
    - 输入只来自运行时：已经校验并遮罩过的参数。
 2. **WIT world `eigos:function@0.1.0`：**
@@ -28,13 +29,13 @@
    ```wit
    package eigos:function@0.1.0;
    world handler {
+     record failure { code: string, message: string }
      export invoke: func(input: string) -> result<string, failure>;
    }
-   record failure { code: string, message: string }
    ```
 
    - 输入和输出是 JSON 文本。
-   - 不导入 WASI 的网络和文件系统，只提供时钟和随机数。
+   - 组件不能导入网络。可以导入 cli、时钟、随机数、io，以及一个没有预开放任何目录的文件系统。
    - F2 在同一个 world 上增加 Ontology 宿主接口。
 3. **组件存储：**
    - 新表 `function_artifacts(sha256 text PRIMARY KEY, bytes bytea NOT NULL, size integer NOT NULL, world text NOT NULL, uploaded_by text NOT NULL, uploaded_at timestamptz NOT NULL)`，按 SHA-256 去重，单个组件最大 16 MB。
@@ -52,8 +53,8 @@
    - `ResourceLimiter` 限制线性内存和表；
    - `epoch_interruption` 配合一个每 10 ms 递增 epoch 的线程，执行截止时间。
 3. 宿主返回下列结果之一：
-   - `{ ok, output, fuelUsed, ms }`；
-   - `{ error: 'fuel' | 'memory' | 'deadline' | 'trap' | 'output' }`。
+   - `{ output, fuelUsed, ms }`；
+   - `{ error: { kind, message }, fuelUsed, ms }`，`kind` 是 `failure`（函数自己的失败，另带 `code`）、`fuel`、`memory`、`deadline`、`trap` 或 `output`。
 4. 运行时把错误映射为稳定的错误码：超限是 `ResourceExhausted`，trap 是 `FunctionFailed`。随后照旧校验返回值。
 5. 嵌套调用的深度不超过 8，由运行时在 `FunctionContext` 里计数。
 
