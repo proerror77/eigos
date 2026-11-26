@@ -25,6 +25,11 @@ export function profileDatabase<T>(run: (profile: DatabaseProfile) => Promise<T>
   return active.run([...(active.getStore() ?? []), profile], () => run(profile));
 }
 
+/** Runs work that is not part of the operation being measured, such as a shadow comparison, outside every profile. */
+export function unprofiled<T>(run: () => Promise<T>): Promise<T> {
+  return active.run([], run);
+}
+
 /** The profiles charged for work started now, kept for work that finishes later, such as a held lock. */
 export function activeProfiles(): readonly DatabaseProfile[] {
   return active.getStore() ?? [];

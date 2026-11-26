@@ -1,13 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../../core/identity.js';
+import { Conflict, digest, InvalidInput, NotFound, PermissionDenied } from '../../core/identity.js';
 import { combineClassification, marksClassification, sensitivityRank, type Classification } from '../../ontology/classification.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { Access } from '../access.js';
 import { latestCommit } from '../change-feed.js';
 import type { Database } from '../database.js';
 import type { PublishedOntology } from '../metadata.js';
-import { projectView } from '../object-sets.js';
+import { projectView } from '../object-view.js';
 import type { Objects } from '../objects.js';
 import { compileAggregate, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
 
@@ -16,7 +16,8 @@ type Reads = { type: string; count: number; rank?: number | null; compartments?:
   /** Some rows read are rows the reference reads with their derived values. */
   enriched?: true }[];
 /** `commit` is the owner's last commit the answer reflects. */
-type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; reads: Reads; commit: number; elapsedMs: number };
+/** `membership` digests the members, so a cursor can tell whether they changed between pages. */
+type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; membership: string; reads: Reads; commit: number; elapsedMs: number };
 type AggregateResponse = { count: number; items: { group: Record<string, unknown>; metrics: Record<string, number | null> }[]; reads: Reads; commit: number; elapsedMs: number };
 /**
  * The version a query needs: the projection it was compiled for, and the owner's latest commit when it started, which
@@ -60,12 +61,21 @@ export class KernelClient {
       child.once('exit', code => reject(new Error('Kernel exited with ' + code)));
       lines.once('line', line => resolve((JSON.parse(line) as { port: number }).port));
     });
+    // The kernel answers over HTTP, so neither its process nor its output keeps this process running.
+    child.unref();
+    (child.stdout as unknown as { unref?: () => void }).unref?.();
     return new KernelClient(`http://127.0.0.1:${port}`, child);
   }
+  /** A client for a kernel service already running at `url`. */
+  static connect(url: string) { return new KernelClient(url.replace(/\/$/, '')); }
   /** The kernel process ID, when this client started it. */
   get pid() { return this.child?.pid; }
+  /** Asks the kernel process this client started to stop, without waiting for it. */
+  kill() { if (this.child && this.child.exitCode === null) this.child.kill('SIGTERM'); }
   async stop() {
     if (!this.child || this.child.exitCode !== null) return;
+    // Held until the kernel exits, so this process does not end first.
+    this.child.ref();
     const exited = new Promise(resolve => this.child!.once('exit', resolve));
     this.child.kill('SIGTERM');
     await exited;
@@ -152,9 +162,19 @@ export async function evaluateWithKernel(kernel: KernelClient, model: PublishedO
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
   // The reference shows every member in the view, and fails for a member of a type the view cannot show.
   if (input.view && response.types.some(type => !showsType(model, input.view!, type))) return undefined;
-  const items: ObjectData[] = [];
-  for (const ref of response.refs) items.push(projectView(access, model, await graph.read(ref), input.view));
-  return { items, total: response.total, commit: response.commit, elapsedMs: response.elapsedMs };
+  const objects = await hydrate(graph, response.refs);
+  // A member deleted or hidden since the kernel answered leaves the page to the reference.
+  if (!objects) return undefined;
+  const items = objects.map(object => projectView(access, model, object, input.view));
+  return { items, total: response.total, membership: response.membership, commit: response.commit, elapsedMs: response.elapsedMs };
+}
+
+/** Reads a page's objects as `read` does, together and in page order: undefined when one of them is gone or no longer visible. */
+async function hydrate(graph: Objects, refs: readonly ObjectRef[]): Promise<ObjectData[] | undefined> {
+  if (!refs.length) return [];
+  const found = new Map((await graph.readBatch(refs)).map(object => [digest(object.ref), object]));
+  const objects = refs.map(ref => found.get(digest({ type: ref.type, id: ref.id })));
+  return objects.every(Boolean) ? objects as ObjectData[] : undefined;
 }
 
 /** The version a query needs, read before it starts: every commit of the owner visible then. */

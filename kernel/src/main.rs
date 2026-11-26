@@ -9,7 +9,7 @@
 use std::{collections::{BTreeMap, HashMap, HashSet}, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
 use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
-use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
+use datafusion::arrow::array::{ArrayRef, AsArray, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::common::{Column, ScalarValue};
 use datafusion::dataframe::DataFrameWriteOptions;
@@ -1184,6 +1184,23 @@ async fn read_stats(snapshot: &Snapshot, owner: &Ctx, specs: &[MemberSpec]) -> R
   Ok(out)
 }
 
+/// FNV-1a: a hash that stays the same across processes and builds.
+fn fnv1a(text: &str) -> u64 {
+  let mut hash = 0xcbf2_9ce4_8422_2325u64;
+  for byte in text.bytes() { hash ^= byte as u64; hash = hash.wrapping_mul(0x0000_0100_0000_01b3); }
+  hash
+}
+
+/// An order-independent digest of a set's members, so a cursor can tell whether the membership changed between pages.
+async fn membership(set: &DataFrame) -> Result<String, Failure> {
+  let (mut count, mut sum) = (0u64, 0u64);
+  for batch in set.clone().select(vec![column("$key")]).map_err(internal)?.collect().await.map_err(internal)? {
+    let keys = batch.column(0).as_string_opt::<i32>().ok_or_else(|| internal("Member keys are not strings"))?;
+    for key in keys.iter().flatten() { count += 1; sum = sum.wrapping_add(fnv1a(key)); }
+  }
+  Ok(format!("{count:x}-{sum:016x}"))
+}
+
 async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Failure> {
   let started = Instant::now();
   let owner = Ctx { owner: request.owner.clone(), rows: request.rows, derived: request.derived, columns: Default::default(), reads: Default::default() };
@@ -1198,9 +1215,10 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
         .limit(offset, Some(limit)).map_err(internal)?.select(vec![column("$type"), column("$id")]).map_err(internal)?;
       let refs: Vec<Value> = rows(page).await?.into_iter().map(|row| json!({ "type": row["$type"], "id": row["$id"] })).collect();
       // The types of the members, which a view must be able to show.
-      let types: Vec<Value> = rows(set.select(vec![column("$type")]).map_err(internal)?.distinct().map_err(internal)?).await?
+      let types: Vec<Value> = rows(set.clone().select(vec![column("$type")]).map_err(internal)?.distinct().map_err(internal)?).await?
         .into_iter().map(|row| row["$type"].clone()).collect();
-      Ok(json!({ "total": total, "refs": refs, "types": types, "reads": reads, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+      Ok(json!({ "total": total, "refs": refs, "types": types, "membership": membership(&set).await?, "reads": reads,
+        "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
     Output::Aggregate { parts, kinds, group_by, metrics } => {
       // Each member type's fields as the aggregation reads them, under one kind per field, then all members together.
