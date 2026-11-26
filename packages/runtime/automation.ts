@@ -16,6 +16,7 @@ import { matchingTransition, processRelatedPath, relatedProcessObjects, processR
 import { processLogTarget } from '../ontology/process-definition.js';
 import { withoutExternalDispatch } from './external-operations.js';
 import { processStart, readCommittedTransitions, readProcessTransitions, type ProcessPosition } from './process-logs.js';
+import { changedObjects, footprintChanged, latestCommit, queryFootprint } from './change-feed.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { lockEdits } from './scenario-store.js';
 import { Scenarios } from './scenarios.js';
@@ -78,6 +79,10 @@ const baseRule = z.strictObject({
   enabled: z.boolean().default(false),
 });
 const ruleQuerySchema = querySchema.omit({ cursor: true, limit: true, select: true });
+/** Object-set rules become due this often, field-change rules every five seconds; a scan without a relevant change reads only the commit journal. */
+const objectRuleSeconds = 30;
+/** An object-set rule re-reads its whole set at least this often, besides the changes it consumes. */
+const reconcileSeconds = 600;
 const onModified = z.strictObject({
   watch: z.array(z.strictObject({
     path: z.array(ontologyName).max(3).default([]),
@@ -185,6 +190,12 @@ export async function initializeAutomation(db: Database) {
     -- A process rule's position is (process_commit, process_cursor); commit 0 is history from before the commit journal.
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS process_commit bigint NOT NULL DEFAULT 0;
     ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS effect_release text REFERENCES ${db.schema}.releases(digest);
+    -- An object-set rule's position: the last commit it consumed (NULL until its first full evaluation), and the
+    -- publication, visibility and time of its last full evaluation.
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS match_commit bigint;
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS match_release text;
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS match_visibility text;
+    ALTER TABLE ${db.schema}.object_rules ADD COLUMN IF NOT EXISTS match_reconciled_at timestamptz;
     UPDATE ${db.schema}.object_rules SET enabled=false,error='Re-save the rule to record its original authorization scopes' WHERE scopes IS NULL AND enabled;
     CREATE TABLE IF NOT EXISTS ${db.schema}.rule_matches(rule_id uuid NOT NULL REFERENCES ${db.schema}.object_rules(id),type text NOT NULL,id text NOT NULL,matched boolean NOT NULL,revision bigint NOT NULL,PRIMARY KEY(rule_id,type,id));
     ALTER TABLE ${db.schema}.rule_matches ADD COLUMN IF NOT EXISTS generation bigint NOT NULL DEFAULT 0;
@@ -356,7 +367,8 @@ export class Automation {
       }
       const result = input.id
         ? await this.db.query(
-            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL,process_commit=0 WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
+            `UPDATE ${this.db.schema}.object_rules SET name=$3,body=$4,enabled=$5,revision=revision+1,error=NULL,scopes=$8,last_scan=NULL,process_cursor=NULL,process_commit=0,
+              match_commit=NULL,match_release=NULL,match_visibility=NULL,match_reconciled_at=NULL WHERE id=$1 AND owner=$2 AND revision=$6 AND ontology=$7 AND NOT (body ? 'machineryReview') RETURNING revision`,
             [
               id,
               access.principal.owner,
@@ -789,18 +801,23 @@ export class Automation {
     });
   }
   async scanOne(): Promise<boolean> {
-    const object = await this.scanRule(false);
-    const process = await this.scanRule(true);
+    const object = await this.scanObjectRules();
+    const process = await this.scanProcessRules();
     return object || process;
   }
+  /** Scans one due object-set rule, reporting whether one was due. */
+  scanObjectRules(): Promise<boolean> { return this.scanRule(false); }
+  /** Scans one due process rule, reporting whether one was due. */
+  scanProcessRules(): Promise<boolean> { return this.scanRule(true); }
   private async scanRule(process: boolean): Promise<boolean> {
     return this.db.transaction(async (client) => {
       if (!process) await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
       const rule = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.object_rules WHERE enabled AND NOT (body ? 'machineryReview') AND (process_cursor IS NOT NULL)=$1
+          `SELECT *, match_reconciled_at IS NULL OR match_reconciled_at<=now()-$3*interval '1 second' AS reconcile_due
+            FROM ${this.db.schema}.object_rules WHERE enabled AND NOT (body ? 'machineryReview') AND (process_cursor IS NOT NULL)=$1
             AND (last_scan IS NULL OR last_scan<=now()-(CASE WHEN body ? 'onModified' THEN 5 ELSE $2 END)*interval '1 second') ORDER BY last_scan NULLS FIRST FOR UPDATE SKIP LOCKED LIMIT 1`,
-          [process, process ? 1 : 30],
+          [process, process ? 1 : objectRuleSeconds, reconcileSeconds],
           client,
         )
       ).rows[0];
@@ -827,14 +844,15 @@ export class Automation {
           await this.scanProcess(graph, String(rule.id), Number(rule.revision),
             { commit: String(rule.process_commit), sequence: String(rule.process_cursor) }, input, body);
         } else {
-          await this.scanMatches(graph, String(rule.id), Number(rule.revision), input, body);
+          await this.scanMatches(graph, rule, input, body);
         }
         await access.refresh(client);
         await this.db.query('RELEASE SAVEPOINT rule_scan', [], client);
       } catch (error) {
         await this.db.query('ROLLBACK TO SAVEPOINT rule_scan', [], client);
         const code = (error as {code?: string})?.code;
-        if (process && (code === '55P03' || code === '40001' || code === '40P01')) return true;
+        // A lock timeout, serialization failure or deadlock leaves the rule as it was for a later scan.
+        if (code === '55P03' || code === '40001' || code === '40P01') return true;
         await this.db.query(
           `UPDATE ${this.db.schema}.object_rules SET enabled=false,error='Rule scan failed; review permissions, publication and trigger before enabling it again' WHERE id=$1`,
           [rule.id],
@@ -844,31 +862,73 @@ export class Automation {
       return true;
     });
   }
-  private async scanMatches(graph: Objects, ruleId: string, revision: number,
+  /**
+   * An object-set rule consumes its owner's committed changes from its own position. It re-reads its whole set on its
+   * first scan, after the publication or the rule principal's visibility changed, when more objects changed than one
+   * scan re-evaluates, when a change touched the footprint of a rule that depends on relationships or derived
+   * properties, and once per reconcile interval. Otherwise it re-evaluates only the objects that changed, and a scan
+   * without a relevant change reads only the journal.
+   */
+  private async scanMatches(graph: Objects, rule: Record<string, unknown>,
     input: z.output<typeof objectRule>, body: z.output<typeof workflowSchema>) {
     const { access, client, model, owner } = graph;
     for (const type of model.concreteTypes(input.query.type)) {
       access.read(model, type);
       validateFieldWatch(graph, type, input.onModified?.watch);
     }
+    const ruleId = String(rule.id), revision = Number(rule.revision);
+    const latest = await latestCommit(this.db, owner, client), visibility = access.visibilityDigest;
+    const full = async () => {
+      await this.evaluateMatches(graph, ruleId, revision, input, body);
+      await this.db.query(`UPDATE ${this.db.schema}.object_rules SET match_commit=$2,match_release=$3,match_visibility=$4,match_reconciled_at=now()
+        WHERE id=$1`, [ruleId, latest, model.release, visibility], client);
+    };
+    if (rule.match_commit === null || rule.match_release !== model.release || rule.match_visibility !== visibility || rule.reconcile_due)
+      return full();
+    const position = String(rule.match_commit);
+    const footprint = queryFootprint(model, input.query, input.onModified?.watch);
+    let end: string;
+    if (footprint.local) {
+      const changed = await changedObjects(this.db, owner, model.projection, footprint.types, client, position, latest);
+      if (!changed.refs) return full();
+      if (changed.refs.length) await this.evaluateMatches(graph, ruleId, revision, input, body, changed.refs);
+      end = changed.end;
+    } else {
+      const changed = await footprintChanged(this.db, owner, footprint, client, position, latest);
+      if (changed.changed) return full();
+      end = changed.end;
+    }
+    // A window that stopped short of the latest commit leaves the rule due, so the backlog drains on the next scans.
+    await this.db.query(`UPDATE ${this.db.schema}.object_rules SET match_commit=$2${end === latest ? '' : ',last_scan=NULL'} WHERE id=$1`,
+      [ruleId, end], client);
+  }
+  /** Updates a rule's matches from its whole set, or from `candidates` alone, and submits runs for the objects that triggered. */
+  private async evaluateMatches(graph: Objects, ruleId: string, revision: number,
+    input: z.output<typeof objectRule>, body: z.output<typeof workflowSchema>, candidates?: readonly ObjectRef[]) {
+    const { access, client, model, owner } = graph;
     const matched = new Map<string, ObjectData>();
     const limit = input.onModified ? 100 : 10000;
-    let cursor: string | undefined;
-    do {
-      const page = await graph.query({ ...input.query, limit: 100, cursor });
-      cursor = page.cursor;
-      for (const item of page.items) {
-        matched.set(digest(item.ref), item);
-        if (matched.size > limit) throw new Conflict('Rule matches more than ' + limit + ' objects');
-      }
-    } while (cursor);
-    const previous = (
-      await this.db.query(
-        `SELECT * FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`,
-        [ruleId],
-        client,
-      )
-    ).rows;
+    if (candidates) {
+      const keys = new Set(candidates.map(ref => digest(ref)));
+      for (let i = 0; i < candidates.length; i += 100)
+        for (const item of await graph.queryAmong(input.query, candidates.slice(i, i + 100).map(ref => ref.id)))
+          if (keys.has(digest(item.ref))) matched.set(digest(item.ref), item);
+    } else {
+      let cursor: string | undefined;
+      do {
+        const page = await graph.query({ ...input.query, limit: 100, cursor });
+        cursor = page.cursor;
+        for (const item of page.items) {
+          matched.set(digest(item.ref), item);
+          if (matched.size > limit) throw new Conflict('Rule matches more than ' + limit + ' objects');
+        }
+      } while (cursor);
+    }
+    const previous = (candidates
+      ? await this.db.query(`SELECT m.* FROM ${this.db.schema}.rule_matches m
+          JOIN unnest($2::text[],$3::text[]) AS candidate(type,id) ON candidate.type=m.type AND candidate.id=m.id WHERE m.rule_id=$1`,
+          [ruleId, candidates.map(ref => ref.type), candidates.map(ref => ref.id)], client)
+      : await this.db.query(`SELECT * FROM ${this.db.schema}.rule_matches WHERE rule_id=$1`, [ruleId], client)).rows;
     const prior = new Map(previous.map((item) => [digest({ type: item.type, id: item.id }), item]));
     for (const [key, item] of matched) {
       const before = prior.get(key);
@@ -876,6 +936,7 @@ export class Automation {
       const triggered = !before?.matched ? !input.onModified || input.onModified.includeAdded
         : Boolean(input.onModified && before.observed_digest !== observed);
       const generation = Number(before?.generation ?? 0) + (triggered ? 1 : 0);
+      if (!triggered && before?.matched && Number(before.revision) === item.revision && (before.observed_digest ?? null) === observed) continue;
       if (triggered) {
         const fingerprint = digest([ruleId, revision, item.ref, generation]);
         const requestId = 'rule:' + fingerprint;
@@ -905,12 +966,17 @@ export class Automation {
       );
     }
     for (const [key, item] of prior)
-      if (!matched.has(key))
+      if (!matched.has(key) && item.matched)
         await this.db.query(
           `UPDATE ${this.db.schema}.rule_matches SET matched=false WHERE rule_id=$1 AND type=$2 AND id=$3`,
           [ruleId, item.type, item.id],
           client,
         );
+    if (candidates && matched.size) {
+      const { rows: [count] } = await this.db.query(`SELECT count(*)::int AS n FROM ${this.db.schema}.rule_matches WHERE rule_id=$1 AND matched`,
+        [ruleId], client);
+      if (count!.n > limit) throw new Conflict('Rule matches more than ' + limit + ' objects');
+    }
   }
   private async visibleProcessRun(graph: Objects, object: ObjectRef, trigger: ProcessTrigger) {
     const log = await matchingTransition(graph, trigger.process, trigger.sequence);

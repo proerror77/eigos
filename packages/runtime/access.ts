@@ -174,6 +174,13 @@ export class Access {
     this.require(model.document.id, 'view_definition', resource(model.document.id, kind, name), data);
     if (kind === 'link') this.useModelData(model.links.get(name)?.classification);
   }
+  /**
+   * Everything this principal's object and property visibility depends on besides the objects themselves: resource
+   * grants, property security, object policies and security memberships. It changes whenever visibility can change.
+   */
+  get visibilityDigest() {
+    return digest({ grants: [...this.grants].sort(), properties: [...this.properties].sort(), security: this.securityDigest });
+  }
   canDefine(model: Ontology, kind: string, name: string) { return this.allows({ ontology: model.document.id, permission: 'view_definition', resource: resource(model.document.id, kind, name) }); }
   private available(model: Ontology, kind: string, name: string) {
     return this.db.sandboxEnabled || !isSandboxResource(model, kind, name);

@@ -289,6 +289,22 @@ export class Objects {
    * needs complete evaluation (derived properties, filters, ordering) is evaluated once rather than once per
    * page; other queries are read page by page from storage.
    */
+  /**
+   * The matches of a query among the given objects of its type, for a consumer that re-evaluates only the objects that
+   * changed. It applies the visibility, filters and derived properties of `query`, and reads only those objects.
+   */
+  async queryAmong(input: Query, ids: readonly string[]): Promise<ObjectData[]> {
+    this.requireExclusive('set query');
+    const args = querySchema.parse({ ...input, limit: 100, cursor: undefined });
+    const items: ObjectData[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.queryObjects({ ...args, cursor }, true, ids);
+      items.push(...page.items);
+      cursor = page.cursor;
+    } while (cursor);
+    return items;
+  }
   async queryAll(input: Query): Promise<ObjectData[]> {
     this.requireExclusive('set query');
     const args = querySchema.parse({ ...input, limit: 100, cursor: undefined });
@@ -301,7 +317,8 @@ export class Objects {
     } while (cursor);
     return items;
   }
-  private async queryObjects(args: z.output<typeof querySchema>, complete = false): Promise<{ items: ObjectData[]; cursor?: string }> {
+  /** `among` restricts the query to those object ids of its type. */
+  private async queryObjects(args: z.output<typeof querySchema>, complete = false, among?: readonly string[]): Promise<{ items: ObjectData[]; cursor?: string }> {
     const fields = queryFields(args);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -310,12 +327,12 @@ export class Objects {
     const types = this.model.concreteTypes(args.type);
     for (const field of fields) this.model.propertyPath(args.type, field);
     const derived=types.some(type=>Object.values(this.model.object(type).properties).some(property=>property.derived));
-    if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args);
+    if(!args.filter&&!args.orderBy&&!derived&&!fields.some(field=>field.includes('.')))return this.queryStored(args, among);
     if(this.client===this.db.pool) {
       const access=await this.access.fork();
       const result=await this.db.transaction(async client=>{
         await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',[],client);
-        return new Objects(this.db,this.model,access,client).queryObjects(args,complete);
+        return new Objects(this.db,this.model,access,client).queryObjects(args,complete,among);
       });
       if(!await access.canReturn(access.dataRequirements()))throw new Conflict('Query permissions changed');
       this.access.adoptReads(access);return result;
@@ -330,7 +347,7 @@ export class Objects {
       }));
       return { ...enriched, properties };
     };
-    const pushed = await this.scalarCandidates(args);
+    const pushed = await this.scalarCandidates(args, among);
     let matching: ObjectData[];
     if (pushed) {
       matching = [];
@@ -340,7 +357,7 @@ export class Objects {
       const candidates: ObjectData[] = [], all: ObjectData[] = [];
       let cursor: string | undefined;
       do {
-        const page = await this.queryStored({ type: args.type, from: args.from, intervalOverlap: args.intervalOverlap, limit: 100, cursor });
+        const page = await this.queryStored({ type: args.type, from: args.from, intervalOverlap: args.intervalOverlap, limit: 100, cursor }, among);
         for (const item of page.items) {
           candidates.push(args.type === item.ref.type ? item : await this.readStored(item.ref));
           if (candidates.length > 10000) throw new Conflict('Extended query exceeds 10000 complete candidate objects');
@@ -385,7 +402,7 @@ export class Objects {
         return !local || !this.model.object(type).properties[local]?.derived;
       }));
   }
-  private async storedSelection(args: z.output<typeof querySchema>, inlineView = false) {
+  private async storedSelection(args: z.output<typeof querySchema>, inlineView = false, among?: readonly string[]) {
     await checkScenario(this.db, this.model, this.owner, this.client);
     this.access.definition(this.model, this.model.interfaces.has(args.type) ? 'interface' : 'object', args.type);
     const viewLabel = this.model.interfaces.get(args.type)?.classification;
@@ -411,6 +428,7 @@ export class Objects {
       return `(o.type=${bind(type)} AND ${this.access.rowSql(this.model, type, values, 'o.properties')})`;
     });
     const clauses = ['o.owner=$1', 'o.type=ANY($2::text[])', 'o.projection=$3', '(' + policies.join(' OR ') + ')'];
+    if (among) clauses.push(`o.id=ANY(${bind([...among])}::text[])`);
     if (args.from && navigation) {
       const source = navigation.forward ? 'from' : 'to', target = navigation.forward ? 'to' : 'from';
       clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} l WHERE l.projection=o.projection AND l.owner=o.owner
@@ -465,11 +483,11 @@ export class Objects {
       return expression;
     };
   }
-  private async scalarCandidates(args: z.output<typeof querySchema>) {
+  private async scalarCandidates(args: z.output<typeof querySchema>, among?: readonly string[]) {
     const types = this.model.concreteTypes(args.type);
     if (!supportsStoredPredicate(args.filter) ||
       !this.mayUseStoredFields(args.type, types, [...Object.keys(args.where), ...predicateFields(args.filter)])) return undefined;
-    const selection = await this.storedSelection(args);
+    const selection = await this.storedSelection(args, false, among);
     if (!selection) return { objects: [], ordered: true };
     const { values, bind, clauses, property, tables } = selection;
     if (args.filter) clauses.push(storedPredicate(args.filter, property, bind));
@@ -485,7 +503,8 @@ export class Objects {
     await this.linkedSecurityReads(records);
     return { objects: records.map(record => this.visible(record)), ordered };
   }
-  async queryStored(input: Query):Promise<{items:ObjectData[];cursor?:string}> {
+  /** `among` restricts the query to those object ids of its type. */
+  async queryStored(input: Query, among?: readonly string[]):Promise<{items:ObjectData[];cursor?:string}> {
     if (input.type === scenarioMetadataType) {
       this.requireExclusive('set query');
       if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
@@ -494,7 +513,7 @@ export class Objects {
     const args = querySchema.parse(input);
     // A read of one source's relationship is bounded by object locks; any other set query is not.
     if (!args.from) this.requireExclusive('set query');
-    const selection = await this.storedSelection(args);
+    const selection = await this.storedSelection(args, false, among);
     if (!selection) return { items: [], cursor: undefined };
     if (args.from) await this.lockRelationshipTargets(args.from.object, args.from.link, args.from.as);
     const { values, bind, clauses, tables, types } = selection;

@@ -70,6 +70,7 @@ async function initializeChangeJournal(db: Database) {
       happened_at timestamptz NOT NULL DEFAULT clock_timestamp(), xact xid8 NOT NULL DEFAULT pg_current_xact_id());
     CREATE INDEX IF NOT EXISTS link_history_from ON ${s}.link_history(owner,from_type,from_id,sequence);
     CREATE INDEX IF NOT EXISTS link_history_to ON ${s}.link_history(owner,to_type,to_id,sequence);
+    CREATE INDEX IF NOT EXISTS link_history_commit ON ${s}.link_history(xact,type);
     CREATE TABLE IF NOT EXISTS ${s}.change_commits (owner text NOT NULL, xact xid8 NOT NULL,
       commit_seq bigint GENERATED ALWAYS AS IDENTITY, committed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
       PRIMARY KEY(owner,xact));

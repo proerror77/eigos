@@ -36,7 +36,7 @@ async function deliverEffects() {
 }
 const dispatch = () => dispatchAutomation({
   cleanup: () => scenarios.cleanup(),
-  scans: [() => observations.scanOne(), () => automation.scanOne()],
+  scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules()],
   run: signal => automation.runOne(signal),
 }, controller.signal);
 async function reviewProcesses() {
