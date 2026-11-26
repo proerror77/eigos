@@ -676,6 +676,33 @@ test('a routed query is answered by the reference when the kernel fails, and the
   } finally { await registry.stop(); await f.kernel.stop(); await f.close(); }
 });
 
+test('the kernel answers only in the principal owner\'s context when owner isolation is on', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  const isolation = f.db as unknown as { ownerIsolation: boolean };
+  try {
+    let opened = 0;
+    const sets = new ObjectSets(f.db, 10000, { mode: 'route', registry: { kernelFor: async () => { opened++; return f.kernel; } } });
+    const access = await Access.load(f.db, principal);
+    const set = { op: 'query', query: { type: 'Route' } };
+    const input = { set, metrics: { total: { op: 'count' } } };
+    const reference = { page: await sets.evaluate(access, f.model, { set, limit: 2 }), aggregate: await sets.aggregate(access, f.model, input) };
+    assert.equal(opened, 2, 'without owner isolation the kernel answers');
+    isolation.ownerIsolation = true;
+    // Row security shows the reference nothing outside the owner's context, so the kernel must not answer there.
+    for (const context of [undefined, 'another-owner']) {
+      const run = <T>(operation: () => Promise<T>) => context ? f.db.withOwner(context, operation) : operation();
+      await run(() => sets.evaluate(access, f.model, { set, limit: 2 }));
+      await run(() => sets.aggregate(access, f.model, input));
+      assert.equal(opened, 2, `the reference answers ${context ? 'in another owner\'s context' : 'outside an owner context'}`);
+    }
+    const page = await f.db.withOwner(principal.owner, () => sets.evaluate(access, f.model, { set, limit: 2 }));
+    const aggregate = await f.db.withOwner(principal.owner, () => sets.aggregate(access, f.model, input));
+    assert.equal(opened, 4, 'in the principal owner\'s context the kernel answers');
+    assert.deepEqual(values(page.items), values(reference.page.items));
+    assert.deepEqual(aggregate, reference.aggregate);
+  } finally { isolation.ownerIsolation = false; await f.kernel.stop(); await f.close(); }
+});
+
 test('a kernel service that already holds the projection is used without loading it again', { skip: !binary }, async () => {
   const f = await derivedSetup();
   try {

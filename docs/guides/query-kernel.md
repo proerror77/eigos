@@ -182,7 +182,8 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 - 在调用方的事务里，内核看不到这个事务自己的写入；
 - 在 Scenario 中；
 - 正在记录决策证据时，证据要逐条记录读取；
-- 求值上限不是默认的 10,000 时。
+- 求值上限不是默认的 10,000 时；
+- 开启 owner 隔离（`EIGOS_ENFORCE_OWNER_RLS=true`）时，不在主体 owner 的上下文（`db.withOwner`）中。内核用的数据库角色绕过行级安全，所以只在行级安全允许参考实现读取这个 owner 的数据时回答。Gateway 和 Worker 都在请求或任务的 owner 上下文中运行。
 
 **游标：**
 - 内核的页带内核游标，记录求值的身份、下一页的起点和成员摘要。

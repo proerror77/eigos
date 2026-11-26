@@ -95,6 +95,11 @@ export class Database {
   withOwner<T>(owner: string, operation: () => T): T {
     return this.ownerIsolation ? this.ownerContext.run(owner, operation) : operation();
   }
+  /**
+   * Whether row security lets this context read the owner's rows: owner isolation is off, or the operation runs in
+   * the owner's context. Readers that bypass row security, such as the query kernel, answer only where this holds.
+   */
+  readsAsOwner(owner: string) { return !this.ownerIsolation || this.ownerContext.getStore() === owner; }
   async setOwner(client: Sql, owner: string) {
     if (!this.ownerIsolation) return;
     if (client === this.pool || client === this.queryPool) throw new Error('Owner context requires a database transaction');
