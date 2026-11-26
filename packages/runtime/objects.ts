@@ -337,13 +337,13 @@ export class Objects {
    * One page of a query. A query the reference evaluates completely (it filters, orders, or reads derived properties or
    * nested fields) goes through the query kernel as EIGOS_KERNEL says, like an Object Set: `route` answers it from the
    * kernel, in the reference's order, and `shadow` compares the kernel's answer with the reference's. Inside a caller's
-   * transaction, in a Scenario, while decision evidence records each read and outside the owner's row security
-   * context, the reference answers.
+   * transaction, while decision evidence records each read and outside the owner's row security context, the
+   * reference answers. In a Scenario the kernel reads the Scenario's edits over the live data.
    */
   private async queryPage(args: z.output<typeof querySchema>): Promise<{ items: ObjectData[]; cursor?: string }> {
     const kernels = Objects.kernels();
     const cursor = args.cursor ? kernelCursor(args.cursor) : undefined;
-    const allowed = kernels.mode !== 'off' && this.client === this.db.pool && !this.model.scenario && !capturingDecisionReads()
+    const allowed = kernels.mode !== 'off' && this.client === this.db.pool && !capturingDecisionReads()
       && this.db.readsAsOwner(this.owner) && this.completeQuery(args);
     // A kernel cursor continues only on the kernel, and a reference cursor only on the reference.
     if (!allowed && cursor) throw new InvalidInput('Query cursor expired; query again from the first page');

@@ -87,6 +87,14 @@ function countShadow(outcome: keyof typeof shadowCounts) {
   }
 }
 
+/** The owner's latest commit and, in a Scenario, its revision: a comparison that sees either change is skipped. */
+async function versionStamp(db: Database, model: PublishedOntology, owner: string) {
+  const commit = await latestCommit(db, owner, db.pool);
+  if (!model.scenario) return String(commit);
+  const row = (await db.query<{ revision: string }>(`SELECT revision FROM ${db.schema}.scenarios WHERE id=$1 AND owner=$2`, [model.scenario, owner])).rows[0];
+  return `${commit}:${row?.revision ?? ''}`;
+}
+
 /**
  * Compares the kernel's answer with the reference's, each on a fork of the principal's access, outside every database
  * profile. With EIGOS_KERNEL_SHADOW_STRICT=true the comparison finishes before the request answers, so a mismatch
@@ -97,12 +105,12 @@ export async function compareWithKernel(db: Database, registry: KernelSource, ac
   const compare = async () => {
     const client = await registry.kernelFor(db, model, true);
     if (!client) return;
-    const before = await latestCommit(db, access.principal.owner, db.pool);
+    const before = await versionStamp(db, model, access.principal.owner);
     const expected = await isolated(access, reference);
     const viaKernel = () => isolated(access, fork => kernel(client, fork));
     let actual = await viaKernel();
     if (actual.result === undefined) return countShadow('declined');
-    if (await latestCommit(db, access.principal.owner, db.pool) !== before) return countShadow('skipped');
+    if (await versionStamp(db, model, access.principal.owner) !== before) return countShadow('skipped');
     let mismatch = shadowMismatch(expected, actual);
     if (mismatch && registry.reload) {
       // Writes outside the commit log are invisible to the kernel until it loads the projection again.

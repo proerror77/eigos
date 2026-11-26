@@ -80,12 +80,12 @@ export class ObjectSets {
   }
   /**
    * Whether an evaluation may use the kernel. It may not inside a caller's transaction, whose own writes the kernel
-   * cannot see; in a Scenario; while decision evidence records each read; with a smaller evaluation limit; or outside
+   * cannot see; while decision evidence records each read; with a smaller evaluation limit; or outside
    * the principal owner's context when owner isolation is on. The kernel reads past row security, so it answers only
    * where row security lets the reference read the owner's rows.
    */
   private kernelAllowed(access: Access, model: PublishedOntology, existing?: Sql) {
-    return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000
+    return this.kernels.mode !== 'off' && !existing && !capturingDecisionReads() && this.maximumObjects === 10000
       && this.db.readsAsOwner(access.principal.owner);
   }
   private kernelAnswer<T>(model: PublishedOntology, answer: () => Promise<T | undefined>) {

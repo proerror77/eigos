@@ -100,6 +100,8 @@
 
 ### C5a：Scenario 叠加层
 
+**状态：** 已实现，见 [查询内核指南](../../guides/query-kernel.md#scenarioc5a)。上线时，内核角色要加上三张 Scenario 表的 SELECT 权限。
+
 **现状：** Scenario 的编辑保存在 `scenario_objects` 和 `scenario_links` 里。参考实现用 `viewTables` 把正式数据和这些改动合成为查询用的视图，内核遇到 Scenario 就交回参考实现。
 
 **做法：**

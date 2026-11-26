@@ -178,7 +178,9 @@ class Scope {
   }
   /** Tells the kernel how to report the rows it reads of a type; a type the principal may not read has none. */
   describe(type: string, rule?: RowRule) {
-    if (!this.members.has(type)) this.members.set(type, { type, track: rule?.kind === 'rows' && rule.tracked,
+    // In a Scenario the reference records a row dependency for every row it reads, as it does for a policy-bound type.
+    const scenario = Boolean((this.model as { scenario?: string }).scenario);
+    if (!this.members.has(type)) this.members.set(type, { type, track: rule?.kind === 'rows' && rule.tracked || scenario && rule?.kind !== 'deny',
       markings: rule?.kind === 'rows' ? rule.markingsProperty : undefined });
   }
   /**

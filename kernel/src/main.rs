@@ -80,7 +80,11 @@ struct Snapshot {
 /// last version written as a checkpoint, whose lock keeps checkpoint writes one at a time.
 struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>>, checkpointed: Mutex<Option<(Arc<Snapshot>, Value)>>,
   /// How many projections this process has loaded or restored.
-  loads: std::sync::atomic::AtomicUsize }
+  loads: std::sync::atomic::AtomicUsize,
+  /// The last overlay read of each owner's Scenario, by projection, owner and Scenario id, with when a query last used it;
+  /// at most `OVERLAYS` are kept.
+  overlays: Mutex<HashMap<(String, String, String), (Arc<Overlay>, Instant)>> }
+const OVERLAYS: usize = 64;
 type Shared = Arc<AppState>;
 
 fn column(name: &str) -> Expr { Expr::Column(Column::new_unqualified(name)) }
@@ -675,7 +679,19 @@ struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(defau
   /// The owner's latest commit when the query started: the kernel answers only from a version that includes it.
   #[serde(rename = "minCommit")] min_commit: Option<i64>,
   /// How long the query may wait for the kernel to apply that commit.
-  #[serde(rename = "waitMs")] wait_ms: Option<u64> }
+  #[serde(rename = "waitMs")] wait_ms: Option<u64>,
+  /// The Scenario whose edits the query reads over the live data.
+  #[serde(default)] scenario: Option<ScenarioRequest> }
+
+/// A Scenario a query reads: its id, the revision the planner saw, and for each link whether its source and its target
+/// end are single-valued, which decides the live edges a Scenario edge replaces.
+#[derive(Deserialize, Clone)]
+struct ScenarioRequest { id: String, revision: i64, #[serde(default)] single: HashMap<String, (bool, bool)> }
+
+/// One owner's Scenario at one revision, as the reference's Scenario view reads it over the live data:
+/// - each type's rows the Scenario stages, with `$sid` the ids it changed or deleted, and the staged rows that exist;
+/// - each link's staged edges that differ from the live ones, `$sremoved` true for an edge the Scenario removes.
+struct Overlay { revision: i64, objects: HashMap<String, (Arc<MemTable>, Arc<MemTable>)>, links: HashMap<String, Arc<MemTable>> }
 
 /// One row set the evaluation reads, as the reference reads it: `ids` has one `$id` column, and `enrich` says whether the
 /// reference evaluates the rows' derived properties.
@@ -687,6 +703,8 @@ struct Ctx {
   owner: String, rows: HashMap<String, Predicate>, derived: HashMap<String, Vec<DerivedSpec>>,
   columns: tokio::sync::Mutex<HashMap<(String, String), DataFrame>>,
   reads: std::sync::Mutex<Vec<Read>>,
+  /// The Scenario the query reads, with the single-valued ends of each link.
+  scenario: Option<(Arc<Overlay>, HashMap<String, (bool, bool)>)>,
 }
 
 impl Ctx {
@@ -792,8 +810,98 @@ fn refs_frame(ctx: &SessionContext, refs: &[(String, String)]) -> Result<DataFra
 async fn base(snapshot: &Snapshot, owner: &Ctx, kind: &str) -> Result<DataFrame, Failure> {
   let kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
   let mut frame = snapshot.object_rows(kind)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
+  // In a Scenario, as its view: the live rows it does not stage, then its staged rows that exist.
+  if let Some((changed, staged)) = owner.scenario.as_ref().and_then(|(overlay, _)| overlay.objects.get(kind)) {
+    frame = frame.join(snapshot.ctx.read_table(changed.clone()).map_err(internal)?, JoinType::LeftAnti, &["$id"], &["$sid"], None).map_err(internal)?
+      .union(snapshot.ctx.read_table(staged.clone()).map_err(internal)?).map_err(internal)?;
+  }
   if let Some(rows) = owner.rows.get(kind) { frame = frame.filter(predicate(rows, kinds)?).map_err(internal)?; }
   Ok(frame)
+}
+
+/// A link's edges of the query's owner. In a Scenario, as its view: the live edges other than those it stages and those
+/// a staged edge replaces at a single-valued end, then the staged edges it adds.
+fn edges(snapshot: &Snapshot, owner: &Ctx, link: &str) -> Result<DataFrame, Failure> {
+  let mut frame = snapshot.edge_rows(link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
+  let Some((overlay, single)) = owner.scenario.as_ref() else { return Ok(frame) };
+  let Some(staged) = overlay.links.get(link) else { return Ok(frame) };
+  let staged = snapshot.ctx.read_table(staged.clone()).map_err(internal)?;
+  let added = staged.clone().filter(!column("$sremoved")).map_err(internal)?;
+  frame = frame.join(staged.clone().select(vec![column("from_id").alias("$sfrom"), column("to_id").alias("$sto")]).map_err(internal)?,
+    JoinType::LeftAnti, &["from_id", "to_id"], &["$sfrom", "$sto"], None).map_err(internal)?;
+  let (single_from, single_to) = single.get(link).copied().unwrap_or((false, false));
+  if single_from {
+    frame = frame.join(added.clone().select(vec![column("from_id").alias("$sfrom")]).map_err(internal)?, JoinType::LeftAnti, &["from_id"], &["$sfrom"], None).map_err(internal)?;
+  }
+  if single_to {
+    frame = frame.join(added.clone().select(vec![column("to_id").alias("$sto")]).map_err(internal)?, JoinType::LeftAnti, &["to_id"], &["$sto"], None).map_err(internal)?;
+  }
+  frame.union(added.select(vec![column("$owner"), column("from_id"), column("to_id")]).map_err(internal)?).map_err(internal)
+}
+
+/// Reads an owner's Scenario at the revision the query saw, or reuses the last read of that revision: its staged rows
+/// in each type's columns and its staged edges that differ from the live ones. A Scenario at another revision leaves the
+/// query to the reference.
+async fn overlay(state: &Shared, snapshot: &Snapshot, owner: &str, scenario: &ScenarioRequest) -> Result<Arc<Overlay>, Failure> {
+  let key = (snapshot.request.projection.clone(), owner.to_string(), scenario.id.clone());
+  if let Some((known, used)) = state.overlays.lock().await.get_mut(&key).filter(|(o, _)| o.revision == scenario.revision) {
+    *used = Instant::now();
+    return Ok(known.clone());
+  }
+  let mut client = connect(&snapshot.request.database).await?;
+  let tx = client.build_transaction().isolation_level(IsolationLevel::RepeatableRead).read_only(true).start().await.map_err(internal)?;
+  let schema = quote(&snapshot.request.schema);
+  // Bound as text and cast, so the indexes on the uuid columns apply.
+  let id = scenario.id.as_str();
+  let revision: Option<i64> = tx.query_opt(&format!("SELECT revision FROM {schema}.scenarios WHERE id=($1::text)::uuid AND owner=$2"), &[&id, &owner]).await
+    .map_err(internal)?.map(|row| row.get(0));
+  if revision != Some(scenario.revision) { return Err(stale("the Scenario changed")); }
+  let mut objects = HashMap::new();
+  let rows = tx.query(&format!("SELECT type, id, properties::text FROM {schema}.scenario_objects WHERE scenario_id=($1::text)::uuid AND owner=$2 ORDER BY type"),
+    &[&id, &owner]).await.map_err(internal)?;
+  let mut by_type: BTreeMap<String, Vec<(String, Option<Value>)>> = BTreeMap::new();
+  for row in &rows {
+    let properties = row.get::<_, Option<&str>>(2).map(serde_json::from_str::<Value>).transpose().map_err(internal)?;
+    by_type.entry(row.get(0)).or_default().push((row.get(1), properties));
+  }
+  for (kind, staged) in by_type {
+    let Some(def) = snapshot.request.types.iter().find(|t| t.name == kind) else { continue };
+    let mut ids = StringBuilder::new();
+    let mut builder = ObjectBuilder::new(def);
+    for (object, properties) in &staged {
+      ids.append_value(object);
+      if let Some(properties) = properties { builder.push(def, owner, object, properties, &snapshot.request.ranks); }
+    }
+    let changed = RecordBatch::try_new(strings_schema(&["$sid"]), vec![Arc::new(ids.finish())]).map_err(internal)?;
+    let schema = object_schema(def);
+    let live = builder.finish(schema.clone())?;
+    objects.insert(kind, (Arc::new(MemTable::try_new(changed.schema(), vec![vec![changed]]).map_err(internal)?),
+      Arc::new(MemTable::try_new(schema, vec![vec![live]]).map_err(internal)?)));
+  }
+  let mut links = HashMap::new();
+  let rows = tx.query(&format!("SELECT type, from_id, to_id, removed FROM {schema}.scenario_links
+    WHERE scenario_id=($1::text)::uuid AND owner=$2 AND (NOT removed) IS DISTINCT FROM base_present ORDER BY type"), &[&id, &owner]).await.map_err(internal)?;
+  let mut by_link: BTreeMap<String, Vec<(String, String, bool)>> = BTreeMap::new();
+  for row in &rows { by_link.entry(row.get(0)).or_default().push((row.get(1), row.get(2), row.get(3))); }
+  let link_schema: SchemaRef = Arc::new(Schema::new(vec![Field::new("$owner", DataType::Utf8, false), Field::new("from_id", DataType::Utf8, false),
+    Field::new("to_id", DataType::Utf8, false), Field::new("$sremoved", DataType::Boolean, false)]));
+  for (link, staged) in by_link {
+    if !snapshot.links.contains(&link) { continue; }
+    let (mut owners, mut from, mut to, mut removed) = (StringBuilder::new(), StringBuilder::new(), StringBuilder::new(), BooleanBuilder::new());
+    for (f, t, r) in &staged { owners.append_value(owner); from.append_value(f); to.append_value(t); removed.append_value(*r); }
+    let batch = RecordBatch::try_new(link_schema.clone(), vec![Arc::new(owners.finish()), Arc::new(from.finish()), Arc::new(to.finish()), Arc::new(removed.finish())])
+      .map_err(internal)?;
+    links.insert(link, Arc::new(MemTable::try_new(link_schema.clone(), vec![vec![batch]]).map_err(internal)?));
+  }
+  tx.commit().await.map_err(internal)?;
+  let read = Arc::new(Overlay { revision: scenario.revision, objects, links });
+  let mut overlays = state.overlays.lock().await;
+  overlays.insert(key, (read.clone(), Instant::now()));
+  while overlays.len() > OVERLAYS {
+    let Some(oldest) = overlays.iter().min_by_key(|(_, (_, used))| *used).map(|(key, _)| key.clone()) else { break };
+    overlays.remove(&oldest);
+  }
+  Ok(read)
 }
 
 /// The column kinds a type's reads carry: its stored columns and the derived columns the query asked for.
@@ -937,7 +1045,7 @@ async fn linked_frame(snapshot: &Snapshot, owner: &Ctx, kind: &str, steps: &[Lin
     if !step.visible { reach = reach.filter(lit(false)).map_err(internal)?; break; }
     if !snapshot.links.contains(&step.link) { return Err(invalid(format!("Link {} is not loaded", step.link))); }
     let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
-    let edges = snapshot.edge_rows(&step.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+    let edges = edges(snapshot, owner, &step.link)?
       .select(vec![column(from).alias("$efrom"), column(to).alias("$eto")]).map_err(internal)?;
     let visible = base(snapshot, owner, &step.target).await?.select(vec![column("$id").alias("$visible")]).map_err(internal)?;
     reach = reach.join(edges, JoinType::Inner, &["$node"], &["$efrom"], None).map_err(internal)?
@@ -1039,7 +1147,7 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
             let sources = current.clone().filter(column("$type").eq(lit(m.source.clone()))).map_err(internal)?
               .select(vec![column("$id").alias("source")]).map_err(internal)?;
             let (from, to) = if m.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
-            let edges = snapshot.edge_rows(&m.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+            let edges = edges(snapshot, owner, &m.link)?
               .join(sources, JoinType::LeftSemi, &[from], &["source"], None).map_err(internal)?
               .select(vec![column(to).alias("target")]).map_err(internal)?;
             let reached = objects(snapshot, owner, &m.target, None).await?.join(edges, JoinType::LeftSemi, &["$id"], &["target"], None).map_err(internal)?;
@@ -1099,7 +1207,7 @@ fn expression_reads<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, kind: &'a str, e
           if !step.visible { return Ok(()); }
           let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
           let sources = frontier.select(vec![column("$id").alias("$fid")]).map_err(internal)?;
-          let edges = snapshot.edge_rows(&step.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+          let edges = edges(snapshot, owner, &step.link)?
             .join(sources, JoinType::LeftSemi, &[from], &["$fid"], None).map_err(internal)?
             .select(vec![column(to).alias("$tid")]).map_err(internal)?;
           frontier = base(snapshot, owner, &step.target).await?.join(edges, JoinType::LeftSemi, &["$id"], &["$tid"], None).map_err(internal)?
@@ -1268,9 +1376,10 @@ async fn part_frame(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, part: &Pa
   rows.select(projection).map_err(internal)
 }
 
-async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Failure> {
+async fn query(snapshot: &Snapshot, request: QueryRequest, overlay: Option<Arc<Overlay>>) -> Result<Value, Failure> {
   let started = Instant::now();
-  let owner = Ctx { owner: request.owner.clone(), rows: request.rows, derived: request.derived, columns: Default::default(), reads: Default::default() };
+  let owner = Ctx { owner: request.owner.clone(), rows: request.rows, derived: request.derived, columns: Default::default(), reads: Default::default(),
+    scenario: overlay.map(|overlay| (overlay, request.scenario.map(|s| s.single).unwrap_or_default())) };
   // The set is computed once and reused by the page, the total and the read statistics.
   let set = set_frame(snapshot, &owner, &request.set).await?.cache().await.map_err(internal)?;
   enrich(snapshot, &owner).await?;
@@ -1440,7 +1549,8 @@ async fn query_route(State(state): State<Shared>, Json(request): Json<QueryReque
     }
   }
   let commit = snapshot.position(&request.owner);
-  let mut value = query(&snapshot, request).await?;
+  let overlay = match &request.scenario { Some(scenario) => Some(overlay(&state, &snapshot, &request.owner, scenario).await?), None => None };
+  let mut value = query(&snapshot, request, overlay).await?;
   value["commit"] = json!(commit);
   Ok(Json(value))
 }
@@ -1451,7 +1561,8 @@ async fn main() {
   let port: u16 = std::env::var("EIGOS_KERNEL_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
   let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await.expect("bind loopback");
   println!("{}", json!({ "event": "kernel_listening", "port": listener.local_addr().unwrap().port() }));
-  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None), checkpointed: Mutex::new(None), loads: Default::default() });
+  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None), checkpointed: Mutex::new(None), loads: Default::default(),
+    overlays: Default::default() });
   // EIGOS_KERNEL_POLL_MS sets how often the Funnel looks for new commits; 0 leaves it to the queries.
   let every = std::env::var("EIGOS_KERNEL_POLL_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1000);
   if every > 0 { tokio::spawn(follow(state.clone(), Duration::from_millis(every))); }

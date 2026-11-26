@@ -180,7 +180,6 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 
 **不经过内核的求值：**
 - 在调用方的事务里，内核看不到这个事务自己的写入；
-- 在 Scenario 中；
 - 正在记录决策证据时，证据要逐条记录读取；
 - 求值上限不是默认的 10,000 时；
 - 开启 owner 隔离（`EIGOS_ENFORCE_OWNER_RLS=true`）时，不在主体 owner 的上下文（`db.withOwner`）中。内核用的数据库角色绕过行级安全，所以只在行级安全允许参考实现读取这个 owner 的数据时回答。Gateway 和 Worker 都在请求或任务的 owner 上下文中运行。
@@ -191,6 +190,28 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 - 内核游标只能在内核上继续，参考游标只能在参考实现上继续。内核不可用时，内核游标会失效。
 
 **补读：** 页内对象按类型批量读取（`Objects.readBatch`），检查和遮罩与逐个 `read` 相同。页内有对象已被删除或不再可见时，这一页交回参考实现。
+
+### Scenario（C5a）
+
+在 Scenario 中，Object Set 求值、聚合和 `Objects.query` 也经过内核。内核把 Scenario 的改动作为这次查询的叠加层，叠在当前版本上，语义与参考实现的 `viewTables` 相同：
+- **对象：** 正式数据中 Scenario 没有暂存的行，加上 Scenario 暂存的、仍然存在的行。暂存的删除会去掉这一行。
+- **边：** 先去掉 Scenario 暂存的边，以及在单值端被暂存的新边替换的正式边，再加上 Scenario 新增的边。这里的暂存只算与正式数据不同的改动。
+  - 单值端由 Link 定义的基数决定（`cardinality: 'one'`），规划层随请求传入。
+  - Scenario 暂存之后，正式数据在同一个单值端上新增的边，也会被暂存的边替换。
+- **派生属性、遍历、Interface 和行规则：** 都在叠加后的数据上计算，与参考实现在 Scenario 视图上计算相同。
+
+**版本：**
+- 规划层读取 Scenario 的修订号，与提交位置一起放进请求。
+- 内核在一个 REPEATABLE READ 只读事务里读出这个 owner 在该修订号下的改动。修订号已经变了，就返回 409，交回参考实现。
+- 读出的叠加层按投影、owner 和 Scenario 缓存，修订号不变时复用。
+- 补读页内对象之后再核对一次修订号；查询期间 Scenario 有新的编辑，这一页交回参考实现。
+
+**检查与依赖：**
+- Scenario 不可用、已关闭、已过期或属于另一个发布时，由参考实现报告它自己的错误。
+- 在 Scenario 中，参考实现为读到的每一行记录行依赖，内核因此为每个可读类型报告读到的行。
+- 影子比对期间提交位置或 Scenario 修订号有变化的，跳过这次比对。
+
+**权限：** 内核的数据库角色还需要 `scenarios`、`scenario_objects` 和 `scenario_links` 的 SELECT 权限。
 
 ### `Objects.query`（C4b）
 

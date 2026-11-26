@@ -10,6 +10,7 @@ import { compileSet } from '../packages/runtime/kernel/plan.js';
 import { KernelRegistry } from '../packages/runtime/kernel/registry.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects, querySchema } from '../packages/runtime/objects.js';
+import { Scenarios } from '../packages/runtime/scenarios.js';
 import { fixture, principal } from './fixture.js';
 
 // The kernel binary is built with `cargo build --release --manifest-path kernel/Cargo.toml`.
@@ -700,6 +701,67 @@ test('the query kernel orders queries by policies, masked cells, derived fields 
       { type: 'Measured', orderBy: [{ property: 'tag' }, { property: 'size' }], select: ['label', 'tag'] },
       { type: 'Measured', filter: { op: 'gte', property: 'size', value: 1 }, orderBy: [{ property: 'label', direction: 'desc' }] },
     ]) for (const clearance of clearances) await compareQuery(f as unknown as Setup, clearance, query);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel reads a Scenario\'s edits over the live data like the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    const access = await Access.load(f.db, principal);
+    const scenarios = new Scenarios(f.db);
+    const scene = await scenarios.create(access, f.model, { requestId: 'kernel-overlay', name: 'Kernel overlay' });
+    const view = await scenarios.view(access, f.model, scene.id);
+    // Each write has an access of its own: a write must carry the markings its access has read.
+    const writer = async (model: typeof f.model) => new Objects(f.db, model, await Access.load(f.db, principal));
+    const draft = () => writer(view), live = () => writer(f.model);
+    const revision = async (model: typeof f.model, ref: { type: string; id: string }) => (await (await writer(model)).read(ref)).revision;
+    // Edited, created and deleted objects; a removed edge; and an edge replaced at the route's origin.
+    await (await draft()).edit(route('a'), await revision(view, route('a')), { distance: 9 });
+    await (await draft()).edit(place('p1'), await revision(view, place('p1')), { capacity: 5 });
+    await (await draft()).create(route('z'), { id: 'z', name: 'route z', distance: 7, lanes: 2, teams: ['ops'] });
+    await (await draft()).link({ type: 'RouteOrigin', from: route('z'), to: place('p2') });
+    await (await draft()).unlink({ type: 'RouteOrigin', from: route('g'), to: place('p3') });
+    await (await draft()).remove(route('g'), await revision(view, route('g')));
+    await (await draft()).unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+    await (await draft()).link({ type: 'RouteOrigin', from: route('b'), to: place('p2') });
+    // The live data changes after the Scenario staged its edits: a staged edge at a single-valued end shadows a new
+    // live edge there.
+    await (await live()).unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+    await (await live()).link({ type: 'RouteOrigin', from: route('b'), to: place('p4') });
+    await (await live()).edit(route('b'), await revision(f.model, route('b')), { distance: 8 });
+    const g = { ...f, model: view } as unknown as Setup;
+    const sets = [
+      { op: 'query', query: { type: 'Route' } },
+      { op: 'query', query: { type: 'Route', filter: { op: 'gte', property: 'distance', value: 5 } } },
+      { op: 'query', query: { type: 'Route', filter: { op: 'eq', property: 'originCity', value: 'Beijing' } } },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin' }] },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Place' } }, path: [{ link: 'departingRoutes' }] },
+      { op: 'query', query: { type: 'Place', filter: { op: 'gte', property: 'routeCount', value: 2 } } },
+      { op: 'query', query: { type: 'Measured' } },
+      { op: 'refs', objects: [route('a'), route('g'), route('z'), place('p2')] },
+    ];
+    for (const clearance of clearances) {
+      for (const set of sets) await compareSet(g, clearance, set);
+      await compareAggregate(g, clearance, { set: { op: 'query', query: { type: 'Route' } }, groupBy: ['originCity'],
+        metrics: { n: { op: 'count' }, distance: { op: 'sum', property: 'distance' } } });
+      await compareAggregate(g, clearance, { set: { op: 'query', query: { type: 'Place' } }, groupBy: [], metrics: { routes: { op: 'sum', property: 'routeCount' } } });
+      await compareQuery(g, clearance, { type: 'Route', orderBy: [{ property: 'distance', direction: 'desc' }] });
+      await compareQuery(g, clearance, { type: 'Place', orderBy: [{ property: 'totalDistance' }, { property: 'name' }] });
+    }
+    // The Scenario's view is not the live data, so the comparisons above are not of the live data.
+    const routes = async (model: typeof f.model) => (await referenceQuery({ db: f.db, model }, access, { type: 'Route', orderBy: [{ property: 'distance' }] }))
+      .map(item => [item.ref.id, item.properties.distance, item.properties.originCity]);
+    assert.notDeepEqual(await routes(view), await routes(f.model));
+    if (f.model.links.get('RouteOrigin')!.from.cardinality === 'one')
+      assert.deepEqual((await routes(view)).find(([id]) => id === 'b'), ['b', 8, 'Beijing'], 'the staged origin shadows the new live one');
+    // An edit after the kernel read the Scenario is read at the Scenario's new revision.
+    await (await draft()).edit(route('a'), await revision(view, route('a')), { distance: 1 });
+    for (const set of sets.slice(0, 3)) await compareSet(g, undefined, set);
+    await compareQuery(g, undefined, { type: 'Route', orderBy: [{ property: 'distance' }] });
+    // The reference reports a Scenario that is no longer open, so the kernel leaves it to the reference.
+    const current = Number((await f.db.query<{ revision: string }>(`SELECT revision FROM ${f.db.schema}.scenarios WHERE id=$1`, [scene.id])).rows[0]!.revision);
+    await scenarios.discard(access, f.model, scene.id, current);
+    assert.equal(await evaluateWithKernel(f.kernel, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }), undefined);
   } finally { await f.kernel.stop(); await f.close(); }
 });
 

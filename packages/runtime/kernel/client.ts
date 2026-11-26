@@ -5,6 +5,7 @@ import { combineClassification, marksClassification, sensitivityRank, type Class
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { Access } from '../access.js';
 import { latestCommit } from '../change-feed.js';
+import { checkScenario } from '../scenario-store.js';
 import type { Database } from '../database.js';
 import type { PublishedOntology } from '../metadata.js';
 import { projectView } from '../object-view.js';
@@ -28,7 +29,9 @@ type QueryResponse = { total: number; refs: ObjectRef[]; membership: string; rea
  * The version a query needs: the projection it was compiled for, and the owner's latest commit when it started, which
  * the kernel applies before it answers, waiting at most `waitMs`.
  */
-export type KernelVersion = { projection: string; minCommit: number; waitMs?: number };
+export type KernelVersion = { projection: string; minCommit: number; waitMs?: number;
+  /** In a Scenario: its id, its revision when the query started, and whether each link's source and target end are single-valued. */
+  scenario?: { id: string; revision: number; single: Record<string, [boolean, boolean]> } };
 
 /**
  * Records what the reference records for every row it reads, or returns false so the reference evaluates the set:
@@ -183,6 +186,7 @@ export async function evaluateWithKernel(kernel: KernelClient, model: PublishedO
   if (shown === undefined) return undefined;
   if (!shown) return { items: [] as ObjectData[], total: 0, elapsedMs: 0 };
   const version = await versionOf(model, access, graph);
+  if (!version) return undefined;
   const plan = await compileSet(model, access, graph, input.set);
   if (!plan) return undefined;
   const response = await kernel.page(access.principal.owner, plan, input.offset ?? 0, input.limit, version);
@@ -190,8 +194,8 @@ export async function evaluateWithKernel(kernel: KernelClient, model: PublishedO
   // The reference shows every member in the view, and fails for a member of a type the view cannot show.
   if (input.view && response.types.some(type => !showsType(model, input.view!, type))) return undefined;
   const objects = await hydrate(graph, response.refs);
-  // A member deleted or hidden since the kernel answered leaves the page to the reference.
-  if (!objects) return undefined;
+  // A member deleted or hidden since the kernel answered, or a Scenario edited since, leaves the page to the reference.
+  if (!objects || !await unchangedSince(graph, model, access.principal.owner, version)) return undefined;
   const items = objects.map(object => projectView(access, model, object, input.view));
   return { items, total: response.total, membership: response.membership, commit: response.commit, elapsedMs: response.elapsedMs };
 }
@@ -205,8 +209,30 @@ async function hydrate(graph: Objects, refs: readonly ObjectRef[]): Promise<Obje
 }
 
 /** The version a query needs, read before it starts: every commit of the owner visible then. */
-async function versionOf(model: PublishedOntology, access: Access, graph: Objects): Promise<KernelVersion> {
-  return { projection: model.projection, minCommit: Number(await latestCommit(graph.db, access.principal.owner, graph.client)) };
+/**
+ * The version a query needs, read before it starts: every commit of the owner visible then, and in a Scenario its
+ * revision. Undefined for a Scenario the reference reports as unavailable, closed, expired or of another publication.
+ */
+async function versionOf(model: PublishedOntology, access: Access, graph: Objects): Promise<KernelVersion | undefined> {
+  const owner = access.principal.owner;
+  const minCommit = Number(await latestCommit(graph.db, owner, graph.client));
+  if (!model.scenario) return { projection: model.projection, minCommit };
+  try { await checkScenario(graph.db, model, owner, graph.client); }
+  catch (error) { if (error instanceof NotFound || error instanceof Conflict) return undefined; throw error; }
+  const revision = await scenarioRevision(graph, model, owner);
+  if (revision === undefined) return undefined;
+  const single = Object.fromEntries([...model.links].map(([name, link]) => [name, [link.from.cardinality === 'one', link.to.cardinality === 'one'] as [boolean, boolean]]));
+  return { projection: model.projection, minCommit, scenario: { id: model.scenario, revision, single } };
+}
+async function scenarioRevision(graph: Objects, model: PublishedOntology, owner: string) {
+  const row = (await graph.db.query<{ revision: string }>(`SELECT revision FROM ${graph.db.schema}.scenarios WHERE id=$1 AND owner=$2`,
+    [model.scenario, owner], graph.client)).rows[0];
+  return row ? Number(row.revision) : undefined;
+}
+/** Whether the version a page's objects were read at is the one the kernel answered: no commit, and no Scenario edit, since. */
+async function unchangedSince(graph: Objects, model: PublishedOntology, owner: string, version: KernelVersion, commit?: number) {
+  if (commit !== undefined && Number(await latestCommit(graph.db, owner, graph.client)) !== commit) return false;
+  return !version.scenario || await scenarioRevision(graph, model, owner) === version.scenario.revision;
 }
 
 /** Aggregates an Object Set with the kernel. Undefined means the reference aggregates it, as for `evaluateWithKernel`. */
@@ -222,6 +248,7 @@ export async function aggregateWithKernel(kernel: KernelClient, model: Published
       metrics: Object.fromEntries(Object.entries(input.metrics).map(([name, metric]) => [name, metric.op === 'count' ? 0 : null])) }] };
   }
   const version = await versionOf(model, access, graph);
+  if (!version) return undefined;
   const plan = await compileSet(model, access, graph, input.set);
   const output = plan && compileAggregate(model, access, plan, input);
   if (!plan || !output) return undefined;
@@ -247,13 +274,14 @@ export async function queryWithKernel(kernel: KernelClient, model: PublishedOnto
   try { for (const field of select ?? []) model.propertyPath(query.type, field); }
   catch (error) { if (error instanceof InvalidInput || error instanceof NotFound) return undefined; throw error; }
   const version = await versionOf(model, access, graph);
+  if (!version) return undefined;
   const plan = await compileSet(model, access, graph, { op: 'query', query: members });
   const output = plan && compileQueryOrder(model, access, plan, query, input.offset, limit);
   if (!plan || !output) return undefined;
   const response = await kernel.query(access.principal.owner, plan, output, version);
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
   const objects = await hydrate(graph, response.refs);
-  if (!objects || Number(await latestCommit(graph.db, access.principal.owner, graph.client)) !== response.commit) return undefined;
+  if (!objects || !await unchangedSince(graph, model, access.principal.owner, version, response.commit)) return undefined;
   const contract = model.interfaces.get(query.type);
   const definitions = contract?.properties ?? model.object(query.type).properties;
   const items = objects.map(object => {
