@@ -14,6 +14,8 @@ import { machineryStateContract } from './machinery-state.js';
 export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
 export interface Bindings {
   describe(model: Ontology): BindingManifest;
+  /** Checks what `describe` cannot check offline, such as the components of component Functions, before a release is prepared. */
+  checkRelease?(model: Ontology): Promise<void>;
   evaluateRelease?(model: Ontology): { policy: string; checks: ReleaseCheck[] };
 }
 const compiledReleases = new WeakMap<PublishedOntology, PublishedOntology>();
@@ -63,6 +65,7 @@ export class Metadata {
     const model = new Ontology(input);
     await access.refresh(); access.require(model.document.id, 'edit_definition', permissionTarget ?? model.document.id);
     const manifest = bindings.describe(model), projection = randomUUID();
+    await bindings.checkRelease?.(model);
     const transformId = transform ? randomUUID() : null;
     const release = digest({ definition: model.digest, runtime: this.db.runtimeId, manifest, projection });
     await this.db.transaction(async client => {
@@ -73,6 +76,11 @@ export class Metadata {
         for(const record of history){
           const previous=new Ontology(record.body,{published:true});
           for(const value of model.resourceDocument.valueTypes??[]){const old=previous.resourceDocument.valueTypes?.find(item=>item.apiName===value.apiName&&item.version===value.version);if(old&&digest(old.schema)!==digest(value.schema))throw new Conflict('Value Type constraints require a new version');}
+          // Palantir: versions of a Function are immutable once released, so a changed component Function needs a new version.
+          for(const fn of model.resolvedDocument.functionTypes){
+            const old=previous.resolvedDocument.functionTypes.find(item=>item.apiName===fn.apiName&&item.version===fn.version);
+            if(old&&(old.implementation||fn.implementation)&&digest(old)!==digest(fn))throw new Conflict(`Function versions are immutable: release ${fn.apiName} as a new version`);
+          }
         }
       }
       if (current?.projection) await checkSavedObjectSets(this.db, client, await this.get(current.digest, client), model);

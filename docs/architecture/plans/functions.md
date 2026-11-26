@@ -21,7 +21,7 @@
 ### 组成
 
 1. **函数宿主 `function-host/`：** Rust 二进制，基于 wasmtime 的组件模型，独立运行为一个用户单元，只监听 127.0.0.1。
-   - **状态：** 已实现，见 [函数宿主指南](../../guides/function-host.md)。运行时的接入是下一个 PR。
+   - **状态：** 宿主、组件存储、组件函数的定义与调用都已实现，见 [函数宿主指南](../../guides/function-host.md)。版本范围和兼容性检查是下一步。
    - 它不连接数据库，不持有凭据，也不保存 Ontology 数据。
    - 输入只来自运行时：已经校验并遮罩过的参数。
 2. **WIT world `eigos:function@0.1.0`：**
@@ -39,7 +39,7 @@
    - F2 在同一个 world 上增加 Ontology 宿主接口。
 3. **组件存储：**
    - 新表 `function_artifacts(sha256 text PRIMARY KEY, bytes bytea NOT NULL, size integer NOT NULL, world text NOT NULL, uploaded_by text NOT NULL, uploaded_at timestamptz NOT NULL)`，按 SHA-256 去重，单个组件最大 16 MB。
-   - 上传接口 `POST /functions/artifacts` 需要 `edit_definition`。宿主先检查组件确实导出 `eigos:function/handler`，然后才入库。
+   - 上传接口 `POST /ontology/function-artifacts` 需要 `edit_definition`。宿主先检查组件确实导出 `eigos:function/handler`，然后才入库。
 4. **定义：**
    - `functionTypes` 增加 `implementation: { kind: 'component', sha256, limits }`，其中 `limits = { fuel, memoryMb, deadlineMs, inputBytes, outputBytes }`。
    - 组件函数的 `version` 必须是语义化版本。

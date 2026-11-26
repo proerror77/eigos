@@ -1,4 +1,5 @@
 import { SHOPIFY_AGENT_PROFILE_PATH, shopifyCatalogProfile } from '../../packages/capabilities/shopify/read-only.js';
+import { ComponentFunctions } from '../../packages/runtime/component-functions.js';
 import {mountWorkbench} from './workbench.js';
 import {Applications} from '../../packages/runtime/applications.js';
 import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
@@ -239,6 +240,14 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.post('/ontology/scenarios/:id/discard', async (req,res) => {
     const { revision, ontology } = z.object({ revision: z.number().int().positive(), ontology: z.string().optional() }).parse(req.body);
     res.json(await scenarioDiscard(principal(req), String(req.params.id), revision, ontology));
+  });
+  // A component for component Functions, which a definition branch then refers to by SHA-256. The function host checks it.
+  app.post('/ontology/function-artifacts',express.raw({type:'application/wasm',limit:'16mb'}),async(req,res)=>{
+    const p=principal(req);requireScope(p,'ontology:write');
+    if (!Buffer.isBuffer(req.body)) throw new InvalidInput('A component body must use application/wasm');
+    const ontology=typeof req.query.ontology==='string'?req.query.ontology:'Eigos';
+    (await Access.load(db,p)).require(ontology,'edit_definition',ontology);
+    res.json(await new ComponentFunctions(db).upload(req.body,p));
   });
   app.post('/ontology/media',express.raw({type:'application/octet-stream',limit:'20mb'}),async(req,res)=>{
     const p=principal(req);requireScope(p,'ontology:write');

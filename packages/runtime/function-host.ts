@@ -103,3 +103,27 @@ export class FunctionHostClient {
     return JSON.parse(text) as unknown;
   }
 }
+
+let shared: Promise<FunctionHostClient> | undefined;
+/**
+ * The function host this process uses, or undefined when none is configured:
+ * - with EIGOS_FUNCTION_HOST_URL, a host service already running there;
+ * - with EIGOS_FUNCTION_HOST_BIN, a local host process, started on first use, with the data directory
+ *   EIGOS_FUNCTION_HOST_DATA when set.
+ * A local host that cannot be reached is started again on the next use.
+ */
+export function defaultFunctionHost(): Promise<FunctionHostClient> | undefined {
+  const url = process.env.EIGOS_FUNCTION_HOST_URL, binary = process.env.EIGOS_FUNCTION_HOST_BIN;
+  if (url) return shared ??= Promise.resolve(FunctionHostClient.connect(url));
+  if (!binary) return undefined;
+  const started = shared ??= FunctionHostClient.start(binary).catch(error => {
+    if (shared === started) shared = undefined;
+    throw error;
+  });
+  return started;
+}
+/** Forgets a local host that could not be reached, so the next use starts another. */
+export function lostFunctionHost(host: FunctionHostClient) {
+  if (process.env.EIGOS_FUNCTION_HOST_URL) return;
+  void shared?.then(current => { if (current === host) { shared = undefined; void host.stop(); } }, () => undefined);
+}

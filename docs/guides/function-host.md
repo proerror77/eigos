@@ -4,8 +4,7 @@
 
 - `function-host/` 是 Rust 服务，基于 wasmtime 50 的组件模型。
 - `packages/runtime/function-host.ts` 是客户端。
-
-运行时还没有接入宿主：组件存储、`implementation.kind: 'component'` 的函数定义和 `Functions.invoke` 的分派是 F1 的下一个 PR。
+- `packages/runtime/component-functions.ts` 把宿主接入运行时，内容见下文的“组件函数”。
 
 ## 构建与测试
 
@@ -26,6 +25,79 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 
   没有上面两个环境变量时跳过。
 - **CI：** 套件 49 的 job 先构建宿主和测试组件，再运行这个套件。
+
+## 组件函数
+
+作者自己把函数编译成组件。上传后，定义分支用组件的 SHA-256 引用它，审阅并发布之后，调用方像调用其他 Function 一样调用它。依据是 Palantir 的 Functions：代码“在服务端的隔离环境中执行”；发布者选择的版本“发布后不可变”（[overview](https://www.palantir.com/docs/foundry/functions/overview/)、[versioning](https://www.palantir.com/docs/foundry/functions/functions-versioning/)）。
+
+1. **上传：**
+
+   ```bash
+   curl -X POST "$EIGOS/ontology/function-artifacts?ontology=Eigos" \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/wasm' --data-binary @echo.wasm
+   # {"sha256":"…","size":63654,"world":"eigos:function/handler@0.1.0","imports":[…]}
+   ```
+
+   - 需要 `ontology:write` scope 和该本体的 `edit_definition`。
+   - 宿主先检查组件（导入和导出见下文“组件”），通过后才存入 `function_artifacts` 表。表按 SHA-256 去重，组件最大 16 MB。
+2. **定义：**
+
+   ```json
+   {
+     "apiName": "EchoPayload", "description": "Echo a payload through a component", "version": "1.0.0",
+     "parameters": { "type": "object" }, "returns": { "type": "object", "required": ["echo"] },
+     "implementation": {
+       "kind": "component", "sha256": "…",
+       "limits": { "fuel": 100000000, "memoryMb": 64, "deadlineMs": 2000 }
+     }
+   }
+   ```
+
+   - `limits` 的每一项都不能超过宿主的上限（下文“调用的上限”），schema 直接拒绝超出的值。
+   - 组件函数必须有语义化版本 `x.y.z`。
+   - 组件函数暂时不能声明 `source` 或 `edits`：外部调用和编辑接口分别是 F3 和 F2。
+3. **准备发布：** 准备发布时，运行时依次检查：
+   - 配置了函数宿主；
+   - 宿主的上限不低于函数要求的上限；
+   - 每个组件都已上传。宿主没有的组件，运行时从表中取出交给它，宿主再检查一次。
+   - 已发布过的版本不可变：同名同版本的组件函数与历史发布中的不一致时，准备失败，提示发布新版本。
+
+   绑定由定义本身算出，包括契约、版本、组件摘要和上限，所以所有配置了宿主的运行时得到同一个绑定。
+4. **调用：** `Functions.invoke` 依次执行：
+   1. 照常检查 `execute_function`；
+   2. 按契约校验参数；
+   3. 把参数的 JSON 交给宿主。宿主没有这个组件（例如重启后），运行时从表中取出组件交给它，然后重试一次；
+   4. 按契约校验返回值。
+
+   Action 的提交条件、Agent 的 `evaluate_function` 和 HTTP、MCP 的调用都走这条路径。组件函数只读输入，所以离线的 Scenario 评估也可以使用它。
+
+### 错误
+
+| 情况 | 错误 | HTTP |
+| --- | --- | --- |
+| 函数返回 `failure` | `FunctionFailed`，`code` 是函数给的代码，消息是函数给的消息 | 422 |
+| trap，例如 panic | `FunctionFailed`，`code: 'trap'` | 422 |
+| 输出不是 JSON，或不符合返回值的契约 | `FunctionFailed`，`code: 'contract'` | 422 |
+| fuel、内存、截止时间或输出大小超限 | `ResourceExhausted`，`limit` 是 `fuel`、`memory`、`deadline` 或 `output` | 422 |
+| 参数不符合契约 | 校验错误 | 400 |
+| 没有配置宿主，或宿主不可用 | `ServiceUnavailable` | 503 |
+
+依据：Palantir 区分三类错误，即给用户看的错误、运行时错误，以及 CPU 时间、墙钟时间和内存超限（[user-facing errors](https://www.palantir.com/docs/foundry/functions/user-facing-error/)、[error types](https://www.palantir.com/docs/foundry/functions/typescript-error-types/)）。前两类对应 `failure` 和 `trap`，超限对应 `ResourceExhausted`。
+
+错误对象上的 `detail` 带有 `fuelUsed`、`ms` 和 stderr 的末尾，只供服务端诊断，不出现在公开的错误消息里。
+
+### 运行时的配置
+
+| 变量 | 说明 |
+| --- | --- |
+| `EIGOS_FUNCTION_HOST_URL` | 已在运行的宿主服务，生产使用 |
+| `EIGOS_FUNCTION_HOST_BIN` | 没有 URL 时，进程第一次用到宿主时启动这个二进制。连不上时，下一次调用再启动一个新的 |
+
+两者都没有时，组件函数不能发布，已发布的组件函数调用时返回 503。Gateway、Worker 和 Indexer 都要配置，因为 Indexer 运行的自动化和 Scenario 同步也会求值提交条件。
+
+部署包含这个功能的版本时，激活步骤要建好 `function_artifacts` 表并授权：
+- Gateway 的角色要有 SELECT 和 INSERT，Worker 和 Indexer 的角色要有 SELECT；
+- 这张表不分 owner，与 `releases` 相同。
 
 ## WIT world
 
