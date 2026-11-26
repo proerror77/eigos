@@ -1,0 +1,95 @@
+import type { Database } from '../database.js';
+import type { PublishedOntology } from '../metadata.js';
+import { KernelClient } from './client.js';
+
+/**
+ * How Object Sets use the query kernel, from EIGOS_KERNEL: `off`; `route`, so the kernel answers what it can and the
+ * reference the rest; or `shadow`, so the reference answers and the kernel's answer is compared with it.
+ */
+export type KernelMode = 'off' | 'route' | 'shadow';
+export function kernelMode(): KernelMode {
+  const mode = process.env.EIGOS_KERNEL ?? 'off';
+  if (mode !== 'off' && mode !== 'route' && mode !== 'shadow') throw new Error('EIGOS_KERNEL must be off, route or shadow');
+  return mode;
+}
+
+type Instance = { client: KernelClient; ready: Promise<void>; state: 'loading' | 'ready' | 'failed'; used: number; failedAt?: number };
+/** How long a projection that failed to load stays on the reference path before the next attempt. */
+const retryAfterMs = 60_000;
+
+/**
+ * The query kernels this process uses, each holding one projection that it loads on first use and then keeps current.
+ * - With EIGOS_KERNEL_URL, one kernel service, which loads whichever projection a query needs.
+ * - With EIGOS_KERNEL_BIN, local kernel processes, at most EIGOS_KERNEL_INSTANCES (default 2); the least recently used
+ *   one stops when another projection needs one.
+ * The kernel reads the database at EIGOS_KERNEL_DATABASE_URL, or at the runtime's own connection string.
+ */
+export class KernelRegistry {
+  private readonly instances = new Map<string, Instance>();
+  private exitHook = false;
+  constructor(private readonly url = process.env.EIGOS_KERNEL_URL, private readonly binary = process.env.EIGOS_KERNEL_BIN,
+    private readonly limit = Number(process.env.EIGOS_KERNEL_INSTANCES ?? 2), private readonly database = process.env.EIGOS_KERNEL_DATABASE_URL) {}
+
+  /**
+   * A kernel holding the model's projection of `db`, or undefined while it loads (unless `wait`), after it failed to
+   * load, or when no kernel is configured.
+   */
+  async kernelFor(db: Database, model: PublishedOntology, wait: boolean): Promise<KernelClient | undefined> {
+    const database = this.database ?? (db.pool.options as { connectionString?: string }).connectionString;
+    if (!database || !this.url && !this.binary) return undefined;
+    const key = JSON.stringify([database, db.schema, model.projection]);
+    let instance = this.instances.get(key);
+    if (instance?.state === 'failed' && Date.now() - instance.failedAt! > retryAfterMs) { this.close(key); instance = undefined; }
+    instance ??= await this.open(key, db, model, database);
+    instance.used = Date.now();
+    if (wait) await instance.ready;
+    return instance.state === 'ready' ? instance.client : undefined;
+  }
+
+  private async open(key: string, db: Database, model: PublishedOntology, database: string): Promise<Instance> {
+    let client: KernelClient;
+    if (this.url) {
+      // A kernel service holds one projection, so loading another replaces it.
+      for (const other of [...this.instances.keys()]) this.instances.delete(other);
+      client = KernelClient.connect(this.url);
+    } else {
+      while (this.instances.size >= Math.max(1, this.limit)) {
+        const [oldest] = [...this.instances.entries()].sort(([, a], [, b]) => a.used - b.used)[0]!;
+        this.close(oldest);
+      }
+      client = await KernelClient.start(this.binary!);
+      if (!this.exitHook) {
+        this.exitHook = true;
+        process.once('exit', () => { for (const instance of this.instances.values()) instance.client.kill(); });
+      }
+    }
+    const instance: Instance = { client, state: 'loading', used: Date.now(), ready: Promise.resolve() };
+    instance.ready = client.load(db, model, database).then(() => { instance.state = 'ready'; },
+      () => { instance.state = 'failed'; instance.failedAt = Date.now(); });
+    this.instances.set(key, instance);
+    return instance;
+  }
+
+  /** Loads the model's projection again, from storage, into the kernel that holds it. */
+  async reload(db: Database, model: PublishedOntology) {
+    const database = this.database ?? (db.pool.options as { connectionString?: string }).connectionString;
+    const instance = this.instances.get(JSON.stringify([database, db.schema, model.projection]));
+    if (instance?.state === 'ready') await instance.client.load(db, model, database!);
+  }
+
+  private close(key: string) {
+    const instance = this.instances.get(key);
+    this.instances.delete(key);
+    if (instance && !this.url) void instance.client.stop();
+  }
+
+  /** Stops every kernel process this registry started. */
+  async stop() {
+    const instances = [...this.instances.keys()];
+    for (const key of instances) this.close(key);
+  }
+}
+
+let shared: KernelRegistry | undefined;
+/** The process's kernels, configured from the environment. */
+export function defaultKernels() { return shared ??= new KernelRegistry(); }

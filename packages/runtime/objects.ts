@@ -264,6 +264,50 @@ export class Objects {
     this.access.readRow(this.model,ref.type,object.properties);
     return this.access.cell(this.model,ref.type,field,object.properties);
   }
+  /**
+   * The objects `read` returns for these references, read together: one statement per type, each row checked and
+   * masked as `read` does, and the derived values of the batch evaluated together. A reference whose object is missing
+   * or unreadable is left out, where `read` would throw.
+   */
+  async readBatch(refs: readonly ObjectRef[]): Promise<ObjectData[]> {
+    const byType = new Map<string, string[]>();
+    for (const ref of refs.map(ref => objectRefSchema.parse(ref))) {
+      if (ref.type === scenarioMetadataType || !this.model.objects.has(ref.type)) throw new InvalidInput('Batch reads cover published object types');
+      byType.set(ref.type, [...byType.get(ref.type) ?? [], ref.id]);
+    }
+    if (this.client === this.db.pool && [...byType.keys()].some(type => Object.values(this.model.object(type).properties).some(property => property.derived))) {
+      // As `read`: derived values come from one snapshot, and their permissions must still hold when they are returned.
+      const access = await this.access.fork();
+      const result = await this.db.transaction(async client => {
+        await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+        return new Objects(this.db, this.model, access, client).readBatch(refs);
+      });
+      if (!await access.canReturn(access.dataRequirements())) throw new Conflict('Derived result permissions changed');
+      this.access.adoptReads(access);
+      return result;
+    }
+    const visible: ObjectData[] = [];
+    for (const [type, ids] of byType) {
+      if (processLogTarget(this.model, type)) this.requireExclusive('process log read');
+      this.access.read(this.model, type);
+      await this.lockObjects(ids.map(id => ({ type, id })), 'shared');
+      await checkScenario(this.db, this.model, this.owner, this.client);
+      const values: unknown[] = [this.owner, type, ids, this.model.projection];
+      const policy = type === documentChunkType || processLogTarget(this.model, type) ? this.access.rowSql(this.model, type, values, 'o.properties') : 'TRUE';
+      const tables = viewTables(this.db, this.model, this.owner, values, [type]);
+      const { rows } = await this.db.readQuery(`${tables.prefix}SELECT type,id,revision,properties FROM ${tables.objects} o
+        WHERE owner=$1 AND type=$2 AND id=ANY($3::text[]) AND projection=$4 AND ${policy}`, values, this.client);
+      const records = rows.map(row => this.row(row));
+      await this.linkedSecurityReads(records);
+      for (const record of records) {
+        try { visible.push(this.visible(record)); }
+        catch (error) { if (!(error instanceof PermissionDenied)) throw error; }
+      }
+    }
+    const evaluator = new DerivedProperties(this);
+    await evaluator.prefetch(visible);
+    return Promise.all(visible.map(object => evaluator.enrich(object)));
+  }
   async read(input: ObjectRef): Promise<ObjectData> {
     return observeDecisionRead(this, { kind: 'object', ref: objectRefSchema.parse(input) }, () => this.readObject(input), observedObject);
   }

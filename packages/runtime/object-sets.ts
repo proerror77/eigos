@@ -1,14 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { canonical, Conflict, digest, NotFound } from '../core/identity.js';
+import { canonical, Conflict, digest, InvalidInput, NotFound } from '../core/identity.js';
 import { propertyPathSchema } from '../ontology/property-path.js';
 import { objectRefSchema, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import { capturingDecisionReads, observeDecisionRead, observeReadInput, observedPage } from './decision-evidence.js';
+import { unprofiled } from '../core/database-profile.js';
+import { latestCommit } from './change-feed.js';
 import { Access, PermissionDenied } from './access.js';
 import { Database, type Sql } from './database.js';
 import { PublishedOntology } from './metadata.js';
 import { nestedValue } from './query-filter.js';
 import { Objects, querySchema } from './objects.js';
+import { projectView } from './object-view.js';
+import { aggregateWithKernel, evaluateWithKernel, type KernelClient } from './kernel/client.js';
+import { defaultKernels, kernelMode, type KernelMode, type KernelRegistry } from './kernel/registry.js';
 
 const setQuerySchema = querySchema.omit({ limit: true, cursor: true, select: true });
 export type SetExpression =
@@ -52,21 +57,6 @@ export const aggregateSetViewSchema = aggregateSetSchema.extend({ scenarioId: z.
 export const saveSetSchema = z.strictObject({ id: z.uuid().optional(), revision: z.number().int().positive().optional(), requestId: z.string().min(1).max(128), name: z.string().min(1).max(200), mode: z.enum(['static', 'dynamic']), set: setExpressionSchema, readers: z.array(z.string().min(1).max(200)).max(100).default([]) }).refine(value => Boolean(value.id) === Boolean(value.revision), 'Updating a set requires its ID and revision');
 export const listSetsSchema = z.strictObject({ cursor: z.uuid().optional(), limit: z.number().int().min(1).max(100).default(50) });
 
-/** An object as `view` shows it, as Object Set evaluation and aggregation project each member. */
-export function projectView(access: Access, model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
-  if (!view || view === object.ref.type) return object;
-  if (!model.implements(object.ref.type, view)) throw new Conflict('The requested view is incompatible with an object in this set');
-  const properties = model.interfaces.get(view)?.properties;
-  if (!properties) throw new Conflict('Use an Object Type or Interface view');
-  return { ...object, properties: Object.fromEntries(Object.keys(properties).map(name => {
-    const local = model.propertyName(object.ref.type, view, name);
-    const label = properties[name]?.classification;
-    const visible = access.canSeeModelData(label);
-    if (visible) access.observeClassification(label);
-    return [name, local && visible ? object.properties[local] ?? null : null];
-  })) };
-}
-
 export async function initializeObjectSets(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.object_sets (
     id uuid PRIMARY KEY, ontology text NOT NULL, owner text NOT NULL, request_id text NOT NULL,
@@ -83,9 +73,89 @@ const refKey = (ref: ObjectRef) => canonical(ref);
 const sorted = (objects: ObjectData[]) => objects.sort((a, b) => Buffer.compare(Buffer.from(refKey(a.ref)), Buffer.from(refKey(b.ref))));
 
 /** Object sets reuse the live object's authorization and Scenario view for every evaluation. */
+/** A kernel cursor: the evaluation it continues, where the next page starts, and the members it was computed over. */
+type KernelCursor = { identity: string; offset: number; membership: string };
+const encodeKernelCursor = (cursor: KernelCursor) => Buffer.from(JSON.stringify({ kernel: cursor })).toString('base64url');
+function kernelCursor(cursor: string): KernelCursor | undefined {
+  try {
+    const value = (JSON.parse(Buffer.from(cursor, 'base64url').toString()) as { kernel?: Partial<KernelCursor> }).kernel;
+    return value && typeof value.identity === 'string' && Number.isInteger(value.offset) && value.offset! >= 0 && typeof value.membership === 'string'
+      ? value as KernelCursor : undefined;
+  } catch { return undefined; }
+}
+/** Where a reference cursor's page starts. */
+function referenceOffset(cursor: string) {
+  try { return Math.max(0, Number((JSON.parse(Buffer.from(cursor, 'base64url').toString()) as { offset?: number }).offset) || 0); }
+  catch { return 0; }
+}
+
+/** Runs an operation with a fork of the principal's access in its own egress scope, and reports what it recorded. */
+async function isolated<T>(access: Access, operation: (fork: Access) => Promise<T>) {
+  const fork = await access.fork();
+  const measured = await fork.measureEgress(() => operation(fork));
+  return { result: measured.result, classification: measured.classification, requirements: measured.requirements, markings: fork.readMarkingsSnapshot() };
+}
+type Recorded = Awaited<ReturnType<typeof isolated<unknown>>>;
+/** Ontology values of objects: a missing value and null are the same value. */
+const ontologyValues = (items: readonly ObjectData[]) => items.map(item => ({ ref: item.ref, revision: item.revision,
+  properties: Object.fromEntries(Object.entries(item.properties).filter(([, value]) => value !== null && value !== undefined)) }));
+/**
+ * How the kernel's answer differs from the reference's, or undefined: the results; the rows, markings and classification
+ * recorded; and the type-level dependencies, of which the kernel may record more (it checks types while planning, also
+ * for inputs that turn out empty).
+ */
+function shadowMismatch(expected: Recorded, actual: Recorded): string | undefined {
+  if (canonical(expected.result) !== canonical(actual.result)) return 'result';
+  const rows = (recorded: Recorded) => recorded.requirements.flatMap(item => item.row ? [item.row.type + '/' + item.row.id] : []).sort();
+  if (canonical(rows(expected)) !== canonical(rows(actual))) return 'row dependencies';
+  if (canonical(expected.markings) !== canonical(actual.markings)) return 'read markings';
+  if (canonical(expected.classification) !== canonical(actual.classification)) return 'classification';
+  const typeLevel = (recorded: Recorded) => new Set(recorded.requirements.filter(item => !item.row && item.permission !== 'view_property').map(item => canonical(item)));
+  const recorded = typeLevel(actual);
+  if ([...typeLevel(expected)].some(item => !recorded.has(item))) return 'type-level dependencies';
+  return undefined;
+}
+function reportShadow(mismatch: string, input: unknown) {
+  const message = `Query kernel shadow mismatch (${mismatch}): ${JSON.stringify(input).slice(0, 2000)}`;
+  if (process.env.EIGOS_KERNEL_SHADOW_STRICT === 'true') throw new Error(message);
+  console.warn(message);
+}
+/**
+ * How the shadow comparisons of this process went:
+ * - compared;
+ * - declined, when the kernel left the evaluation to the reference;
+ * - skipped, when the owner committed during the comparison;
+ * - stale, when the kernel differed until it loaded the projection again, because it missed writes outside the commit
+ *   log;
+ * - aborted, when a comparison that ran after its request failed, for example because the data was gone.
+ * With EIGOS_KERNEL_SHADOW_REPORT=true, printed once when the process exits.
+ */
+const shadowCounts = { compared: 0, declined: 0, skipped: 0, stale: 0, aborted: 0 };
+let shadowReport = false;
+function countShadow(outcome: keyof typeof shadowCounts) {
+  shadowCounts[outcome]++;
+  if (!shadowReport && process.env.EIGOS_KERNEL_SHADOW_REPORT === 'true') {
+    shadowReport = true;
+    process.once('exit', () => console.error(JSON.stringify({ event: 'kernel_shadow', ...shadowCounts })));
+  }
+}
+
 export class ObjectSets {
-  constructor(private readonly db: Database, private readonly maximumObjects = 10000) {
+  /** `kernels` sets how evaluation uses the query kernel; by default from EIGOS_KERNEL and the process's kernels. */
+  constructor(private readonly db: Database, private readonly maximumObjects = 10000,
+    private readonly kernels: { mode: KernelMode; registry: Pick<KernelRegistry, 'kernelFor'> & Partial<Pick<KernelRegistry, 'reload'>> }
+      = { mode: kernelMode(), registry: defaultKernels() }) {
     if (!Number.isInteger(maximumObjects) || maximumObjects < 1 || maximumObjects > 10000) throw new Error('Object set maximum must be between 1 and 10000');
+  }
+  /**
+   * Whether an evaluation may use the kernel. It may not inside a caller's transaction, whose own writes the kernel
+   * cannot see; in a Scenario; while decision evidence records each read; or with a smaller evaluation limit.
+   */
+  private kernelAllowed(model: PublishedOntology, existing?: Sql) {
+    return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000;
+  }
+  private kernelIdentity(access: Access, model: PublishedOntology, input: { set: unknown; view?: string }) {
+    return digest({ owner: access.principal.owner, release: model.release, set: input.set, view: input.view });
   }
   private async snapshot<T>(access: Access, action: (client: Sql) => Promise<T>, saveAgainst?: PublishedOntology): Promise<T> {
     for (let attempt = 0; ; attempt++) {
@@ -268,6 +338,85 @@ export class ObjectSets {
       () => this.evaluateSet(access, model, input, client), observedPage);
   }
   private async evaluateSet(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>, existing?: Sql) {
+    if (!this.kernelAllowed(model, existing)) return this.referenceEvaluate(access, model, input, existing);
+    const cursor = input.cursor ? kernelCursor(input.cursor) : undefined;
+    // A reference cursor continues on the reference.
+    if (input.cursor && !cursor) {
+      const page = await this.referenceEvaluate(access, model, input, existing);
+      if (this.kernels.mode === 'shadow') await this.shadowEvaluate(access, model, input);
+      return page;
+    }
+    if (this.kernels.mode === 'route') {
+      const routed = await this.routedEvaluate(access, model, input, cursor);
+      if (routed) return routed;
+      // A kernel cursor continues only on the kernel, as a reference cursor does only on the reference.
+      if (cursor) throw new InvalidInput('Object set cursor expired; evaluate the set again from its first page');
+      return this.referenceEvaluate(access, model, input, existing);
+    }
+    const page = await this.referenceEvaluate(access, model, input, existing);
+    await this.shadowEvaluate(access, model, input);
+    return page;
+  }
+  /** One page from the kernel, or undefined when the reference evaluates it. */
+  private async routedEvaluate(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>, cursor?: KernelCursor) {
+    const kernel = await this.kernels.registry.kernelFor(this.db, model, false);
+    if (!kernel) return undefined;
+    const identity = this.kernelIdentity(access, model, input);
+    if (cursor && cursor.identity !== identity) throw new InvalidInput('Object set cursor belongs to another evaluation');
+    await access.refresh();
+    const offset = cursor?.offset ?? 0;
+    const result = await evaluateWithKernel(kernel, model, access, new Objects(this.db, model, access), { set: input.set, view: input.view, offset, limit: input.limit });
+    if (!result) return undefined;
+    if (cursor && result.membership !== cursor.membership) throw new InvalidInput('Object set members changed since the previous page; evaluate the set again from its first page');
+    const end = offset + input.limit;
+    return { items: result.items, total: result.total,
+      cursor: end < result.total && result.membership ? encodeKernelCursor({ identity, offset: end, membership: result.membership }) : undefined };
+  }
+  /**
+   * Compares the kernel's answer with the reference's, each on a fork of the principal's access, outside every database
+   * profile. With EIGOS_KERNEL_SHADOW_STRICT=true the comparison finishes before the request answers, so a mismatch
+   * fails it; otherwise it runs after the request answers, adding no latency.
+   */
+  private async shadow(access: Access, model: PublishedOntology, input: unknown, reference: (fork: Access) => Promise<unknown>,
+    kernel: (client: KernelClient, fork: Access) => Promise<unknown | undefined>) {
+    const compare = async () => {
+      const client = await this.kernels.registry.kernelFor(this.db, model, true);
+      if (!client) return;
+      const before = await latestCommit(this.db, access.principal.owner, this.db.pool);
+      const expected = await isolated(access, reference);
+      const viaKernel = () => isolated(access, fork => kernel(client, fork));
+      let actual = await viaKernel();
+      if (actual.result === undefined) return countShadow('declined');
+      if (await latestCommit(this.db, access.principal.owner, this.db.pool) !== before) return countShadow('skipped');
+      let mismatch = shadowMismatch(expected, actual);
+      if (mismatch && this.kernels.registry.reload) {
+        // Writes outside the commit log are invisible to the kernel until it loads the projection again.
+        await this.kernels.registry.reload(this.db, model);
+        actual = await viaKernel();
+        if (actual.result !== undefined && !shadowMismatch(expected, actual)) return countShadow('stale');
+        mismatch = actual.result === undefined ? undefined : shadowMismatch(expected, actual);
+      }
+      countShadow('compared');
+      if (mismatch) reportShadow(mismatch, input);
+    };
+    if (process.env.EIGOS_KERNEL_SHADOW_STRICT === 'true') {
+      const counted = this.db.queries;
+      try { await unprofiled(compare); } finally { this.db.queries = counted; }
+      return;
+    }
+    void unprofiled(compare).catch(() => countShadow('aborted'));
+  }
+  private shadowEvaluate(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>) {
+    const offset = input.cursor ? referenceOffset(input.cursor) : 0;
+    return this.shadow(access, model, input, async fork => {
+      const page = await this.referenceEvaluate(fork, model, input);
+      return { items: ontologyValues(page.items), total: page.total };
+    }, async (client, fork) => {
+      const result = await evaluateWithKernel(client, model, fork, new Objects(this.db, model, fork), { set: input.set, view: input.view, offset, limit: input.limit });
+      return result && { items: ontologyValues(result.items), total: result.total };
+    });
+  }
+  private async referenceEvaluate(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>, existing?: Sql) {
     const evaluate = async (client: Sql) => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
       const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;
@@ -296,6 +445,24 @@ export class ObjectSets {
       () => this.aggregateSet(access, model, input, client));
   }
   private async aggregateSet(access: Access, model: PublishedOntology, input: z.output<typeof aggregateSetSchema>, existing?: Sql) {
+    if (!this.kernelAllowed(model, existing)) return this.referenceAggregate(access, model, input, existing);
+    if (this.kernels.mode === 'route') {
+      const kernel = await this.kernels.registry.kernelFor(this.db, model, false);
+      if (kernel) {
+        await access.refresh();
+        const result = await aggregateWithKernel(kernel, model, access, new Objects(this.db, model, access), input);
+        if (result) return { count: result.count, items: result.items };
+      }
+      return this.referenceAggregate(access, model, input, existing);
+    }
+    const result = await this.referenceAggregate(access, model, input, existing);
+    await this.shadow(access, model, input, fork => this.referenceAggregate(fork, model, input), async (client, fork) => {
+      const answer = await aggregateWithKernel(client, model, fork, new Objects(this.db, model, fork), input);
+      return answer && { count: answer.count, items: answer.items };
+    });
+    return result;
+  }
+  private async referenceAggregate(access: Access, model: PublishedOntology, input: z.output<typeof aggregateSetSchema>, existing?: Sql) {
     const aggregate = async (client: Sql) => {
       if (input.view) access.definition(model, model.interfaces.has(input.view) ? 'interface' : 'object', input.view);
       const viewLabel = input.view ? (model.interfaces.get(input.view) ?? model.objects.get(input.view))?.classification : undefined;

@@ -600,3 +600,40 @@ test('each query the kernel answers sees every write completed before it started
     await compareSet(f, undefined, written);
   } finally { await f.kernel.stop(); await f.close(); }
 });
+
+test('Object Sets answer through the kernel when routed, page with kernel cursors, and fall back to the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    const routed = new ObjectSets(f.db, 10000, { mode: 'route', registry: { kernelFor: async () => f.kernel } });
+    const unavailable = new ObjectSets(f.db, 10000, { mode: 'route', registry: { kernelFor: async () => undefined } });
+    const reference = new ObjectSets(f.db, 10000, { mode: 'off', registry: { kernelFor: async () => undefined } });
+    const access = await Access.load(f.db, principal);
+    const set = { op: 'query', query: { type: 'Route' } };
+    const pages = async (sets: ObjectSets) => {
+      const items = [];
+      let cursor: string | undefined;
+      do { const page = await sets.evaluate(access, f.model, { set, limit: 2, cursor }); items.push(...page.items); cursor = page.cursor; } while (cursor);
+      return values(items);
+    };
+    // Paging through kernel cursors gives the reference's members in the reference's order.
+    assert.deepEqual(await pages(routed), await pages(reference));
+    const first = await routed.evaluate(access, f.model, { set, limit: 2 });
+    assert((JSON.parse(Buffer.from(first.cursor!, 'base64url').toString()) as { kernel?: unknown }).kernel, 'the kernel answers with its own cursor');
+    // A reference cursor continues on the reference, and a kernel cursor only on the kernel.
+    const fromReference = await unavailable.evaluate(access, f.model, { set, limit: 2 });
+    assert.deepEqual(values((await routed.evaluate(access, f.model, { set, limit: 2, cursor: fromReference.cursor })).items),
+      values((await reference.evaluate(access, f.model, { set, limit: 2, cursor: fromReference.cursor })).items));
+    await assert.rejects(unavailable.evaluate(access, f.model, { set, limit: 2, cursor: first.cursor }), /cursor expired/);
+    // A change of members between pages makes the kernel cursor stale, as the reference's cursor becomes.
+    const writer = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    await writer.create(route('n1'), { id: 'n1', name: 'route n1', distance: 1, lanes: 1, teams: ['ops'] });
+    await assert.rejects(routed.evaluate(access, f.model, { set, limit: 2, cursor: first.cursor }), /changed since the previous page/);
+    await assert.rejects(reference.evaluate(access, f.model, { set, limit: 2, cursor: fromReference.cursor }));
+    // Aggregations route too, and a set the kernel cannot plan is evaluated by the reference.
+    const input = { set, groupBy: ['lanes'], metrics: { total: { op: 'count' }, distance: { op: 'sum', property: 'distance' } } };
+    assert.deepEqual(await routed.aggregate(access, f.model, input), await reference.aggregate(access, f.model, input));
+    const text = { op: 'query', query: { type: 'Route', filter: { op: 'text', property: 'name', value: 'route' } } };
+    assert.deepEqual(values((await routed.evaluate(access, f.model, { set: text, limit: 100 })).items),
+      values((await reference.evaluate(access, f.model, { set: text, limit: 100 })).items));
+  } finally { await f.kernel.stop(); await f.close(); }
+});
