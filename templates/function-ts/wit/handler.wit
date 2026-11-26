@@ -1,0 +1,13 @@
+package eigos:function@0.1.0;
+
+/// An EIGOS Function compiled to a WebAssembly component.
+world handler {
+  /// Why a Function returned no value: a stable code callers can act on, and a message for people.
+  record failure {
+    code: string,
+    message: string,
+  }
+
+  /// Runs the Function on its JSON input and returns its JSON output.
+  export invoke: func(input: string) -> result<string, failure>;
+}

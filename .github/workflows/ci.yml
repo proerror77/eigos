@@ -106,6 +106,16 @@ jobs:
           function-host/fixtures/build.sh "$RUNNER_TEMP/function-fixtures"
           echo "EIGOS_FUNCTION_HOST_BIN=$GITHUB_WORKSPACE/function-host/target/debug/eigos-function-host" >> "$GITHUB_ENV"
           echo "EIGOS_FUNCTION_HOST_FIXTURES=$RUNNER_TEMP/function-fixtures" >> "$GITHUB_ENV"
+      - if: matrix.suite == '49'
+        name: Build the Function templates
+        run: |
+          out="$RUNNER_TEMP/function-templates"
+          mkdir -p "$out"
+          cargo build --release --locked --target wasm32-wasip2 --manifest-path templates/function-rust/Cargo.toml --target-dir "$out/rust"
+          cp "$out/rust/wasm32-wasip2/release/eigos_function.wasm" "$out/rust.wasm"
+          (cd templates/function-ts && npm ci --no-audit --no-fund && npm run build)
+          cp templates/function-ts/function.wasm "$out/ts.wasm"
+          echo "EIGOS_FUNCTION_TEMPLATES=$out" >> "$GITHUB_ENV"
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'

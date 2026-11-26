@@ -99,6 +99,19 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 - Gateway 的角色要有 SELECT 和 INSERT，Worker 和 Indexer 的角色要有 SELECT；
 - 这张表不分 owner，与 `releases` 相同。
 
+## 模板
+
+作者自己构建组件，EIGOS 不在服务器上编译源码。仓库提供两个模板，都实现同一个示例函数：对 `values` 求和，空输入时返回 `failure`。
+
+| 模板 | 构建 | 组件大小 | 上传时预编译 | 每次调用 |
+| --- | --- | --- | --- | --- |
+| [Rust](../../templates/function-rust/README.md) | `cargo build --release --target wasm32-wasip2` | 约 90 KB | 约 30 ms | 约 0.3 ms，4 万 fuel |
+| [TypeScript](../../templates/function-ts/README.md) | `npm ci && npm run build`（ComponentizeJS） | 约 12 MB | 约 2 s | 约 2.4 ms，1000 万 fuel |
+
+- 两个模板各带一份 `wit/handler.wit`。套件 49 检查它们与 `function-host/wit/handler.wit` 一致。
+- CI 在套件 49 的 job 里编译两个模板，并在宿主上调用一次。
+- 计算密集的函数用 Rust：StarlingMonkey 以解释方式执行 JavaScript，同样的计算约慢 40 倍。
+
 ## WIT world
 
 ```wit
