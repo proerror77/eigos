@@ -26,9 +26,15 @@ export type CommittedEffects = (model: PublishedOntology, owner: string, changes
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
     private readonly committedEffects?: CommittedEffects) {}
-  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
+  /**
+   * `context` is where the Action takes effect: in a Scenario, or on the live data. A merge replays a Scenario's Actions
+   * inside the Scenario's view, but their edits take effect on the live data, so it checks them as live.
+   */
+  private async checkSubmission(objects: Objects, actionName: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation,
+    context: 'scenario' | 'live' = objects.model.scenario ? 'scenario' : 'live') {
     const { model, access } = objects;
     for (const condition of model.action(actionName).submissionCriteria) {
+      if (condition.executionContext && condition.executionContext !== context) continue;
       const conditionFunction = model.functions.get(condition.function);
       if (conditionFunction?.source || conditionFunction?.edits) throw new Error('Submission criteria require read-only object functions');
       const parameters = Object.fromEntries(Object.entries(condition.arguments).map(([name, value]) => [name, evaluate(value, input)]));
@@ -38,7 +44,8 @@ export class Actions {
       if (allowed !== true) throw new Conflict(condition.message ?? 'Action submission criteria are not satisfied');
     }
   }
-  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation) {
+  private async checkInput(objects: Objects, name: string, input: Record<string, unknown>, signal: AbortSignal, scenarioEvaluation?: ScenarioEvaluation,
+    context?: 'scenario' | 'live') {
     const { model } = objects;
     signal.throwIfAborted();
     for (const [parameter, type] of Object.entries(model.action(name).objectParameters)) {
@@ -46,7 +53,7 @@ export class Actions {
       if (!model.implements(ref.type, type)) throw new InvalidInput('Action input type does not satisfy its contract');
       await objects.read(ref);
     }
-    await this.checkSubmission(objects, name, input, signal, scenarioEvaluation);
+    await this.checkSubmission(objects, name, input, signal, scenarioEvaluation, context);
   }
   resolve(access: Access, model: PublishedOntology, call: ActionCall) {
     const target = call.interface;
@@ -148,7 +155,8 @@ export class Actions {
     const validateAction = (prefix: Objects, name: string, stagedInput: Record<string, unknown>) => {
       const staged = prefix.model.action(name);
       const parameters = validator(staged.parameters).parse(stagedInput) as Record<string, unknown>;
-      return this.checkInput(prefix, name, parameters, signal);
+      // A merge's replay runs in the Scenario's view, but its edits take effect on the live data.
+      return this.checkInput(prefix, name, parameters, signal, undefined, 'live');
     };
     const journal = model.scenario ? 'scenario_actions' : 'actions';
     const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);

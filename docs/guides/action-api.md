@@ -12,6 +12,19 @@
 
 实现沿用同一套 Action 执行与幂等收据。接口设计参考 [Foundry Validate Action](https://www.palantir.com/docs/foundry/api/ontology-resources/actions/validate-action)、[Apply Action Batch](https://www.palantir.com/docs/foundry/api/ontologies-v2-resources/actions/apply-action-batch) 和 [Action Log](https://www.palantir.com/docs/foundry/action-types/action-log)。
 
+## 按执行上下文区分的提交条件
+
+提交条件可以声明 `executionContext: 'scenario' | 'live'`，这一条只在对应的上下文中检查；不声明时两种上下文都检查。这与 Palantir 提交条件里的 [Execution context](https://www.palantir.com/docs/foundry/action-types/submission-criteria/) 条件相同。
+
+```json
+{ "function": "RequestIsOpen", "arguments": { "request": { "parameter": "request" } },
+  "executionContext": "live", "message": "The request must be open" }
+```
+
+- **在 Scenario 中：** 跳过 `live` 条件，所以可以用更宽松的条件试运行 Action。
+- **在正式数据上：** 跳过 `scenario` 条件。
+- **合并：** `applyScenario` 在 Scenario 视图里重放 Scenario 中的 Action，但这些编辑落在正式数据上，所以每一步都按 `live` 重新检查。在 Scenario 中因放宽而通过的一步，合并时仍要满足 live 条件。
+
 ## 生成 TypeScript 类型
 
 从目标环境读取经过当前身份过滤的发布定义，例如用 `OntologyClient.describe()`，将 JSON 写入本地文件，再生成类型。

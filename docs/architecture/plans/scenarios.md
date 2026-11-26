@@ -36,6 +36,8 @@
 
 ### 执行上下文
 
+**状态：** 已实现。提交条件改为声明 `executionContext`，不用参数表达式，见 [Action 接口指南](../../guides/action-api.md#按执行上下文区分的提交条件)。
+
 - **语法：** 提交条件的参数表达式增加 `{ context: 'execution' }`，在 Scenario 中取值 `'scenario'`，在正式数据上取值 `'live'`。条件函数用一个参数接收它，就能对两种上下文分别判断。
 - **改动位置：** `actions.ts` 的 `checkSubmission` 计算参数时，把 `objects.model.scenario` 传给表达式求值。
 - **兼容：** 不使用这个表达式的条件，行为不变。
