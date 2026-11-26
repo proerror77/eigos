@@ -76,6 +76,8 @@
 
 ### 模板与工具链
 
+**状态：** 已实现，见 [函数宿主指南](../../guides/function-host.md#模板)。
+
 - **`templates/function-rust`：** 用 `wit-bindgen`，目标 `wasm32-wasip2`（rustc 直接产出组件），在 CI 里编译并调用一次。
 - **`templates/function-ts`：** 用 ComponentizeJS 的 API，关闭 `http` 和 `fetch-event`。
 - EIGOS 不在服务器上编译源码，组件由作者自己构建后上传。

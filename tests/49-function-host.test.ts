@@ -124,3 +124,22 @@ test('the function host keeps precompiled components across restarts and reloads
     await rm(data, { recursive: true, force: true });
   }
 });
+
+test('the function templates carry the world of the function host', async () => {
+  const world = await readFile('function-host/wit/handler.wit', 'utf8');
+  for (const template of ['function-rust', 'function-ts'])
+    assert.equal(await readFile(`templates/${template}/wit/handler.wit`, 'utf8'), world, template);
+});
+
+// The workflow step builds both templates into EIGOS_FUNCTION_TEMPLATES as rust.wasm and ts.wasm.
+const templates = process.env.EIGOS_FUNCTION_TEMPLATES;
+test('components built from the templates run in the function host', { skip: skip || !templates }, () => withHost({}, async host => {
+  for (const [template, memoryMb] of [['rust', 32], ['ts', 64]] as const) {
+    const { sha256 } = await host.upload(await readFile(join(templates!, `${template}.wasm`)));
+    const call = (input: string) => host.invoke(sha256, input, { fuel: 1_000_000_000, memoryMb, deadlineMs: 10_000 });
+    assert.deepEqual(JSON.parse((await call('{"values":[1,2,3.5]}')).output!), { sum: 6.5, count: 3 }, template);
+    assert.deepEqual((await call('{"values":[]}')).error, { kind: 'failure', code: 'empty', message: 'Give at least one value' }, template);
+    const invalid = (await call('not JSON')).error;
+    assert.ok(invalid?.kind === 'failure' && invalid.code === 'invalid-input', `${template}: ${JSON.stringify(invalid)}`);
+  }
+}));
