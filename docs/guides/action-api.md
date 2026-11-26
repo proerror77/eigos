@@ -25,6 +25,18 @@
 - **在正式数据上：** 跳过 `scenario` 条件。
 - **合并：** `applyScenario` 在 Scenario 视图里重放 Scenario 中的 Action，但这些编辑落在正式数据上，所以每一步都按 `live` 重新检查。在 Scenario 中因放宽而通过的一步，合并时仍要满足 live 条件。
 
+## 函数的版本范围
+
+提交条件和 Function-backed Action 可以用 `functionVersion` 声明自己接受的函数版本，与 Palantir 的 Action 依赖版本范围相同（[version range dependencies](https://www.palantir.com/docs/foundry/functions/version-range-dependencies-for-functions/)）：
+
+```json
+{ "function": "RouteAllowed", "functionVersion": "^1.2.0", "arguments": {} }
+```
+
+- `1.2.0` 只接受这个版本，`~1.2.0` 接受 1.2.x 中不低于它的版本，`^1.2.0` 接受下一个主版本之前的版本。1.0.0 之前次版本相当于主版本：`^0.2.3` 只接受 0.2.x。
+- 只能写这三种范围，所以消费方接受的都是向后兼容的版本。这与 Palantir 只允许 Action 使用由向后兼容版本组成的范围一致。
+- 一个发布里每个函数只有一个版本，所以 EIGOS 在定义校验时检查范围，而不是在调用时挑选版本。范围不满足时，定义不合法。例如函数发布了破坏性的 2.0.0，声明 `^1.2.0` 的 Action 就挡住这次发布，直到它确认新版本并更新范围。
+
 ## 生成 TypeScript 类型
 
 从目标环境读取经过当前身份过滤的发布定义，例如用 `OntologyClient.describe()`，将 JSON 写入本地文件，再生成类型。

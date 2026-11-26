@@ -60,7 +60,7 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
    - 配置了函数宿主；
    - 宿主的上限不低于函数要求的上限；
    - 每个组件都已上传。宿主没有的组件，运行时从表中取出交给它，宿主再检查一次。
-   - 已发布过的版本不可变：同名同版本的组件函数与历史发布中的不一致时，准备失败，提示发布新版本。
+   - 版本规则，见下文“版本”。
 
    绑定由定义本身算出，包括契约、版本、组件摘要和上限，所以所有配置了宿主的运行时得到同一个绑定。
 4. **调用：** `Functions.invoke` 依次执行：
@@ -70,6 +70,23 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
    4. 按契约校验返回值。
 
    Action 的提交条件、Agent 的 `evaluate_function` 和 HTTP、MCP 的调用都走这条路径。组件函数只读输入，所以离线的 Scenario 评估也可以使用它。
+
+### 版本
+
+依据 Palantir 的 [function versioning](https://www.palantir.com/docs/foundry/functions/functions-versioning/)：版本由发布者选择，发布后不可变；向后不兼容的变更要升主版本。准备发布时，运行时对组件函数检查三件事：
+
+1. **不可变：** 同名同版本的定义必须与历史发布中的完全一致，否则要发布新版本。
+2. **递增：** 没有发布过的新版本，必须高于当前活动发布中的版本。已经发布过的版本可以原样再次发布，例如回滚。
+3. **破坏性变更：** 与活动发布中的版本相比，下列变更要求升主版本。1.0.0 之前升次版本即可：
+   - 删除输入、改变输入的 schema、把输入改为必需、新增必需输入，或者不再接受其他输入（`additionalProperties: false`）；
+   - 删除输出、改变输出的 schema，或者原来必有的输出变为可能缺失；
+   - 返回值不是对象时，改变它的 schema。
+
+   比较时忽略 `description`、`title` 等注释。新增可选输入、新增输出属于兼容变更。
+
+   例如 `EchoPayload 1.2.0 is not backward compatible with 1.1.0 (input label became required): release it as 2.0.0 or later`。Palantir 提醒这类检查不可能穷尽：它能找出破坏性变更，但通过检查不等于一定兼容，所以作者仍要判断。
+
+消费方接受的版本范围见 [Action 指南](action-api.md#函数的版本范围)。
 
 ### 错误
 

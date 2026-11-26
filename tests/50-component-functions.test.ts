@@ -169,3 +169,26 @@ test('the runtime gives the function host a stored component it does not have', 
     await f.close();
   }
 });
+
+test('a new component Function version follows the active one, with a new major version for a breaking change', { skip }, async () => {
+  const f = await fixture();
+  try {
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const values = { type: 'array', items: { type: 'integer' } }, label = { type: 'string' };
+    const publish = (version: string, properties: Record<string, unknown>, required: string[] = []) => {
+      const document = structuredClone(f.model.document);
+      document.functionTypes.push(echoFunction(sha256, { version, parameters: { type: 'object', properties, required } }));
+      return f.metadata.publish(document, f.capabilities, f.publisher);
+    };
+    await publish('1.0.0', { values });
+    await publish('1.1.0', { values, label });
+    await assert.rejects(publish('1.2.0', { values, label }, ['label']), error => error instanceof Conflict &&
+      error.message === 'EchoPayload 1.2.0 is not backward compatible with 1.1.0 (input label became required): release it as 2.0.0 or later');
+    await publish('2.0.0', { values, label }, ['label']);
+    await assert.rejects(publish('1.5.0', { values }), error => error instanceof Conflict && error.message === 'Release EchoPayload as a version above 2.0.0');
+    // A version released before can come back unchanged, as in a rollback.
+    await publish('1.0.0', { values });
+  } finally {
+    await f.close();
+  }
+});
