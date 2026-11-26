@@ -77,7 +77,9 @@ struct Snapshot {
 
 /// The current snapshot version; the Funnel, the one writer that applies commits, with its database connection; and the
 /// last version written as a checkpoint, whose lock keeps checkpoint writes one at a time.
-struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>>, checkpointed: Mutex<Option<(Arc<Snapshot>, Value)>> }
+struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>>, checkpointed: Mutex<Option<(Arc<Snapshot>, Value)>>,
+  /// How many projections this process has loaded or restored.
+  loads: std::sync::atomic::AtomicUsize }
 type Shared = Arc<AppState>;
 
 fn column(name: &str) -> Expr { Expr::Column(Column::new_unqualified(name)) }
@@ -1278,7 +1280,8 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
 async fn health(State(state): State<Shared>) -> Json<Value> {
   let snapshot = state.snapshot.read().await.clone();
   Json(match snapshot {
-    Some(s) => json!({ "status": "ok", "loaded": true, "projection": s.request.projection, "objects": s.objects, "edges": s.edge_count,
+    Some(s) => json!({ "status": "ok", "loaded": true, "loads": state.loads.load(std::sync::atomic::Ordering::Relaxed),
+      "projection": s.request.projection, "objects": s.objects, "edges": s.edge_count,
       "changed": s.types.values().map(|t| t.changed.len()).sum::<usize>() + s.edges.values().map(|l| l.changed.len()).sum::<usize>() }),
     None => json!({ "status": "ok", "loaded": false }),
   })
@@ -1299,6 +1302,7 @@ async fn load_route(State(state): State<Shared>, Json(request): Json<LoadRequest
     let (snapshot, restored) = match restore(&request).await? { Some(snapshot) => (snapshot, true), None => (load(request).await?, false) };
     let snapshot = Arc::new(snapshot);
     *state.snapshot.write().await = Some(snapshot.clone());
+    state.loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     (snapshot, restored)
   };
   if restored {
@@ -1358,7 +1362,7 @@ async fn main() {
   let port: u16 = std::env::var("EIGOS_KERNEL_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
   let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await.expect("bind loopback");
   println!("{}", json!({ "event": "kernel_listening", "port": listener.local_addr().unwrap().port() }));
-  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None), checkpointed: Mutex::new(None) });
+  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None), checkpointed: Mutex::new(None), loads: Default::default() });
   // EIGOS_KERNEL_POLL_MS sets how often the Funnel looks for new commits; 0 leaves it to the queries.
   let every = std::env::var("EIGOS_KERNEL_POLL_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1000);
   if every > 0 { tokio::spawn(follow(state.clone(), Duration::from_millis(every))); }

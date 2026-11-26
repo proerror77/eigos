@@ -64,8 +64,13 @@ export class KernelRegistry {
       }
     }
     const instance: Instance = { client, state: 'loading', used: Date.now(), ready: Promise.resolve() };
-    instance.ready = client.load(db, model, database).then(() => { instance.state = 'ready'; },
-      () => { instance.state = 'failed'; instance.failedAt = Date.now(); });
+    // A kernel service may already hold the projection, loaded by another process of this deployment; it keeps it
+    // current itself, so loading it again would only repeat the work.
+    const load = async () => {
+      if (this.url && (await client.health()).projection === model.projection) return;
+      await client.load(db, model, database);
+    };
+    instance.ready = load().then(() => { instance.state = 'ready'; }, () => { instance.state = 'failed'; instance.failedAt = Date.now(); });
     this.instances.set(key, instance);
     return instance;
   }

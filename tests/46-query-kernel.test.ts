@@ -7,6 +7,7 @@ import { Access, businessGrants, setGrants } from '../packages/runtime/access.js
 import { aggregateWithKernel, evaluateWithKernel, KernelClient } from '../packages/runtime/kernel/client.js';
 import { latestCommit } from '../packages/runtime/change-feed.js';
 import { compileSet } from '../packages/runtime/kernel/plan.js';
+import { KernelRegistry } from '../packages/runtime/kernel/registry.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal } from './fixture.js';
@@ -635,5 +636,22 @@ test('Object Sets answer through the kernel when routed, page with kernel cursor
     const text = { op: 'query', query: { type: 'Route', filter: { op: 'text', property: 'name', value: 'route' } } };
     assert.deepEqual(values((await routed.evaluate(access, f.model, { set: text, limit: 100 })).items),
       values((await reference.evaluate(access, f.model, { set: text, limit: 100 })).items));
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('a kernel service that already holds the projection is used without loading it again', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  try {
+    const registry = new KernelRegistry(f.kernel.url, undefined, 2, process.env.EIGOS_TEST_DATABASE_URL);
+    const loads = (await f.kernel.health()).loads!;
+    assert(await registry.kernelFor(f.db, f.model, true), 'the service answers for the projection it holds');
+    assert.equal((await f.kernel.health()).loads, loads, 'without a second load');
+    // Another projection is loaded into the service in its place.
+    const other = await f.metadata.publish(structuredClone(f.model.document), f.capabilities, f.publisher);
+    assert.notEqual(other.projection, f.model.projection);
+    assert(await registry.kernelFor(f.db, other, true), 'the service answers for another projection once it has loaded it');
+    const health = await f.kernel.health();
+    assert.equal(health.loads, loads + 1);
+    assert.equal(health.projection, other.projection);
   } finally { await f.kernel.stop(); await f.close(); }
 });
