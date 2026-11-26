@@ -19,7 +19,8 @@ import { configuredVariFlight } from './flight/variflight.js';
 import { calendarJourneyFunctions } from './journey/functions.js';
 import { configuredJourneyCalendar } from './journey/calendar-source.js';
 import { configuredTravelNotifications } from './pa/travel-notifications.js';
-import { configuredAmap } from './amap/client.js';
+import { configuredAmap, configuredAmapRide } from './amap/client.js';
+import { amapRideFunctions } from './amap/ride.js';
 import { withDidiPAReads } from './didi/pa-read.js';
 import { amapFunctions } from './amap/functions.js';
 import { amapObservationFunctions } from './amap/observations.js';
@@ -59,7 +60,7 @@ import { stripePaymentFunctions } from './payments/functions.js';
 import { configuredStripeSandbox, type StripeSandboxResolver } from './payments/stripe-sandbox.js';
 
 type ProviderFetch = {
-  amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
+  amapFetch?: typeof fetch; amapRideFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
   dianpingFetch?: typeof fetch; tableCheckFetch?: typeof fetch; meituanDiningFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
 };
 
@@ -83,6 +84,7 @@ export function configuredCapabilities(db: Database, config: ConnectionConfig, e
         Hema: config.EIGOS_HEMA_CONNECTION_FILE,
       },
       amap: config.EIGOS_AMAP_CONNECTION_FILE,
+      amapRide: config.EIGOS_AMAP_RIDE_CONNECTION_FILE,
       betaAmap: config.EIGOS_BETA_AMAP_CONNECTION_FILE ? { path: config.EIGOS_BETA_AMAP_CONNECTION_FILE, eligible } : undefined,
       xiaohongshu: config.EIGOS_XIAOHONGSHU_CONNECTION_FILE,
       variFlight: config.EIGOS_VARIFLIGHT_CONNECTION_FILE,
@@ -105,7 +107,8 @@ export function createCapabilities(
   extensions: RuntimeExtensions = {},
   services: ServiceResolver = unavailableServices,
   stripe: StripeSandboxResolver = configuredStripeSandbox(),
-  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch; betaAmap?: Parameters<typeof configuredAmap>[2]; variFlight?: string; variFlightFetch?: typeof fetch;
+  connections: { paotui?: string; waimai?: string; localDelivery?: DeliveryConnectionPaths; localDeliveryFetch?: typeof fetch; amap?: string; amapFetch?: typeof fetch;
+    amapRide?: string; amapRideFetch?: typeof fetch; betaAmap?: Parameters<typeof configuredAmap>[2]; variFlight?: string; variFlightFetch?: typeof fetch;
     fr24?: string; fr24Entrypoint?: string; calendar?: string; calendarFetch?: typeof fetch; travelPA?: string; travelPAFetch?: typeof fetch;
     xiaohongshu?: string; xiaohongshuFetch?: typeof fetch; dianping?: string; dianpingFetch?: typeof fetch; diningWeb?: string; diningMiniProgram?: string;
     tableCheck?: string; meituanDining?: string; tableCheckFetch?: typeof fetch; meituanDiningFetch?: typeof fetch;
@@ -152,6 +155,7 @@ export function createCapabilities(
     ...waimaiFunctions(connections.waimai, fetch, connections.amap ? amap : undefined),
     ...amapFunctions(amap, sharedAmap),
     ...amapObservationFunctions(sharedAmap),
+    ...amapRideFunctions(configuredAmapRide(connections.amapRide, connections.amapRideFetch), Boolean(connections.amapRideFetch)),
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);

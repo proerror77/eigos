@@ -4,6 +4,7 @@ import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookWithEndpoints, estimateWithEndpoints, immediateRideRouteLink } from './didi-ride-endpoints.js';
 import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { amapRide } from './amap-ride.js';
 import { amapObservations } from './amap-observations.js';
 import type { OntologyDocument } from './schema.js';
 
@@ -40,6 +41,13 @@ export const businessAgentProfiles: AgentProfile[] = [
     ],
   },
   {
+    apiName: 'AmapRideQuote',
+    terms: ['高德打车', '高德叫车', '高德车费', '高德估价', 'amap ride', 'amap taxi', 'gaode taxi'],
+    objects: [amapRide.object], interfaces: [amapRide.interface], actions: [amapRide.action], functions: [amapRide.read],
+    instructions: [{ action: amapRide.action, function: amapRide.read, text:
+      'When the user requests an Amap fare or wants to see Amap options, use complete_with_action with AmapRideInquiry.estimate on AmapRidePlan and readAmapRideEstimate (resultParameter: plan). Pass both named places and their full administrative city names. For place_required, show the candidates and request a specific address before asking Amap again. Report observed fare ranges and their source time. This Action only quotes and never places an order.' }],
+  },
+  {
     apiName: 'RideQuote',
     terms: ['打车', '滴滴', '估价', '车费', '车价', '询价', '出租车', 'didi', 'taxi', 'ride quote', 'fare only', 'fare estimate', '打车链接', '滴滴跳转', '滴滴小程序', 'ride link',
       '叫车', '叫个车', '叫辆车', '打个车', '打辆车', '网约车', '专车', '快车', '用车'],
@@ -49,7 +57,7 @@ export const businessAgentProfiles: AgentProfile[] = [
     functions: ['readRideEstimates', 'readInteractiveRideEstimate', 'generateDidiRideAppLink'],
     instructions: [
       { function: 'generateDidiRideAppLink', text: 'When asked for an App or mini-program link, use complete_with_action with the ride estimate Interface Action and generateDidiRideAppLink as the result Function (resultParameter: request). Pass serviceClass only for a vehicle the user selected. For an existing quote, pass its RideRequest reference and, when applicable, the selected RideEstimate. The user completes the booking on DiDi.' },
-      { action: 'EstimateRide', function: 'readRideEstimates', text: 'When the user provides the city, pickup and destination for a fare-only inquiry, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
+      { action: 'EstimateRide', function: 'readRideEstimates', text: 'For a DiDi or unspecified-provider fare inquiry with known city, pickup and destination, use complete_with_action with RideInquiry.estimate on RideRequest and readRideEstimates (resultParameter: request). Include serviceClass only for a specified vehicle class.' },
       { action: estimateWithEndpoints, function: 'readInteractiveRideEstimate',
         text: 'For a saved endpoint such as home or work, query PersonalPlace by role with select [id, name, role]. Use RideInquiryWithPlaceClues.estimateWithEndpoints and pass originPersonalPlace or destinationPersonalPlace as {place: reference, revision}. Omit origin for the original PA’s current device pickup when that is the requested origin. Keep the exact confirmed endpoint and use readInteractiveRideEstimate (resultParameter: request). Ask for an exact endpoint if the personal place is unavailable or permission is missing.' },
       { action: 'EstimateRideWithPlaceClues', function: 'readInteractiveRideEstimate', text: 'For read-only inquiries, use RideInquiryWithPlaceClues.estimate on RideRequest with readInteractiveRideEstimate when the user also requests driving time, provides landmark clues, or the named ride inquiry cannot be used. Pass a given pickup or itinerary point as origin. With authorized device location, omit origin to ask the original PA for fresh phone location and verify its coordinate system. Omit a missing destination so the Action asks for it. Pass only a city established by the user. Keep nearby landmarks separate and preserve ambiguous names for the Action to resolve.' },

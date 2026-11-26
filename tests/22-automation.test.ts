@@ -1,5 +1,6 @@
 import { restaurantServices } from '../packages/ontology/restaurant-services.js';
 import { amapObservationDefinition } from '../packages/ontology/amap-observations.js';
+import { amapRideDefinition } from '../packages/ontology/amap-ride.js';
 import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, estimateWithEndpoints, immediateRideRouteLink,
   prepareWithEndpoints, ridePersonalPlaceLinks } from '../packages/ontology/didi-ride-endpoints.js';
@@ -851,7 +852,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const laterDomains = [
     calendarJourneyDefinition, flightDefinition, luckinDefinition, documentDefinition, fliggyServicesDefinition,
     fliggyFlightBookingDefinition, fliggyHotelDefinition, diningReservations, restaurantServices, tableCheckReservations, marketplaceDefinition, petRideDefinition,
-    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, personalPlaceDefinition, localDeliveryDefinition, localDeliveryTradeDefinition, amapObservationDefinition,
+    travelHandoffDefinition, hotelTransferDefinition, tripHotelDependencyDefinition, itineraryDefinition, personalPlaceDefinition, localDeliveryDefinition, localDeliveryTradeDefinition, amapObservationDefinition, amapRideDefinition,
   ];
   const addedTypes = new Set([
     ...laterDomains.flatMap(domain => domain.objectTypes.map(type => type.apiName)), 'ActionConfirmation', rideWatchType, immediateRideType,
@@ -907,7 +908,7 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   geometry.submissionCriteria = [];
   geometry.function = 'registerGeometry';
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'RideInquiryWithPlaceClues' && type.apiName !== immediateRideInterface &&
-    !amapObservationDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
+    ![...amapObservationDefinition.interfaceTypes, ...amapRideDefinition.interfaceTypes].some(item => item.apiName === type.apiName) &&
     !travelHandoffDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !fliggyServicesDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
     !marketplaceDefinition.interfaceTypes.some(item => item.apiName === type.apiName) &&
