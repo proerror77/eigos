@@ -75,6 +75,8 @@ async function initializeChangeJournal(db: Database) {
       commit_seq bigint GENERATED ALWAYS AS IDENTITY, committed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
       PRIMARY KEY(owner,xact));
     CREATE UNIQUE INDEX IF NOT EXISTS change_commits_order ON ${s}.change_commits(owner,commit_seq);
+    -- The query kernel's Funnel finds new commits across owners by number.
+    CREATE INDEX IF NOT EXISTS change_commits_sequence ON ${s}.change_commits(commit_seq);
     CREATE OR REPLACE FUNCTION ${s}.record_change_commit() RETURNS trigger LANGUAGE plpgsql AS $journal$
     DECLARE prior text := current_setting('eigos.owner', true);
     BEGIN

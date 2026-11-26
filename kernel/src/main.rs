@@ -1,51 +1,82 @@
-//! EIGOS Ontology query kernel (prototype, phases C1 and C2).
+//! EIGOS Ontology query kernel (prototype, phases C1 to C3).
 //!
 //! Loads a snapshot of one publication projection from PostgreSQL into per-type object tables and per-link edge
-//! tables, and executes Object Set plans compiled by the TypeScript planner (`packages/runtime/kernel/`) on
-//! Apache DataFusion. Value semantics follow the reference implementation: predicates are two-valued (a missing value
-//! is null, `ne` holds for null, `not` never sees an unknown), and sets are ordered by the canonical reference key.
+//! tables, follows the commit log to keep them current, and executes Object Set plans compiled by the TypeScript
+//! planner (`packages/runtime/kernel/`) on Apache DataFusion. Value semantics follow the reference implementation:
+//! predicates are two-valued (a missing value is null, `ne` holds for null, `not` never sees an unknown), and sets are
+//! ordered by the canonical reference key.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::{BTreeMap, HashMap, HashSet}, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 
 use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::common::{Column, TableReference};
+use datafusion::common::{Column, ScalarValue};
 use datafusion::datasource::MemTable;
 use datafusion::functions::core::expr_fn::coalesce;
 use datafusion::functions::unicode::expr_fn::strpos;
 use datafusion::functions_aggregate::expr_fn::{avg, bool_or, count, max, min, sum};
 use datafusion::functions_nested::expr_fn::{array_has_all, array_has_any, cardinality, make_array};
-use datafusion::common::ScalarValue;
-use datafusion::logical_expr::{cast, when};
-use datafusion::logical_expr::{lit, Expr, JoinType};
+use datafusion::logical_expr::{cast, lit, when, Expr, JoinType};
 use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
 use futures_util::{pin_mut, TryStreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
-use tokio_postgres::NoTls;
+use tokio::sync::{Mutex, RwLock};
+use tokio_postgres::{Client, IsolationLevel, NoTls};
 
 type Failure = (StatusCode, Json<Value>);
 fn failure(status: StatusCode, message: impl ToString) -> Failure { (status, Json(json!({ "error": message.to_string() }))) }
 fn internal(error: impl ToString) -> Failure { failure(StatusCode::INTERNAL_SERVER_ERROR, error) }
 fn invalid(error: impl ToString) -> Failure { failure(StatusCode::BAD_REQUEST, error) }
+/// The kernel cannot answer from what it has applied; the caller evaluates the query with the reference.
+fn stale(reason: &str) -> Failure { failure(StatusCode::CONFLICT, format!("stale: {reason}")) }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "lowercase")]
 enum Kind { String, Integer, Number, Boolean, Strings }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct ColumnDef { name: String, kind: Kind }
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct TypeDef { name: String, columns: Vec<ColumnDef>, classification: Option<String> }
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct LoadRequest { database: String, schema: String, projection: String, types: Vec<TypeDef>, links: Vec<String>, ranks: HashMap<String, i64> }
 
-/// A loaded projection: the DataFusion context with its tables, each type's column kinds, and the types whose rows carry
-/// a classification (as `$rank` and comma-joined `$compartments`).
-struct Snapshot { ctx: SessionContext, kinds: HashMap<String, HashMap<String, Kind>>, classified: std::collections::HashSet<String>, links: Vec<String>, objects: usize, edges: usize, bytes: usize }
-type Shared = Arc<RwLock<Option<Snapshot>>>;
+/// One type's rows: the rows loaded or last compacted, and every row changed since, by (owner, id); a changed row of
+/// `None` was deleted. Reads see the base rows other than the changed ones, and the changed rows that exist.
+#[derive(Clone)]
+struct TypeStore {
+  def: Arc<TypeDef>, schema: SchemaRef, base: Arc<MemTable>, base_rows: usize,
+  changed: Arc<BTreeMap<(String, String), Option<Value>>>,
+  /// The changed keys (`$cowner`, `$cid`) and the changed rows that exist; none while nothing has changed.
+  overlay: Option<(Arc<MemTable>, Arc<MemTable>)>,
+}
+
+/// One link's edges, kept the same way; an edge changed to `false` was removed.
+#[derive(Clone)]
+struct LinkStore {
+  base: Arc<MemTable>, base_rows: usize,
+  changed: Arc<BTreeMap<(String, String, String), bool>>,
+  /// The changed keys (`$cowner`, `$cfrom`, `$cto`) and the changed edges that exist.
+  overlay: Option<(Arc<MemTable>, Arc<MemTable>)>,
+}
+
+/// One version of a loaded projection. A query reads the version that is current when it starts; applying commits makes
+/// a new version that shares every table the commits do not change.
+#[derive(Clone)]
+struct Snapshot {
+  ctx: SessionContext, request: Arc<LoadRequest>,
+  kinds: HashMap<String, HashMap<String, Kind>>, classified: HashSet<String>, links: Vec<String>,
+  types: HashMap<String, TypeStore>, edges: HashMap<String, LinkStore>,
+  /// The last commit applied for each owner: the rows reflect it and every earlier commit of that owner.
+  applied: HashMap<String, i64>,
+  objects: usize, edge_count: usize, bytes: usize,
+}
+
+/// The current snapshot version, and the Funnel: the one writer that applies commits, with its database connection.
+struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>> }
+type Shared = Arc<AppState>;
 
 fn column(name: &str) -> Expr { Expr::Column(Column::new_unqualified(name)) }
 fn data_type(kind: Kind) -> DataType {
@@ -54,13 +85,14 @@ fn data_type(kind: Kind) -> DataType {
     Kind::Strings => DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
   }
 }
-fn object_table(kind: &str) -> TableReference { TableReference::bare(format!("o:{kind}")) }
-fn edge_table(link: &str) -> TableReference { TableReference::bare(format!("l:{link}")) }
 /// The canonical reference key: `canonical({type,id})` orders by the JSON-encoded id, then the JSON-encoded type.
 fn ref_key(kind: &str, id: &str) -> String { format!("{}{}", serde_json::to_string(id).unwrap(), serde_json::to_string(kind).unwrap()) }
 fn quote(identifier: &str) -> String { format!("\"{}\"", identifier.replace('"', "\"\"")) }
 
 const BATCH: usize = 65536;
+/// Changed rows past which a type's or link's changes are folded into its base rows: at least this many, or a sixteenth of
+/// the base rows. EIGOS_KERNEL_COMPACT overrides it.
+fn compact_limit() -> usize { std::env::var("EIGOS_KERNEL_COMPACT").ok().and_then(|v| v.parse().ok()).unwrap_or(4096) }
 
 fn partitions() -> usize { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) }
 
@@ -71,55 +103,78 @@ fn spread(batches: Vec<RecordBatch>, parts: usize) -> Vec<Vec<RecordBatch>> {
   out
 }
 
-async fn load(request: LoadRequest) -> Result<Snapshot, Failure> {
-  let (client, connection) = tokio_postgres::connect(&request.database, NoTls).await.map_err(internal)?;
+fn object_schema(def: &TypeDef) -> SchemaRef {
+  let mut fields = vec![Field::new("$owner", DataType::Utf8, false), Field::new("$id", DataType::Utf8, false), Field::new("$key", DataType::Utf8, false)];
+  for c in &def.columns { fields.push(Field::new(&c.name, data_type(c.kind), true)); }
+  if def.classification.is_some() {
+    fields.push(Field::new("$rank", DataType::Int64, true));
+    fields.push(Field::new("$compartments", data_type(Kind::Strings), true));
+  }
+  Arc::new(Schema::new(fields))
+}
+fn strings_schema(names: &[&str]) -> SchemaRef { Arc::new(Schema::new(names.iter().map(|name| Field::new(*name, DataType::Utf8, false)).collect::<Vec<_>>())) }
+fn edge_schema() -> SchemaRef { strings_schema(&["$owner", "from_id", "to_id"]) }
+
+/// A table of string columns.
+fn strings_table(schema: SchemaRef, columns: Vec<StringBuilder>) -> Result<Arc<MemTable>, Failure> {
+  let arrays = columns.into_iter().map(|mut b| Arc::new(b.finish()) as ArrayRef).collect();
+  let batch = RecordBatch::try_new(schema.clone(), arrays).map_err(internal)?;
+  Ok(Arc::new(MemTable::try_new(schema, vec![vec![batch]]).map_err(internal)?))
+}
+/// A table over batches, which may be none.
+fn table_of(schema: SchemaRef, mut batches: Vec<RecordBatch>) -> Result<Arc<MemTable>, Failure> {
+  if batches.is_empty() { batches.push(RecordBatch::new_empty(schema.clone())); }
+  Ok(Arc::new(MemTable::try_new(schema, spread(batches, partitions())).map_err(internal)?))
+}
+
+async fn connect(database: &str) -> Result<Client, Failure> {
+  let (client, connection) = tokio_postgres::connect(database, NoTls).await.map_err(internal)?;
   tokio::spawn(async move { let _ = connection.await; });
+  Ok(client)
+}
+
+/// Loads a projection, and the commits it reflects, from one snapshot of the database.
+async fn load(request: LoadRequest) -> Result<Snapshot, Failure> {
+  let mut client = connect(&request.database).await?;
+  let tx = client.build_transaction().isolation_level(IsolationLevel::RepeatableRead).read_only(true).start().await.map_err(internal)?;
   let parts = partitions();
   let ctx = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(parts));
   let schema = quote(&request.schema);
-  let mut kinds = HashMap::new();
-  let mut classified = std::collections::HashSet::new();
-  let (mut objects, mut edges, mut bytes) = (0, 0, 0usize);
-  for kind in &request.types {
-    let mut fields = vec![Field::new("$owner", DataType::Utf8, false), Field::new("$id", DataType::Utf8, false),
-      Field::new("$key", DataType::Utf8, false), Field::new("$revision", DataType::Int64, false)];
-    for c in &kind.columns {
-      fields.push(Field::new(&c.name, data_type(c.kind), true));
-    }
-    if kind.classification.is_some() {
-      fields.push(Field::new("$rank", DataType::Int64, true));
-      fields.push(Field::new("$compartments", data_type(Kind::Strings), true));
-      classified.insert(kind.name.clone());
-    }
-    let table: SchemaRef = Arc::new(Schema::new(fields));
-    let sql = format!("SELECT owner, id, revision::bigint, properties::text FROM {schema}.objects WHERE projection::text=$1 AND type=$2");
-    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&request.projection, &kind.name];
-    let rows = client.query_raw(sql.as_str(), params).await.map_err(internal)?;
+  let (mut kinds, mut classified, mut types) = (HashMap::new(), HashSet::new(), HashMap::new());
+  let (mut objects, mut edge_count, mut bytes) = (0, 0, 0usize);
+  for def in &request.types {
+    let table = object_schema(def);
+    let sql = format!("SELECT owner, id, properties::text FROM {schema}.objects WHERE projection::text=$1 AND type=$2");
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&request.projection, &def.name];
+    let rows = tx.query_raw(sql.as_str(), params).await.map_err(internal)?;
     pin_mut!(rows);
     let mut batches = Vec::new();
-    let mut builder = ObjectBuilder::new(&kind.columns, kind.classification.is_some());
+    let mut builder = ObjectBuilder::new(def);
     while let Some(row) = rows.try_next().await.map_err(internal)? {
-      let owner: String = row.get(0);
-      let id: String = row.get(1);
-      let revision: i64 = row.get(2);
-      let properties: Value = serde_json::from_str(row.get::<_, &str>(3)).map_err(internal)?;
-      builder.push(&kind.name, &owner, &id, revision, &properties, &kind.columns, kind.classification.as_deref(), &request.ranks);
+      let properties: Value = serde_json::from_str(row.get::<_, &str>(2)).map_err(internal)?;
+      builder.push(def, row.get(0), row.get(1), &properties, &request.ranks);
       objects += 1;
-      if builder.len == BATCH { batches.push(builder.finish(table.clone())?); builder = ObjectBuilder::new(&kind.columns, kind.classification.is_some()); }
+      if builder.len == BATCH { batches.push(builder.finish(table.clone())?); builder = ObjectBuilder::new(def); }
     }
-    if builder.len > 0 || batches.is_empty() { batches.push(builder.finish(table.clone())?); }
+    if builder.len > 0 { batches.push(builder.finish(table.clone())?); }
     bytes += batches.iter().map(RecordBatch::get_array_memory_size).sum::<usize>();
-    let memory = MemTable::try_new(table.clone(), spread(batches, parts)).map_err(internal)?;
-    ctx.register_table(object_table(&kind.name), Arc::new(memory)).map_err(internal)?;
-    kinds.insert(kind.name.clone(), kind.columns.iter().map(|c| (c.name.clone(), c.kind)).collect());
+    let base_rows = batches.iter().map(RecordBatch::num_rows).sum();
+    if def.classification.is_some() { classified.insert(def.name.clone()); }
+    kinds.insert(def.name.clone(), def.columns.iter().map(|c| (c.name.clone(), c.kind)).collect());
+    types.insert(def.name.clone(), TypeStore { def: Arc::new(def.clone()), schema: table.clone(), base: table_of(table, batches)?, base_rows,
+      changed: Arc::default(), overlay: None });
   }
-  let edge_schema: SchemaRef = Arc::new(Schema::new(vec![Field::new("$owner", DataType::Utf8, false),
-    Field::new("from_id", DataType::Utf8, false), Field::new("to_id", DataType::Utf8, false)]));
   let mut by_link: HashMap<String, (StringBuilder, StringBuilder, StringBuilder, Vec<RecordBatch>, usize)> = HashMap::new();
   for link in &request.links { by_link.insert(link.clone(), (StringBuilder::new(), StringBuilder::new(), StringBuilder::new(), Vec::new(), 0)); }
+  let flush = |entry: &mut (StringBuilder, StringBuilder, StringBuilder, Vec<RecordBatch>, usize)| -> Result<(), Failure> {
+    let batch = RecordBatch::try_new(edge_schema(), vec![Arc::new(entry.0.finish()) as ArrayRef, Arc::new(entry.1.finish()), Arc::new(entry.2.finish())]).map_err(internal)?;
+    entry.3.push(batch);
+    entry.4 = 0;
+    Ok(())
+  };
   let sql = format!("SELECT owner, type, from_id, to_id FROM {schema}.links WHERE projection::text=$1");
   let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&request.projection];
-  let rows = client.query_raw(sql.as_str(), params).await.map_err(internal)?;
+  let rows = tx.query_raw(sql.as_str(), params).await.map_err(internal)?;
   pin_mut!(rows);
   while let Some(row) = rows.try_next().await.map_err(internal)? {
     let link: String = row.get(1);
@@ -128,47 +183,223 @@ async fn load(request: LoadRequest) -> Result<Snapshot, Failure> {
     entry.1.append_value(row.get::<_, &str>(2));
     entry.2.append_value(row.get::<_, &str>(3));
     entry.4 += 1;
-    edges += 1;
-    if entry.4 == BATCH {
-      let batch = RecordBatch::try_new(edge_schema.clone(), vec![Arc::new(entry.0.finish()) as ArrayRef, Arc::new(entry.1.finish()), Arc::new(entry.2.finish())]).map_err(internal)?;
-      entry.3.push(batch);
-      entry.4 = 0;
-    }
+    edge_count += 1;
+    if entry.4 == BATCH { flush(entry)?; }
   }
+  let mut edges = HashMap::new();
   for (link, mut entry) in by_link {
-    if entry.4 > 0 || entry.3.is_empty() {
-      let batch = RecordBatch::try_new(edge_schema.clone(), vec![Arc::new(entry.0.finish()) as ArrayRef, Arc::new(entry.1.finish()), Arc::new(entry.2.finish())]).map_err(internal)?;
-      entry.3.push(batch);
-    }
+    if entry.4 > 0 { flush(&mut entry)?; }
     bytes += entry.3.iter().map(RecordBatch::get_array_memory_size).sum::<usize>();
-    let memory = MemTable::try_new(edge_schema.clone(), spread(entry.3, parts)).map_err(internal)?;
-    ctx.register_table(edge_table(&link), Arc::new(memory)).map_err(internal)?;
+    let base_rows = entry.3.iter().map(RecordBatch::num_rows).sum();
+    edges.insert(link, LinkStore { base: table_of(edge_schema(), entry.3)?, base_rows, changed: Arc::default(), overlay: None });
   }
-  Ok(Snapshot { ctx, kinds, classified, links: request.links, objects, edges, bytes })
+  // Each owner's commits become visible in commit order, so the latest one this snapshot sees marks every change it holds.
+  let positions = tx.query(format!("SELECT owner, max(commit_seq) FROM {schema}.change_commits GROUP BY owner").as_str(), &[]).await.map_err(internal)?;
+  let applied = positions.iter().map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1))).collect();
+  tx.commit().await.map_err(internal)?;
+  let links = request.links.clone();
+  Ok(Snapshot { ctx, request: Arc::new(request), kinds, classified, links, types, edges, applied, objects, edge_count, bytes })
+}
+
+impl Snapshot {
+  /// A type's current rows: its base rows other than the changed ones, and the changed rows that exist.
+  fn object_rows(&self, kind: &str) -> Result<DataFrame, Failure> {
+    let store = self.types.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
+    let mut frame = self.ctx.read_table(store.base.clone()).map_err(internal)?;
+    if let Some((keys, live)) = &store.overlay {
+      frame = frame.join(self.ctx.read_table(keys.clone()).map_err(internal)?, JoinType::LeftAnti, &["$owner", "$id"], &["$cowner", "$cid"], None).map_err(internal)?
+        .union(self.ctx.read_table(live.clone()).map_err(internal)?).map_err(internal)?;
+    }
+    Ok(frame)
+  }
+  /// A link's current edges, the same way.
+  fn edge_rows(&self, link: &str) -> Result<DataFrame, Failure> {
+    let store = self.edges.get(link).ok_or_else(|| invalid(format!("Link {link} is not loaded")))?;
+    let mut frame = self.ctx.read_table(store.base.clone()).map_err(internal)?;
+    if let Some((keys, live)) = &store.overlay {
+      frame = frame.join(self.ctx.read_table(keys.clone()).map_err(internal)?, JoinType::LeftAnti,
+        &["$owner", "from_id", "to_id"], &["$cowner", "$cfrom", "$cto"], None).map_err(internal)?
+        .union(self.ctx.read_table(live.clone()).map_err(internal)?).map_err(internal)?;
+    }
+    Ok(frame)
+  }
+  fn position(&self, owner: &str) -> i64 { self.applied.get(owner).copied().unwrap_or(0) }
+}
+
+impl TypeStore {
+  /// Rebuilds the tables of the changed rows.
+  fn refresh(&mut self, ranks: &HashMap<String, i64>) -> Result<(), Failure> {
+    if self.changed.is_empty() { self.overlay = None; return Ok(()); }
+    let (mut owners, mut ids) = (StringBuilder::new(), StringBuilder::new());
+    let mut builder = ObjectBuilder::new(&self.def);
+    for ((owner, id), row) in self.changed.iter() {
+      owners.append_value(owner);
+      ids.append_value(id);
+      if let Some(properties) = row { builder.push(&self.def, owner, id, properties, ranks); }
+    }
+    let live = builder.finish(self.schema.clone())?;
+    self.overlay = Some((strings_table(strings_schema(&["$cowner", "$cid"]), vec![owners, ids])?,
+      Arc::new(MemTable::try_new(self.schema.clone(), vec![vec![live]]).map_err(internal)?)));
+    Ok(())
+  }
+}
+
+impl LinkStore {
+  fn refresh(&mut self) -> Result<(), Failure> {
+    if self.changed.is_empty() { self.overlay = None; return Ok(()); }
+    let (mut owners, mut froms, mut tos) = (StringBuilder::new(), StringBuilder::new(), StringBuilder::new());
+    let (mut live_owners, mut live_froms, mut live_tos) = (StringBuilder::new(), StringBuilder::new(), StringBuilder::new());
+    for ((owner, from, to), present) in self.changed.iter() {
+      owners.append_value(owner);
+      froms.append_value(from);
+      tos.append_value(to);
+      if *present { live_owners.append_value(owner); live_froms.append_value(from); live_tos.append_value(to); }
+    }
+    self.overlay = Some((strings_table(strings_schema(&["$cowner", "$cfrom", "$cto"]), vec![owners, froms, tos])?,
+      strings_table(edge_schema(), vec![live_owners, live_froms, live_tos])?));
+    Ok(())
+  }
+}
+
+/// Folds a type's changed rows into its base rows once there are many, so reads stop excluding them.
+async fn compact_type(snapshot: &mut Snapshot, kind: &str) -> Result<(), Failure> {
+  let store = &snapshot.types[kind];
+  if store.changed.len() <= compact_limit().max(store.base_rows / 16) { return Ok(()); }
+  let batches = snapshot.object_rows(kind)?.collect().await.map_err(internal)?;
+  let rows = batches.iter().map(RecordBatch::num_rows).sum();
+  let store = snapshot.types.get_mut(kind).unwrap();
+  store.base = table_of(store.schema.clone(), batches)?;
+  store.base_rows = rows;
+  store.changed = Arc::default();
+  store.overlay = None;
+  Ok(())
+}
+async fn compact_link(snapshot: &mut Snapshot, link: &str) -> Result<(), Failure> {
+  let store = &snapshot.edges[link];
+  if store.changed.len() <= compact_limit().max(store.base_rows / 16) { return Ok(()); }
+  let batches = snapshot.edge_rows(link)?.collect().await.map_err(internal)?;
+  let rows = batches.iter().map(RecordBatch::num_rows).sum();
+  let store = snapshot.edges.get_mut(link).unwrap();
+  store.base = table_of(edge_schema(), batches)?;
+  store.base_rows = rows;
+  store.changed = Arc::default();
+  store.overlay = None;
+  Ok(())
+}
+
+/// One owner's commits after `applied`: the latest commit, and in commit order each object's stored value after an edit
+/// (none when deleted) and each link change.
+struct Commits { latest: i64, edits: Vec<(String, String, Option<String>)>, links: Vec<(String, String, String, String)> }
+
+async fn read_commits(client: &mut Client, snapshot: &Snapshot, owner: &str, applied: i64) -> Result<Commits, Failure> {
+  let schema = quote(&snapshot.request.schema);
+  let tx = client.build_transaction().isolation_level(IsolationLevel::RepeatableRead).read_only(true).start().await.map_err(internal)?;
+  // Owner isolation admits this owner's rows.
+  tx.execute("SELECT set_config('eigos.owner', $1, true)", &[&owner]).await.map_err(internal)?;
+  let latest: i64 = tx.query_one(format!("SELECT coalesce(max(commit_seq), 0)::bigint FROM {schema}.change_commits WHERE owner=$1").as_str(), &[&owner])
+    .await.map_err(internal)?.get(0);
+  if latest <= applied {
+    tx.commit().await.map_err(internal)?;
+    return Ok(Commits { latest, edits: Vec::new(), links: Vec::new() });
+  }
+  let projection = &snapshot.request.projection;
+  let edits = tx.query(format!("SELECT h.type, h.id, h.after_values::text FROM {schema}.change_commits c
+      JOIN {schema}.edit_history h ON h.xact=c.xact AND h.owner=c.owner
+      WHERE c.owner=$1 AND c.commit_seq>$2 AND c.commit_seq<=$3 AND h.projection::text=$4 ORDER BY c.commit_seq, h.sequence").as_str(),
+      &[&owner, &applied, &latest, projection]).await.map_err(internal)?
+    .into_iter().map(|row| (row.get(0), row.get(1), row.get(2))).collect();
+  let links = tx.query(format!("SELECT l.type, l.from_id, l.to_id, l.operation FROM {schema}.change_commits c
+      JOIN {schema}.link_history l ON l.xact=c.xact AND l.owner=c.owner
+      WHERE c.owner=$1 AND c.commit_seq>$2 AND c.commit_seq<=$3 AND l.projection::text=$4 ORDER BY c.commit_seq, l.sequence").as_str(),
+      &[&owner, &applied, &latest, projection]).await.map_err(internal)?
+    .into_iter().map(|row| (row.get(0), row.get(1), row.get(2), row.get(3))).collect();
+  tx.commit().await.map_err(internal)?;
+  Ok(Commits { latest, edits, links })
+}
+
+/// Applies an owner's commits after the last one applied, up to its latest committed one, as a new snapshot version.
+async fn catch_up(state: &AppState, owner: &str) -> Result<(), Failure> {
+  let mut funnel = state.funnel.lock().await;
+  let Some(current) = state.snapshot.read().await.clone() else { return Ok(()) };
+  let applied = current.position(owner);
+  if funnel.is_none() { *funnel = Some(connect(&current.request.database).await?); }
+  let commits = match read_commits(funnel.as_mut().unwrap(), &current, owner, applied).await {
+    Ok(commits) => commits,
+    Err(error) => { *funnel = None; return Err(error); }
+  };
+  if commits.latest <= applied { return Ok(()); }
+  let mut next = (*current).clone();
+  let (mut types, mut links) = (HashSet::new(), HashSet::new());
+  for (kind, id, after) in commits.edits {
+    let Some(store) = next.types.get_mut(&kind) else { continue };
+    let row = match after { Some(text) => Some(serde_json::from_str::<Value>(&text).map_err(internal)?), None => None };
+    Arc::make_mut(&mut store.changed).insert((owner.to_string(), id), row);
+    types.insert(kind);
+  }
+  for (link, from, to, operation) in commits.links {
+    let Some(store) = next.edges.get_mut(&link) else { continue };
+    Arc::make_mut(&mut store.changed).insert((owner.to_string(), from, to), operation == "link");
+    links.insert(link);
+  }
+  let ranks = next.request.ranks.clone();
+  for kind in &types { next.types.get_mut(kind).unwrap().refresh(&ranks)?; compact_type(&mut next, kind).await?; }
+  for link in &links { next.edges.get_mut(link).unwrap().refresh()?; compact_link(&mut next, link).await?; }
+  next.applied.insert(owner.to_string(), commits.latest);
+  *state.snapshot.write().await = Some(Arc::new(next));
+  Ok(())
+}
+
+/// The latest commit of every owner that committed after `floor`.
+async fn latest_commits(funnel: &mut Option<Client>, snapshot: &Snapshot, floor: i64) -> Result<Vec<(String, i64)>, Failure> {
+  if funnel.is_none() { *funnel = Some(connect(&snapshot.request.database).await?); }
+  let schema = quote(&snapshot.request.schema);
+  let rows = funnel.as_ref().unwrap().query(format!("SELECT owner, max(commit_seq) FROM {schema}.change_commits WHERE commit_seq>$1 GROUP BY owner").as_str(), &[&floor])
+    .await.map_err(internal)?;
+  Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
+}
+
+/// Keeps every owner's rows current between queries. Queries do not rely on it: each one first applies its owner's
+/// commits up to the version it needs.
+async fn follow(state: Shared, every: Duration) {
+  let mut floor: Option<i64> = None;
+  loop {
+    tokio::time::sleep(every).await;
+    let Some(snapshot) = state.snapshot.read().await.clone() else { continue };
+    let from = floor.unwrap_or_else(|| (snapshot.applied.values().copied().max().unwrap_or(0) - 1000).max(0));
+    let found = {
+      let mut funnel = state.funnel.lock().await;
+      match latest_commits(&mut funnel, &snapshot, from).await { Ok(found) => found, Err(_) => { *funnel = None; continue; } }
+    };
+    let mut highest = from;
+    for (owner, latest) in found {
+      highest = highest.max(latest);
+      if latest > snapshot.position(&owner) { let _ = catch_up(&state, &owner).await; }
+    }
+    // Commits of different owners can become visible out of number order, so the next poll looks back over a margin.
+    floor = Some((highest - 1000).max(0));
+  }
 }
 
 enum ValueBuilder { String(StringBuilder), Integer(Int64Builder), Number(Float64Builder), Boolean(BooleanBuilder), Strings(ListBuilder<StringBuilder>) }
 
-struct ObjectBuilder { owner: StringBuilder, id: StringBuilder, key: StringBuilder, revision: Int64Builder, values: Vec<ValueBuilder>,
+struct ObjectBuilder { owner: StringBuilder, id: StringBuilder, key: StringBuilder, values: Vec<ValueBuilder>,
   label: Option<(Int64Builder, ListBuilder<StringBuilder>)>, len: usize }
 
 impl ObjectBuilder {
-  fn new(columns: &[ColumnDef], classified: bool) -> Self {
-    let values = columns.iter().map(|c| match c.kind {
+  fn new(def: &TypeDef) -> Self {
+    let values = def.columns.iter().map(|c| match c.kind {
       Kind::String => ValueBuilder::String(StringBuilder::new()), Kind::Integer => ValueBuilder::Integer(Int64Builder::new()),
       Kind::Number => ValueBuilder::Number(Float64Builder::new()), Kind::Boolean => ValueBuilder::Boolean(BooleanBuilder::new()),
       Kind::Strings => ValueBuilder::Strings(ListBuilder::new(StringBuilder::new())),
     }).collect();
-    Self { owner: StringBuilder::new(), id: StringBuilder::new(), key: StringBuilder::new(), revision: Int64Builder::new(), values,
-      label: classified.then(|| (Int64Builder::new(), ListBuilder::new(StringBuilder::new()))), len: 0 }
+    Self { owner: StringBuilder::new(), id: StringBuilder::new(), key: StringBuilder::new(), values,
+      label: def.classification.is_some().then(|| (Int64Builder::new(), ListBuilder::new(StringBuilder::new()))), len: 0 }
   }
-  fn push(&mut self, kind: &str, owner: &str, id: &str, revision: i64, properties: &Value, columns: &[ColumnDef],
-    classification: Option<&str>, ranks: &HashMap<String, i64>) {
+  fn push(&mut self, def: &TypeDef, owner: &str, id: &str, properties: &Value, ranks: &HashMap<String, i64>) {
     self.owner.append_value(owner);
     self.id.append_value(id);
-    self.key.append_value(ref_key(kind, id));
-    self.revision.append_value(revision);
-    for (builder, c) in self.values.iter_mut().zip(columns) {
+    self.key.append_value(ref_key(&def.name, id));
+    for (builder, c) in self.values.iter_mut().zip(&def.columns) {
       let value = properties.get(&c.name);
       // The published schema validated stored values, so a value of another kind cannot occur; it reads as null.
       match builder {
@@ -182,7 +413,7 @@ impl ObjectBuilder {
         },
       }
     }
-    if let (Some((rank, compartments)), Some(name)) = (self.label.as_mut(), classification) {
+    if let (Some((rank, compartments)), Some(name)) = (self.label.as_mut(), def.classification.as_deref()) {
       // A row classification is `{sensitivity, compartments}`; a missing one adds nothing to the observed label.
       let label = properties.get(name).filter(|v| !v.is_null());
       rank.append_option(label.and_then(|l| l.get("sensitivity")).and_then(Value::as_str).and_then(|s| ranks.get(s).copied()));
@@ -199,7 +430,7 @@ impl ObjectBuilder {
     self.len += 1;
   }
   fn finish(mut self, schema: SchemaRef) -> Result<RecordBatch, Failure> {
-    let mut arrays: Vec<ArrayRef> = vec![Arc::new(self.owner.finish()), Arc::new(self.id.finish()), Arc::new(self.key.finish()), Arc::new(self.revision.finish())];
+    let mut arrays: Vec<ArrayRef> = vec![Arc::new(self.owner.finish()), Arc::new(self.id.finish()), Arc::new(self.key.finish())];
     for builder in self.values.iter_mut() {
       arrays.push(match builder {
         ValueBuilder::String(b) => Arc::new(b.finish()), ValueBuilder::Integer(b) => Arc::new(b.finish()),
@@ -288,7 +519,13 @@ struct MemberSpec { r#type: String, #[serde(default)] track: bool, markings: Opt
 
 #[derive(Deserialize)]
 struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(default)] members: Vec<MemberSpec>,
-  #[serde(default)] rows: HashMap<String, Predicate>, #[serde(default)] derived: HashMap<String, Vec<DerivedSpec>> }
+  #[serde(default)] rows: HashMap<String, Predicate>, #[serde(default)] derived: HashMap<String, Vec<DerivedSpec>>,
+  /// The projection the planner compiled for; a kernel holding another one leaves the query to the reference.
+  projection: Option<String>,
+  /// The owner's latest commit when the query started: the kernel answers only from a version that includes it.
+  #[serde(rename = "minCommit")] min_commit: Option<i64>,
+  /// How long the query may wait for the kernel to apply that commit.
+  #[serde(rename = "waitMs")] wait_ms: Option<u64> }
 
 /// One row set the evaluation reads, as the reference reads it: `ids` has one `$id` column, and `enrich` says whether the
 /// reference evaluates the rows' derived properties.
@@ -404,7 +641,7 @@ fn refs_frame(ctx: &SessionContext, refs: &[(String, String)]) -> Result<DataFra
 /// The rows of a type the query may read: the owner's rows under the type's row predicate, without derived columns.
 async fn base(snapshot: &Snapshot, owner: &Ctx, kind: &str) -> Result<DataFrame, Failure> {
   let kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
-  let mut frame = snapshot.ctx.table(object_table(kind)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
+  let mut frame = snapshot.object_rows(kind)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
   if let Some(rows) = owner.rows.get(kind) { frame = frame.filter(predicate(rows, kinds)?).map_err(internal)?; }
   Ok(frame)
 }
@@ -550,7 +787,7 @@ async fn linked_frame(snapshot: &Snapshot, owner: &Ctx, kind: &str, steps: &[Lin
     if !step.visible { reach = reach.filter(lit(false)).map_err(internal)?; break; }
     if !snapshot.links.contains(&step.link) { return Err(invalid(format!("Link {} is not loaded", step.link))); }
     let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
-    let edges = snapshot.ctx.table(edge_table(&step.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+    let edges = snapshot.edge_rows(&step.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
       .select(vec![column(from).alias("$efrom"), column(to).alias("$eto")]).map_err(internal)?;
     let visible = base(snapshot, owner, &step.target).await?.select(vec![column("$id").alias("$visible")]).map_err(internal)?;
     reach = reach.join(edges, JoinType::Inner, &["$node"], &["$efrom"], None).map_err(internal)?
@@ -652,7 +889,7 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
             let sources = current.clone().filter(column("$type").eq(lit(m.source.clone()))).map_err(internal)?
               .select(vec![column("$id").alias("source")]).map_err(internal)?;
             let (from, to) = if m.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
-            let edges = ctx.table(edge_table(&m.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+            let edges = snapshot.edge_rows(&m.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
               .join(sources, JoinType::LeftSemi, &[from], &["source"], None).map_err(internal)?
               .select(vec![column(to).alias("target")]).map_err(internal)?;
             let reached = objects(snapshot, owner, &m.target, None).await?.join(edges, JoinType::LeftSemi, &["$id"], &["target"], None).map_err(internal)?;
@@ -712,7 +949,7 @@ fn expression_reads<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, kind: &'a str, e
           if !step.visible { return Ok(()); }
           let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
           let sources = frontier.select(vec![column("$id").alias("$fid")]).map_err(internal)?;
-          let edges = snapshot.ctx.table(edge_table(&step.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+          let edges = snapshot.edge_rows(&step.link)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
             .join(sources, JoinType::LeftSemi, &[from], &["$fid"], None).map_err(internal)?
             .select(vec![column(to).alias("$tid")]).map_err(internal)?;
           frontier = base(snapshot, owner, &step.target).await?.join(edges, JoinType::LeftSemi, &["$id"], &["$tid"], None).map_err(internal)?
@@ -882,25 +1119,51 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
 }
 
 async fn health(State(state): State<Shared>) -> Json<Value> {
-  let snapshot = state.read().await;
-  Json(match snapshot.as_ref() {
-    Some(s) => json!({ "status": "ok", "loaded": true, "objects": s.objects, "edges": s.edges }),
+  let snapshot = state.snapshot.read().await.clone();
+  Json(match snapshot {
+    Some(s) => json!({ "status": "ok", "loaded": true, "projection": s.request.projection, "objects": s.objects, "edges": s.edge_count,
+      "changed": s.types.values().map(|t| t.changed.len()).sum::<usize>() + s.edges.values().map(|l| l.changed.len()).sum::<usize>() }),
     None => json!({ "status": "ok", "loaded": false }),
   })
 }
 
+/// The last commit applied for each owner.
+async fn positions(State(state): State<Shared>) -> Json<Value> {
+  let snapshot = state.snapshot.read().await.clone();
+  Json(json!(snapshot.map(|s| s.applied.clone()).unwrap_or_default()))
+}
+
 async fn load_route(State(state): State<Shared>, Json(request): Json<LoadRequest>) -> Result<Json<Value>, Failure> {
   let started = Instant::now();
+  // The Funnel waits, so no commit is applied to the version this load replaces.
+  let _writer = state.funnel.lock().await;
   let snapshot = load(request).await?;
-  let summary = json!({ "objects": snapshot.objects, "edges": snapshot.edges, "bytes": snapshot.bytes, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 });
-  *state.write().await = Some(snapshot);
+  let summary = json!({ "objects": snapshot.objects, "edges": snapshot.edge_count, "bytes": snapshot.bytes, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 });
+  *state.snapshot.write().await = Some(Arc::new(snapshot));
   Ok(Json(summary))
 }
 
 async fn query_route(State(state): State<Shared>, Json(request): Json<QueryRequest>) -> Result<Json<Value>, Failure> {
-  let snapshot = state.read().await;
-  let snapshot = snapshot.as_ref().ok_or_else(|| failure(StatusCode::SERVICE_UNAVAILABLE, "No projection is loaded"))?;
-  Ok(Json(query(snapshot, request).await?))
+  let unloaded = || failure(StatusCode::SERVICE_UNAVAILABLE, "No projection is loaded");
+  let mut snapshot = state.snapshot.read().await.clone().ok_or_else(unloaded)?;
+  if request.projection.as_ref().is_some_and(|p| p != &snapshot.request.projection) { return Err(stale("the kernel holds another projection")); }
+  if let Some(needed) = request.min_commit {
+    if snapshot.position(&request.owner) < needed {
+      // The owner's commits are applied in a task of their own, so a query that stops waiting does not interrupt them.
+      let task = tokio::spawn({ let state = state.clone(); let owner = request.owner.clone(); async move { catch_up(&state, &owner).await } });
+      match tokio::time::timeout(Duration::from_millis(request.wait_ms.unwrap_or(2000)), task).await {
+        Ok(Ok(result)) => result?,
+        Ok(Err(error)) => return Err(internal(error)),
+        Err(_) => return Err(stale("the kernel is still applying the owner's commits")),
+      }
+      snapshot = state.snapshot.read().await.clone().ok_or_else(unloaded)?;
+      if snapshot.position(&request.owner) < needed { return Err(stale("the kernel has not seen the commit")); }
+    }
+  }
+  let commit = snapshot.position(&request.owner);
+  let mut value = query(&snapshot, request).await?;
+  value["commit"] = json!(commit);
+  Ok(Json(value))
 }
 
 #[tokio::main]
@@ -909,8 +1172,11 @@ async fn main() {
   let port: u16 = std::env::var("EIGOS_KERNEL_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
   let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await.expect("bind loopback");
   println!("{}", json!({ "event": "kernel_listening", "port": listener.local_addr().unwrap().port() }));
-  let state: Shared = Arc::new(RwLock::new(None));
-  let app = Router::new().route("/health", get(health)).route("/load", post(load_route)).route("/query", post(query_route))
+  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None) });
+  // EIGOS_KERNEL_POLL_MS sets how often the Funnel looks for new commits; 0 leaves it to the queries.
+  let every = std::env::var("EIGOS_KERNEL_POLL_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1000);
+  if every > 0 { tokio::spawn(follow(state.clone(), Duration::from_millis(every))); }
+  let app = Router::new().route("/health", get(health)).route("/positions", get(positions)).route("/load", post(load_route)).route("/query", post(query_route))
     .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)).with_state(state);
   axum::serve(listener, app).await.expect("serve");
 }
