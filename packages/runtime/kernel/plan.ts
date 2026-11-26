@@ -178,7 +178,9 @@ class Scope {
   }
   /** Tells the kernel how to report the rows it reads of a type; a type the principal may not read has none. */
   describe(type: string, rule?: RowRule) {
-    if (!this.members.has(type)) this.members.set(type, { type, track: rule?.kind === 'rows' && rule.tracked,
+    // In a Scenario the reference records a row dependency for every row it reads, as it does for a policy-bound type.
+    const scenario = Boolean((this.model as { scenario?: string }).scenario);
+    if (!this.members.has(type)) this.members.set(type, { type, track: rule?.kind === 'rows' && rule.tracked || scenario && rule?.kind !== 'deny',
       markings: rule?.kind === 'rows' ? rule.markingsProperty : undefined });
   }
   /**
@@ -487,6 +489,43 @@ export async function compileSet(model: Ontology, access: Access, graph: Objects
     return plan;
   } catch (error) {
     // The reference path reports its own permission, existence and definition errors.
+    if (referenceError(error)) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * The targets of one object's relationship, as `Objects.follow` reads them, or undefined. The reference checks the view's
+ * Interface and the navigation, reads the source object with its derived values through `graph`, then checks the
+ * target type, the Link and its label; a Link label beyond the clearance has no targets. The kernel computes only the
+ * targets, under the target type's row rule.
+ */
+export async function compileFollow(model: Ontology, access: Access, graph: Objects, ref: ObjectRef, link: string, view: string): Promise<KernelPlan | undefined> {
+  const scope = new Scope(model, access);
+  try {
+    if (view !== ref.type) access.definition(model, 'interface', view);
+    const navigation = model.navigation(ref.type, link, view);
+    if (scope.readable(ref.type) === undefined) return undefined;
+    await graph.read(ref);
+    access.read(model, navigation.target);
+    access.definition(model, 'link', navigation.link);
+    const label = model.links.get(navigation.link)?.classification;
+    let compiled: Compiled = empty();
+    if (access.canSeeModelData(label)) {
+      access.observeClassification(label);
+      const target = navigation.target;
+      const readable = scope.readable(target);
+      if (readable === undefined) return undefined;
+      if (readable) {
+        if (!scope.enrich(target)) return undefined;
+        compiled = { set: { op: 'traverse', set: { op: 'refs', refs: [ref], enrich: false },
+          steps: [[{ source: ref.type, link: navigation.link, forward: navigation.forward, target }]] }, types: new Set([target]) };
+      }
+    }
+    const plan = { ...compiled, rows: scope.rows, members: scope.members, derived: scope.derived, enriched: scope.enriched };
+    scopes.set(plan, scope);
+    return plan;
+  } catch (error) {
     if (referenceError(error)) return undefined;
     throw error;
   }

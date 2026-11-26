@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
-import { aggregateWithKernel, evaluateWithKernel, KernelClient, queryWithKernel } from '../packages/runtime/kernel/client.js';
+import { aggregateWithKernel, evaluateWithKernel, followWithKernel, KernelClient, queryWithKernel } from '../packages/runtime/kernel/client.js';
 import { latestCommit } from '../packages/runtime/change-feed.js';
 import { compileSet } from '../packages/runtime/kernel/plan.js';
 import { KernelRegistry } from '../packages/runtime/kernel/registry.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects, querySchema } from '../packages/runtime/objects.js';
+import { Scenarios } from '../packages/runtime/scenarios.js';
 import { fixture, principal } from './fixture.js';
 
 // The kernel binary is built with `cargo build --release --manifest-path kernel/Cargo.toml`.
@@ -271,6 +272,26 @@ async function kernelQuery(f: { kernel: KernelClient; model: Setup['model'] }, a
 async function compareQuery(f: Setup, clearance: Clearance, query: Record<string, unknown>) {
   same(await measured(f, clearance, (access, graph) => kernelQuery(f, access, graph, query)),
     await measured(f, clearance, access => referenceQuery(f, access, query)), JSON.stringify({ clearance, query }));
+}
+
+/**
+ * Compares one object's relationship on both paths: its targets in order, classification, dependencies and markings.
+ * Where the reference reports an error, such as a source beyond the clearance, the kernel leaves the read to it.
+ */
+async function compareFollow(f: Setup, clearance: Clearance, input: { ref: { type: string; id: string }; link: string; view?: string }) {
+  const view = input.view ?? input.ref.type, label = JSON.stringify({ clearance, input });
+  const viaKernel = (access: Access, graph: Objects) => followWithKernel(f.kernel, f.model, access, graph, { ref: input.ref, link: input.link, view, maximum: 1000 });
+  const reference = await measured(f, clearance, (access, graph) => withQueryKernels(noKernel, () => graph.follow(input.ref, input.link, view)))
+    .then(value => ({ value }), (error: Error) => ({ error }));
+  if ('error' in reference) {
+    assert.equal((await measured(f, clearance, viaKernel)).result, undefined, label + ' is left to the reference');
+    return;
+  }
+  same(await measured(f, clearance, async (access, graph) => {
+    const targets = await viaKernel(access, graph);
+    assert(targets, label + ' has a kernel plan');
+    return targets;
+  }), reference.value, label);
 }
 
 test('the query kernel applies object policies, markings, property security and model clearance like the reference', { skip: !binary }, async () => {
@@ -703,6 +724,116 @@ test('the query kernel orders queries by policies, masked cells, derived fields 
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
+test('the query kernel reads a Scenario\'s edits over the live data like the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    const access = await Access.load(f.db, principal);
+    const scenarios = new Scenarios(f.db);
+    const scene = await scenarios.create(access, f.model, { requestId: 'kernel-overlay', name: 'Kernel overlay' });
+    const view = await scenarios.view(access, f.model, scene.id);
+    // Each write has an access of its own: a write must carry the markings its access has read.
+    const writer = async (model: typeof f.model) => new Objects(f.db, model, await Access.load(f.db, principal));
+    const draft = () => writer(view), live = () => writer(f.model);
+    const revision = async (model: typeof f.model, ref: { type: string; id: string }) => (await (await writer(model)).read(ref)).revision;
+    // Edited, created and deleted objects; a removed edge; and an edge replaced at the route's origin.
+    await (await draft()).edit(route('a'), await revision(view, route('a')), { distance: 9 });
+    await (await draft()).edit(place('p1'), await revision(view, place('p1')), { capacity: 5 });
+    await (await draft()).create(route('z'), { id: 'z', name: 'route z', distance: 7, lanes: 2, teams: ['ops'] });
+    await (await draft()).link({ type: 'RouteOrigin', from: route('z'), to: place('p2') });
+    await (await draft()).unlink({ type: 'RouteOrigin', from: route('g'), to: place('p3') });
+    await (await draft()).remove(route('g'), await revision(view, route('g')));
+    await (await draft()).unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+    await (await draft()).link({ type: 'RouteOrigin', from: route('b'), to: place('p2') });
+    // The live data changes after the Scenario staged its edits: a staged edge at a single-valued end shadows a new
+    // live edge there.
+    await (await live()).unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+    await (await live()).link({ type: 'RouteOrigin', from: route('b'), to: place('p4') });
+    await (await live()).edit(route('b'), await revision(f.model, route('b')), { distance: 8 });
+    const g = { ...f, model: view } as unknown as Setup;
+    const sets = [
+      { op: 'query', query: { type: 'Route' } },
+      { op: 'query', query: { type: 'Route', filter: { op: 'gte', property: 'distance', value: 5 } } },
+      { op: 'query', query: { type: 'Route', filter: { op: 'eq', property: 'originCity', value: 'Beijing' } } },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin' }] },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Place' } }, path: [{ link: 'departingRoutes' }] },
+      { op: 'query', query: { type: 'Place', filter: { op: 'gte', property: 'routeCount', value: 2 } } },
+      { op: 'query', query: { type: 'Measured' } },
+      { op: 'refs', objects: [route('a'), route('g'), route('z'), place('p2')] },
+    ];
+    for (const clearance of clearances) {
+      for (const set of sets) await compareSet(g, clearance, set);
+      await compareAggregate(g, clearance, { set: { op: 'query', query: { type: 'Route' } }, groupBy: ['originCity'],
+        metrics: { n: { op: 'count' }, distance: { op: 'sum', property: 'distance' } } });
+      await compareAggregate(g, clearance, { set: { op: 'query', query: { type: 'Place' } }, groupBy: [], metrics: { routes: { op: 'sum', property: 'routeCount' } } });
+      await compareQuery(g, clearance, { type: 'Route', orderBy: [{ property: 'distance', direction: 'desc' }] });
+      await compareQuery(g, clearance, { type: 'Place', orderBy: [{ property: 'totalDistance' }, { property: 'name' }] });
+    }
+    // The Scenario's view is not the live data, so the comparisons above are not of the live data.
+    const routes = async (model: typeof f.model) => (await referenceQuery({ db: f.db, model }, access, { type: 'Route', orderBy: [{ property: 'distance' }] }))
+      .map(item => [item.ref.id, item.properties.distance, item.properties.originCity]);
+    assert.notDeepEqual(await routes(view), await routes(f.model));
+    if (f.model.links.get('RouteOrigin')!.from.cardinality === 'one')
+      assert.deepEqual((await routes(view)).find(([id]) => id === 'b'), ['b', 8, 'Beijing'], 'the staged origin shadows the new live one');
+    // An edit after the kernel read the Scenario is read at the Scenario's new revision.
+    await (await draft()).edit(route('a'), await revision(view, route('a')), { distance: 1 });
+    for (const set of sets.slice(0, 3)) await compareSet(g, undefined, set);
+    await compareQuery(g, undefined, { type: 'Route', orderBy: [{ property: 'distance' }] });
+    // A kernel that predates Scenario overlays would answer from the live data, so the Scenario stays on the reference.
+    // A client of the same kernel whose health reports no protocol, with nothing cached.
+    const predates = Object.assign(Object.create(f.kernel) as KernelClient, { protocol: undefined, health: async () => ({ status: 'ok', loaded: true }) });
+    assert.equal(await evaluateWithKernel(predates, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }), undefined);
+    assert((await evaluateWithKernel(f.kernel, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }))?.items.length);
+    assert.equal((await f.kernel.health()).protocol, 2);
+    // The reference reports a Scenario that is no longer open, so the kernel leaves it to the reference.
+    const current = Number((await f.db.query<{ revision: string }>(`SELECT revision FROM ${f.db.schema}.scenarios WHERE id=$1`, [scene.id])).rows[0]!.revision);
+    await scenarios.discard(access, f.model, scene.id, current);
+    assert.equal(await evaluateWithKernel(f.kernel, view, access, new Objects(f.db, view, access), { set: sets[0] as never, limit: 10 }), undefined);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel follows an object\'s relationships like the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    for (const clearance of clearances) for (const input of [
+      { ref: route('a'), link: 'origin' },
+      { ref: route('e'), link: 'origin' },
+      { ref: place('p1'), link: 'departingRoutes' },
+      { ref: place('p2'), link: 'departingRoutes' },
+      { ref: place('p3'), link: 'departingRoutes' },
+      { ref: place('p1'), link: 'next', view: 'Measured' },
+    ]) await compareFollow(f as unknown as Setup, clearance, input);
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
+    // More targets than the maximum, and a source the principal may not read: the reference reports both.
+    assert.equal(await followWithKernel(f.kernel, f.model, access, graph, { ref: place('p1'), link: 'departingRoutes', view: 'Place', maximum: 1 }), undefined);
+    await assert.rejects(withQueryKernels(noKernel, () => graph.follow(place('p1'), 'departingRoutes', 'Place', 1)), /complete read limit/);
+    assert.equal(await followWithKernel(f.kernel, f.model, access, graph, { ref: route('d'), link: 'origin', view: 'Route', maximum: 10 }), undefined);
+    await assert.rejects(withQueryKernels(noKernel, () => graph.follow(route('d'), 'origin')));
+    // Routed and shadowed relationship reads give the reference's targets.
+    const routed = { mode: 'route' as const, registry: { kernelFor: async () => f.kernel } };
+    const reference = await withQueryKernels(noKernel, () => new Objects(f.db, f.model, access).follow(place('p1'), 'departingRoutes'));
+    assert.deepEqual(await withQueryKernels(routed, () => new Objects(f.db, f.model, access).follow(place('p1'), 'departingRoutes')), reference);
+    const strict = process.env.EIGOS_KERNEL_SHADOW_STRICT;
+    process.env.EIGOS_KERNEL_SHADOW_STRICT = 'true';
+    try {
+      assert.deepEqual(await withQueryKernels({ mode: 'shadow', registry: { kernelFor: async () => f.kernel } },
+        () => new Objects(f.db, f.model, access).follow(place('p1'), 'departingRoutes')), reference);
+    } finally { if (strict === undefined) delete process.env.EIGOS_KERNEL_SHADOW_STRICT; else process.env.EIGOS_KERNEL_SHADOW_STRICT = strict; }
+  } finally { await f.kernel.stop(); await f.close(); }
+  // Targets in id order, byte by byte, which differs from the JSON-encoded order for ids such as `a` and `a!`.
+  const t = await setup();
+  try {
+    const writer = new Objects(t.db, t.model, await Access.load(t.db, principal));
+    for (const id of ['a!', 'a"b', 'Z']) await writer.link({ type: 'RouteOrigin', from: route(id), to: place('p1') });
+    for (const clearance of clearances) {
+      await compareFollow(t as unknown as Setup, clearance, { ref: place('p1'), link: 'departingRoutes' });
+      await compareFollow(t as unknown as Setup, clearance, { ref: request('r3'), link: 'route' });
+    }
+    const ids = (await withQueryKernels(noKernel, async () => (await new Objects(t.db, t.model, await Access.load(t.db, principal))
+      .follow(place('p1'), 'departingRoutes')).map(item => item.ref.id)));
+    assert.deepEqual(ids, ['Z', 'a', 'a!', 'a"b', 'ab', '\u00E9']);
+  } finally { await t.kernel.stop(); await t.close(); }
+});
+
 test('queries answer through the kernel when routed, page with kernel cursors, and fall back to the reference', { skip: !binary }, async () => {
   const f = await setup();
   try {
@@ -847,6 +978,16 @@ test('the kernel answers only in the principal owner\'s context when owner isola
     assert.deepEqual(values(page.items), values(reference.page.items));
     assert.deepEqual(aggregate, reference.aggregate);
   } finally { isolation.ownerIsolation = false; await f.kernel.stop(); await f.close(); }
+});
+
+test('concurrent queries for one projection share one kernel process', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  const registry = new KernelRegistry(undefined, binary, 2, process.env.EIGOS_TEST_DATABASE_URL);
+  try {
+    const clients = await Promise.all(Array.from({ length: 6 }, () => registry.kernelFor(f.db, f.model, true)));
+    assert(clients.every(Boolean), 'every query gets the kernel once it has loaded');
+    assert.equal(new Set(clients.map(client => client!.pid)).size, 1, 'one kernel process holds the projection');
+  } finally { await registry.stop(); await f.kernel.stop(); await f.close(); }
 });
 
 test('a kernel service that already holds the projection is used without loading it again', { skip: !binary }, async () => {
