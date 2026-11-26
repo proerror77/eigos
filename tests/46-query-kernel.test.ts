@@ -639,6 +639,43 @@ test('Object Sets answer through the kernel when routed, page with kernel cursor
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
+test('a routed query is answered by the reference when the kernel fails, and the kernel is opened again later', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  const registry = new KernelRegistry(undefined, binary, 1, process.env.EIGOS_TEST_DATABASE_URL, 0);
+  try {
+    const access = await Access.load(f.db, principal);
+    const set = { op: 'query', query: { type: 'Route' } };
+    const input = { set, groupBy: ['lanes'], metrics: { total: { op: 'count' } } };
+    const reference = new ObjectSets(f.db, 10000, { mode: 'off', registry: { kernelFor: async () => undefined } });
+    const expected = { page: await reference.evaluate(access, f.model, { set, limit: 2 }), aggregate: await reference.aggregate(access, f.model, input) };
+    const viaKernel = (page: { cursor?: string }) => !!(JSON.parse(Buffer.from(page.cursor!, 'base64url').toString()) as { kernel?: unknown }).kernel;
+    // An unreachable kernel and a kernel that holds no projection both leave the query to the reference.
+    const unreachable = KernelClient.connect('http://127.0.0.1:9');
+    const empty = await KernelClient.start(binary!);
+    try {
+      for (const client of [unreachable, empty]) {
+        const sets = new ObjectSets(f.db, 10000, { mode: 'route', registry: { kernelFor: async () => client } });
+        const page = await sets.evaluate(access, f.model, { set, limit: 2 });
+        assert.deepEqual(values(page.items), values(expected.page.items));
+        assert(!viaKernel(page), 'the reference answers');
+        assert.deepEqual(await sets.aggregate(access, f.model, input), expected.aggregate);
+      }
+    } finally { await empty.stop(); }
+    // A kernel lost after it loaded is set aside, and opened again once the retry delay passes.
+    const routed = new ObjectSets(f.db, 10000, { mode: 'route', registry });
+    const first = (await registry.kernelFor(f.db, f.model, true))!;
+    assert(viaKernel(await routed.evaluate(access, f.model, { set, limit: 2 })), 'the kernel answers once loaded');
+    await first.stop();
+    const fallback = await routed.evaluate(access, f.model, { set, limit: 2 });
+    assert.deepEqual(values(fallback.items), values(expected.page.items));
+    assert(!viaKernel(fallback), 'the reference answers after the kernel is lost');
+    const second = (await registry.kernelFor(f.db, f.model, true))!;
+    assert.notEqual(second.pid, first.pid, 'a new kernel process holds the projection');
+    assert(viaKernel(await routed.evaluate(access, f.model, { set, limit: 2 })), 'the new kernel answers');
+    assert.deepEqual(await routed.aggregate(access, f.model, input), expected.aggregate);
+  } finally { await registry.stop(); await f.kernel.stop(); await f.close(); }
+});
+
 test('a kernel service that already holds the projection is used without loading it again', { skip: !binary }, async () => {
   const f = await derivedSetup();
   try {

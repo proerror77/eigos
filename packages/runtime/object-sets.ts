@@ -12,7 +12,7 @@ import { PublishedOntology } from './metadata.js';
 import { nestedValue } from './query-filter.js';
 import { Objects, querySchema } from './objects.js';
 import { projectView } from './object-view.js';
-import { aggregateWithKernel, evaluateWithKernel, type KernelClient } from './kernel/client.js';
+import { aggregateWithKernel, evaluateWithKernel, KernelFailed, type KernelClient } from './kernel/client.js';
 import { defaultKernels, kernelMode, type KernelMode, type KernelRegistry } from './kernel/registry.js';
 
 const setQuerySchema = querySchema.omit({ limit: true, cursor: true, select: true });
@@ -143,7 +143,7 @@ function countShadow(outcome: keyof typeof shadowCounts) {
 export class ObjectSets {
   /** `kernels` sets how evaluation uses the query kernel; by default from EIGOS_KERNEL and the process's kernels. */
   constructor(private readonly db: Database, private readonly maximumObjects = 10000,
-    private readonly kernels: { mode: KernelMode; registry: Pick<KernelRegistry, 'kernelFor'> & Partial<Pick<KernelRegistry, 'reload'>> }
+    private readonly kernels: { mode: KernelMode; registry: Pick<KernelRegistry, 'kernelFor'> & Partial<Pick<KernelRegistry, 'reload' | 'lost'>> }
       = { mode: kernelMode(), registry: defaultKernels() }) {
     if (!Number.isInteger(maximumObjects) || maximumObjects < 1 || maximumObjects > 10000) throw new Error('Object set maximum must be between 1 and 10000');
   }
@@ -153,6 +153,18 @@ export class ObjectSets {
    */
   private kernelAllowed(model: PublishedOntology, existing?: Sql) {
     return this.kernels.mode !== 'off' && !existing && !model.scenario && !capturingDecisionReads() && this.maximumObjects === 10000;
+  }
+  /**
+   * The kernel's answer, or undefined when the kernel failed, so that the reference answers. A routed query never fails
+   * because of the kernel: a lost kernel is set aside until its registry opens it again.
+   */
+  private async kernelAnswer<T>(model: PublishedOntology, answer: () => Promise<T | undefined>): Promise<T | undefined> {
+    try { return await answer(); } catch (error) {
+      if (!(error instanceof KernelFailed)) throw error;
+      console.warn(`Query kernel failed, so the reference answers: ${error.message}`);
+      if (error.lost) this.kernels.registry.lost?.(this.db, model);
+      return undefined;
+    }
   }
   private kernelIdentity(access: Access, model: PublishedOntology, input: { set: unknown; view?: string }) {
     return digest({ owner: access.principal.owner, release: model.release, set: input.set, view: input.view });
@@ -365,7 +377,8 @@ export class ObjectSets {
     if (cursor && cursor.identity !== identity) throw new InvalidInput('Object set cursor belongs to another evaluation');
     await access.refresh();
     const offset = cursor?.offset ?? 0;
-    const result = await evaluateWithKernel(kernel, model, access, new Objects(this.db, model, access), { set: input.set, view: input.view, offset, limit: input.limit });
+    const result = await this.kernelAnswer(model, () =>
+      evaluateWithKernel(kernel, model, access, new Objects(this.db, model, access), { set: input.set, view: input.view, offset, limit: input.limit }));
     if (!result) return undefined;
     if (cursor && result.membership !== cursor.membership) throw new InvalidInput('Object set members changed since the previous page; evaluate the set again from its first page');
     const end = offset + input.limit;
@@ -450,7 +463,7 @@ export class ObjectSets {
       const kernel = await this.kernels.registry.kernelFor(this.db, model, false);
       if (kernel) {
         await access.refresh();
-        const result = await aggregateWithKernel(kernel, model, access, new Objects(this.db, model, access), input);
+        const result = await this.kernelAnswer(model, () => aggregateWithKernel(kernel, model, access, new Objects(this.db, model, access), input));
         if (result) return { count: result.count, items: result.items };
       }
       return this.referenceAggregate(access, model, input, existing);
