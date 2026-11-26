@@ -1,26 +1,27 @@
 //! EIGOS Ontology query kernel (prototype, phases C1 to C3).
 //!
-//! Loads a snapshot of one publication projection from PostgreSQL into per-type object tables and per-link edge
-//! tables, follows the commit log to keep them current, and executes Object Set plans compiled by the TypeScript
+//! Loads a snapshot of one publication projection from PostgreSQL, or restores it from a Parquet checkpoint, into
+//! per-type object tables and per-link edge tables, follows the commit log to keep them current, and executes Object Set plans compiled by the TypeScript
 //! planner (`packages/runtime/kernel/`) on Apache DataFusion. Value semantics follow the reference implementation:
 //! predicates are two-valued (a missing value is null, `ne` holds for null, `not` never sees an unknown), and sets are
 //! ordered by the canonical reference key.
 
-use std::{collections::{BTreeMap, HashMap, HashSet}, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, HashMap, HashSet}, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
 use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use datafusion::arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::common::{Column, ScalarValue};
+use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::MemTable;
 use datafusion::functions::core::expr_fn::coalesce;
 use datafusion::functions::unicode::expr_fn::strpos;
 use datafusion::functions_aggregate::expr_fn::{avg, bool_or, count, max, min, sum};
 use datafusion::functions_nested::expr_fn::{array_has_all, array_has_any, cardinality, make_array};
 use datafusion::logical_expr::{cast, lit, when, Expr, JoinType};
-use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
+use datafusion::prelude::{DataFrame, ParquetReadOptions, SessionConfig, SessionContext};
 use futures_util::{pin_mut, TryStreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{Mutex, RwLock};
 use tokio_postgres::{Client, IsolationLevel, NoTls};
@@ -32,13 +33,13 @@ fn invalid(error: impl ToString) -> Failure { failure(StatusCode::BAD_REQUEST, e
 /// The kernel cannot answer from what it has applied; the caller evaluates the query with the reference.
 fn stale(reason: &str) -> Failure { failure(StatusCode::CONFLICT, format!("stale: {reason}")) }
 
-#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "lowercase")]
 enum Kind { String, Integer, Number, Boolean, Strings }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 struct ColumnDef { name: String, kind: Kind }
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 struct TypeDef { name: String, columns: Vec<ColumnDef>, classification: Option<String> }
 #[derive(Deserialize, Clone)]
 struct LoadRequest { database: String, schema: String, projection: String, types: Vec<TypeDef>, links: Vec<String>, ranks: HashMap<String, i64> }
@@ -74,8 +75,9 @@ struct Snapshot {
   objects: usize, edge_count: usize, bytes: usize,
 }
 
-/// The current snapshot version, and the Funnel: the one writer that applies commits, with its database connection.
-struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>> }
+/// The current snapshot version; the Funnel, the one writer that applies commits, with its database connection; and the
+/// last version written as a checkpoint, whose lock keeps checkpoint writes one at a time.
+struct AppState { snapshot: RwLock<Option<Arc<Snapshot>>>, funnel: Mutex<Option<Client>>, checkpointed: Mutex<Option<(Arc<Snapshot>, Value)>> }
 type Shared = Arc<AppState>;
 
 fn column(name: &str) -> Expr { Expr::Column(Column::new_unqualified(name)) }
@@ -378,6 +380,143 @@ async fn follow(state: Shared, every: Duration) {
     // Commits of different owners can become visible out of number order, so the next poll looks back over a margin.
     floor = Some((highest - 1000).max(0));
   }
+}
+
+/// Where checkpoints are kept, from EIGOS_KERNEL_DATA; without it the kernel keeps none.
+fn data_dir() -> Option<PathBuf> { std::env::var_os("EIGOS_KERNEL_DATA").map(PathBuf::from) }
+/// The directory of one projection's checkpoints.
+fn checkpoint_root(projection: &str) -> Option<PathBuf> {
+  data_dir().map(|dir| dir.join(projection.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect::<String>()))
+}
+fn io(error: impl ToString) -> Failure { internal(error) }
+
+/// An owner's last applied commit and its transaction, which identifies the commit in this database.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct Position { owner: String, commit: i64, xact: String }
+
+/// What a checkpoint holds: the definition its files follow, and each owner's last applied commit.
+#[derive(Serialize, Deserialize)]
+struct Manifest {
+  format: u32, schema: String, projection: String, types: Vec<TypeDef>, links: Vec<String>, ranks: HashMap<String, i64>,
+  positions: Vec<Position>, objects: usize, edges: usize,
+}
+const FORMAT: u32 = 1;
+
+/// The transactions of the given positions, as change_commits records them.
+async fn positions_of(client: &Client, schema: &str, applied: &HashMap<String, i64>) -> Result<Vec<Position>, Failure> {
+  let (owners, commits): (Vec<String>, Vec<i64>) = applied.iter().map(|(owner, commit)| (owner.clone(), *commit)).unzip();
+  let rows = client.query(format!("SELECT c.owner, c.commit_seq, c.xact::text FROM {schema}.change_commits c
+      JOIN unnest($1::text[], $2::bigint[]) AS p(owner, commit_seq) ON c.owner=p.owner AND c.commit_seq=p.commit_seq").as_str(), &[&owners, &commits])
+    .await.map_err(internal)?;
+  if rows.len() != owners.len() { return Err(internal("A position has no commit in change_commits")); }
+  Ok(rows.iter().map(|row| Position { owner: row.get(0), commit: row.get(1), xact: row.get(2) }).collect())
+}
+
+/// Writes a snapshot version as Parquet, one file per type and per link, with a manifest. The files go to a new
+/// directory, which replaces the previous checkpoint of the projection only once it is complete.
+async fn write_checkpoint(snapshot: &Snapshot) -> Result<Value, Failure> {
+  let started = Instant::now();
+  let root = checkpoint_root(&snapshot.request.projection).ok_or_else(|| invalid("EIGOS_KERNEL_DATA is not set"))?;
+  let client = connect(&snapshot.request.database).await?;
+  let positions = positions_of(&client, &quote(&snapshot.request.schema), &snapshot.applied).await?;
+  let id = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(io)?.as_millis());
+  let staging = root.join(format!(".{id}"));
+  std::fs::create_dir_all(&staging).map_err(io)?;
+  let single = || DataFrameWriteOptions::new().with_single_file_output(true);
+  for (i, def) in snapshot.request.types.iter().enumerate() {
+    let file = staging.join(format!("t{i}.parquet"));
+    snapshot.object_rows(&def.name)?.write_parquet(&file.to_string_lossy(), single(), None).await.map_err(internal)?;
+  }
+  for (i, link) in snapshot.request.links.iter().enumerate() {
+    let file = staging.join(format!("l{i}.parquet"));
+    snapshot.edge_rows(link)?.write_parquet(&file.to_string_lossy(), single(), None).await.map_err(internal)?;
+  }
+  let request = &snapshot.request;
+  let manifest = Manifest { format: FORMAT, schema: request.schema.clone(), projection: request.projection.clone(), types: request.types.clone(),
+    links: request.links.clone(), ranks: request.ranks.clone(), positions, objects: snapshot.objects, edges: snapshot.edge_count };
+  std::fs::write(staging.join("manifest.json"), serde_json::to_vec(&manifest).map_err(internal)?).map_err(io)?;
+  std::fs::rename(&staging, root.join(&id)).map_err(io)?;
+  std::fs::write(root.join(".current"), &id).map_err(io)?;
+  std::fs::rename(root.join(".current"), root.join("current")).map_err(io)?;
+  for entry in std::fs::read_dir(&root).map_err(io)?.flatten() {
+    let name = entry.file_name().to_string_lossy().to_string();
+    if name != id && name != "current" && entry.path().is_dir() { let _ = std::fs::remove_dir_all(entry.path()); }
+  }
+  Ok(json!({ "checkpoint": id, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+}
+
+/// Reads a Parquet file into batches of the expected schema; none when the file is missing, unreadable or has other columns.
+async fn read_rows(ctx: &SessionContext, file: &std::path::Path, schema: &SchemaRef) -> Result<Option<Vec<RecordBatch>>, Failure> {
+  // Read with the expected schema, so strings stay strings rather than the reader's default views.
+  let read = async { ctx.read_parquet(file.to_string_lossy().as_ref(), ParquetReadOptions::default().schema(schema.as_ref())).await?.collect().await };
+  let Ok(batches) = read.await else { return Ok(None) };
+  let same = |found: &Schema| found.fields().len() == schema.fields().len()
+    && found.fields().iter().zip(schema.fields().iter()).all(|(a, b)| a.name() == b.name() && a.data_type() == b.data_type());
+  if batches.iter().any(|batch| !same(&batch.schema())) { return Ok(None); }
+  Ok(Some(batches.into_iter().map(|batch| RecordBatch::try_new(schema.clone(), batch.columns().to_vec())).collect::<Result<_, _>>().map_err(internal)?))
+}
+
+/// The projection's last checkpoint, when it follows the same definition and belongs to this database: every position
+/// it records is still in change_commits with the same transaction. Otherwise none, and the caller loads from storage.
+async fn restore(request: &LoadRequest) -> Result<Option<Snapshot>, Failure> {
+  let Some(root) = checkpoint_root(&request.projection) else { return Ok(None) };
+  let Ok(id) = std::fs::read_to_string(root.join("current")) else { return Ok(None) };
+  let dir = root.join(id.trim());
+  let Ok(text) = std::fs::read_to_string(dir.join("manifest.json")) else { return Ok(None) };
+  let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else { return Ok(None) };
+  if manifest.format != FORMAT || manifest.schema != request.schema || manifest.projection != request.projection || manifest.types != request.types
+    || manifest.links != request.links || manifest.ranks != request.ranks { return Ok(None); }
+  let client = connect(&request.database).await?;
+  let schema = quote(&request.schema);
+  let owners: Vec<String> = manifest.positions.iter().map(|p| p.owner.clone()).collect();
+  let commits: Vec<i64> = manifest.positions.iter().map(|p| p.commit).collect();
+  let xacts: Vec<String> = manifest.positions.iter().map(|p| p.xact.clone()).collect();
+  let found: i64 = client.query_one(format!("SELECT count(*) FROM {schema}.change_commits c
+      JOIN unnest($1::text[], $2::bigint[], $3::text[]) AS p(owner, commit_seq, xact) ON c.owner=p.owner AND c.commit_seq=p.commit_seq AND c.xact::text=p.xact").as_str(),
+      &[&owners, &commits, &xacts]).await.map_err(internal)?.get(0);
+  if found as usize != manifest.positions.len() { return Ok(None); }
+  let parts = partitions();
+  let ctx = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(parts));
+  let (mut kinds, mut classified, mut types, mut edges) = (HashMap::new(), HashSet::new(), HashMap::new(), HashMap::new());
+  let mut bytes = 0usize;
+  for (i, def) in request.types.iter().enumerate() {
+    let table = object_schema(def);
+    let Some(batches) = read_rows(&ctx, &dir.join(format!("t{i}.parquet")), &table).await? else { return Ok(None) };
+    bytes += batches.iter().map(RecordBatch::get_array_memory_size).sum::<usize>();
+    let base_rows = batches.iter().map(RecordBatch::num_rows).sum();
+    if def.classification.is_some() { classified.insert(def.name.clone()); }
+    kinds.insert(def.name.clone(), def.columns.iter().map(|c| (c.name.clone(), c.kind)).collect());
+    types.insert(def.name.clone(), TypeStore { def: Arc::new(def.clone()), schema: table.clone(), base: table_of(table, batches)?, base_rows,
+      changed: Arc::default(), overlay: None });
+  }
+  for (i, link) in request.links.iter().enumerate() {
+    let Some(batches) = read_rows(&ctx, &dir.join(format!("l{i}.parquet")), &edge_schema()).await? else { return Ok(None) };
+    bytes += batches.iter().map(RecordBatch::get_array_memory_size).sum::<usize>();
+    let base_rows = batches.iter().map(RecordBatch::num_rows).sum();
+    edges.insert(link.clone(), LinkStore { base: table_of(edge_schema(), batches)?, base_rows, changed: Arc::default(), overlay: None });
+  }
+  let objects = types.values().map(|t: &TypeStore| t.base_rows).sum();
+  let edge_count = edges.values().map(|l: &LinkStore| l.base_rows).sum();
+  let applied = manifest.positions.into_iter().map(|p| (p.owner, p.commit)).collect();
+  Ok(Some(Snapshot { ctx, request: Arc::new(request.clone()), kinds, classified, links: request.links.clone(), types, edges, applied, objects, edge_count, bytes }))
+}
+
+/// Writes a checkpoint of each new version every EIGOS_KERNEL_CHECKPOINT_S seconds.
+async fn checkpoints(state: Shared, every: Duration) {
+  loop {
+    tokio::time::sleep(every).await;
+    let Some(snapshot) = state.snapshot.read().await.clone() else { continue };
+    let _ = checkpoint(&state, &snapshot).await;
+  }
+}
+
+/// Writes a checkpoint of a version unless the last one already holds it.
+async fn checkpoint(state: &AppState, snapshot: &Arc<Snapshot>) -> Result<Value, Failure> {
+  let mut last = state.checkpointed.lock().await;
+  if let Some((version, written)) = last.as_ref() { if Arc::ptr_eq(version, snapshot) { return Ok(written.clone()); } }
+  let written = write_checkpoint(snapshot).await?;
+  *last = Some((snapshot.clone(), written.clone()));
+  Ok(written)
 }
 
 enum ValueBuilder { String(StringBuilder), Integer(Int64Builder), Number(Float64Builder), Boolean(BooleanBuilder), Strings(ListBuilder<StringBuilder>) }
@@ -1133,14 +1272,43 @@ async fn positions(State(state): State<Shared>) -> Json<Value> {
   Json(json!(snapshot.map(|s| s.applied.clone()).unwrap_or_default()))
 }
 
+/// Loads a projection: from its last checkpoint when that matches the database, otherwise from storage.
 async fn load_route(State(state): State<Shared>, Json(request): Json<LoadRequest>) -> Result<Json<Value>, Failure> {
   let started = Instant::now();
-  // The Funnel waits, so no commit is applied to the version this load replaces.
-  let _writer = state.funnel.lock().await;
-  let snapshot = load(request).await?;
-  let summary = json!({ "objects": snapshot.objects, "edges": snapshot.edge_count, "bytes": snapshot.bytes, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 });
-  *state.snapshot.write().await = Some(Arc::new(snapshot));
-  Ok(Json(summary))
+  let (snapshot, restored) = {
+    // The Funnel waits, so no commit is applied to the version this load replaces.
+    let _writer = state.funnel.lock().await;
+    let (snapshot, restored) = match restore(&request).await? { Some(snapshot) => (snapshot, true), None => (load(request).await?, false) };
+    let snapshot = Arc::new(snapshot);
+    *state.snapshot.write().await = Some(snapshot.clone());
+    (snapshot, restored)
+  };
+  if restored {
+    // A restored version is as old as its checkpoint, so every owner's commits since are applied before the load answers.
+    let found = { let mut funnel = state.funnel.lock().await; latest_commits(&mut funnel, &snapshot, 0).await };
+    let found = match found { Ok(found) => found, Err(error) => { *state.funnel.lock().await = None; return Err(error); } };
+    for (owner, latest) in found { if latest > snapshot.position(&owner) { catch_up(&state, &owner).await?; } }
+  } else if data_dir().is_some() {
+    // A checkpoint of the loaded version lets the next start skip the full load.
+    let (state, snapshot) = (state.clone(), snapshot.clone());
+    tokio::spawn(async move { let _ = checkpoint(&state, &snapshot).await; });
+  }
+  let current = state.snapshot.read().await.clone().unwrap_or(snapshot);
+  Ok(Json(json!({ "objects": current.objects, "edges": current.edge_count, "bytes": current.bytes, "restored": restored,
+    "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 })))
+}
+
+/// Writes a checkpoint of the current version now.
+async fn checkpoint_route(State(state): State<Shared>) -> Result<Json<Value>, Failure> {
+  let snapshot = state.snapshot.read().await.clone().ok_or_else(|| failure(StatusCode::SERVICE_UNAVAILABLE, "No projection is loaded"))?;
+  Ok(Json(checkpoint(&state, &snapshot).await?))
+}
+
+/// Waits for SIGTERM or SIGINT, then writes a last checkpoint so the next start restores the latest version.
+async fn shutdown(state: Shared) {
+  let terminate = async { if let Ok(mut signal) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) { signal.recv().await; } };
+  tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate => {} }
+  if data_dir().is_some() { if let Some(snapshot) = state.snapshot.read().await.clone() { let _ = checkpoint(&state, &snapshot).await; } }
 }
 
 async fn query_route(State(state): State<Shared>, Json(request): Json<QueryRequest>) -> Result<Json<Value>, Failure> {
@@ -1172,11 +1340,16 @@ async fn main() {
   let port: u16 = std::env::var("EIGOS_KERNEL_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
   let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await.expect("bind loopback");
   println!("{}", json!({ "event": "kernel_listening", "port": listener.local_addr().unwrap().port() }));
-  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None) });
+  let state: Shared = Arc::new(AppState { snapshot: RwLock::new(None), funnel: Mutex::new(None), checkpointed: Mutex::new(None) });
   // EIGOS_KERNEL_POLL_MS sets how often the Funnel looks for new commits; 0 leaves it to the queries.
   let every = std::env::var("EIGOS_KERNEL_POLL_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1000);
   if every > 0 { tokio::spawn(follow(state.clone(), Duration::from_millis(every))); }
+  // EIGOS_KERNEL_CHECKPOINT_S sets how often a changed version is written as a checkpoint; 0 writes them only after a
+  // load, on request and at shutdown.
+  let every = std::env::var("EIGOS_KERNEL_CHECKPOINT_S").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(300);
+  if every > 0 && data_dir().is_some() { tokio::spawn(checkpoints(state.clone(), Duration::from_secs(every))); }
   let app = Router::new().route("/health", get(health)).route("/positions", get(positions)).route("/load", post(load_route)).route("/query", post(query_route))
-    .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)).with_state(state);
-  axum::serve(listener, app).await.expect("serve");
+    .route("/checkpoint", post(checkpoint_route))
+    .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)).with_state(state.clone());
+  axum::serve(listener, app).with_graceful_shutdown(shutdown(state)).await.expect("serve");
 }

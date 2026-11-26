@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { aggregateWithKernel, evaluateWithKernel, KernelClient } from '../packages/runtime/kernel/client.js';
@@ -518,4 +521,82 @@ test('the query kernel follows the commit log, so each query sees every commit o
     assert.equal(await f.kernel.page(principal.owner, plan, 0, 10, { projection: f.model.projection, minCommit: latest + 1, waitMs: 50 }), undefined);
     assert((await f.kernel.page(principal.owner, plan, 0, 10, { projection: f.model.projection, minCommit: latest }))?.commit === latest);
   } finally { await compacting.stop(); await f.kernel.stop(); await f.close(); }
+});
+
+test('the query kernel restores its checkpoint at start and applies the commits made since', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  await f.kernel.stop();
+  const data = await mkdtemp(join(tmpdir(), 'eigos-kernel-'));
+  const settings = { EIGOS_KERNEL_DATA: data, EIGOS_KERNEL_POLL_MS: '0', EIGOS_KERNEL_CHECKPOINT_S: '0' };
+  const url = process.env.EIGOS_TEST_DATABASE_URL!;
+  let kernel = await KernelClient.start(binary!, settings);
+  try {
+    assert.equal((await kernel.load(f.db, f.model, url)).restored, false, 'the first start loads from storage');
+    const writer = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const sets = [
+      { op: 'query', query: { type: 'Route' } },
+      { op: 'query', query: { type: 'Place', filter: { op: 'gte', property: 'routeCount', value: 1 } } },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Place' } }, path: [{ link: 'departingRoutes' }] },
+    ];
+    const compare = async (label: string) => {
+      for (const set of sets) {
+        try { await compareSet({ ...f, kernel }, undefined, set); }
+        catch (error) { throw new Error(`${label}: ${(error as Error).message}`); }
+      }
+    };
+    await writer.create(route('h'), { id: 'h', name: 'route h', distance: 7, lanes: 2, teams: ['ops'] });
+    await writer.link({ type: 'RouteOrigin', from: route('h'), to: place('p4') });
+    await compare('applied before the checkpoint');
+    await kernel.checkpoint();
+    // Commits after the checkpoint, which only the commit log holds.
+    await writer.edit(route('a'), (await writer.readStored(route('a'))).revision, { distance: 9 });
+    await writer.unlink({ type: 'RouteOrigin', from: route('b'), to: place('p1') });
+    await kernel.stop();
+    kernel = await KernelClient.start(binary!, settings);
+    assert.equal((await kernel.load(f.db, f.model, url)).restored, true, 'a restart restores the checkpoint');
+    await compare('restored');
+    // A checkpoint whose positions are not in this database's commit log is ignored.
+    await kernel.stop();
+    const root = join(data, (await readdir(data))[0]!);
+    const manifest = join(root, (await readFile(join(root, 'current'), 'utf8')).trim(), 'manifest.json');
+    const content = JSON.parse(await readFile(manifest, 'utf8')) as { positions: { xact: string }[] };
+    assert(content.positions.length > 0, 'the checkpoint records the owner position');
+    await writeFile(manifest, JSON.stringify({ ...content, positions: content.positions.map(position => ({ ...position, xact: '1' })) }));
+    kernel = await KernelClient.start(binary!, settings);
+    assert.equal((await kernel.load(f.db, f.model, url)).restored, false, 'a checkpoint of another database is loaded from storage instead');
+    await compare('loaded again');
+  } finally { await kernel.stop(); await f.close(); await rm(data, { recursive: true, force: true }); }
+});
+
+test('each query the kernel answers sees every write completed before it started, while writes continue', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    const writer = new Objects(f.db, f.model, await Access.load(f.db, principal));
+    const written = { op: 'query', query: { type: 'Route', filter: { op: 'contains', property: 'name', value: 'written' } } };
+    // Writes continue until the queries finish, up to 60 routes.
+    let completed = 0, done = false;
+    const writes = (async () => {
+      for (let i = 0; !done && i < 60; i++) {
+        await writer.create(route('w' + i), { id: 'w' + i, name: 'written ' + i, distance: i, lanes: 1, teams: ['ops'] });
+        completed++;
+      }
+    })();
+    const queries = (async () => {
+      let answered = 0;
+      for (let query = 0; query < 8; query++) {
+        const before = completed;
+        const access = await Access.load(f.db, principal);
+        const result = await evaluateWithKernel(f.kernel, f.model, access, new Objects(f.db, f.model, access), { set: written as never, limit: 1 });
+        // A query the kernel cannot answer in time goes to the reference, which is also correct.
+        if (!result) continue;
+        assert(result.total >= before, `a query started after ${before} writes saw ${result.total}`);
+        answered++;
+      }
+      done = true;
+      return answered;
+    })();
+    const [, answered] = await Promise.all([writes, queries]);
+    assert(answered >= 6, `the kernel answered ${answered} of 8 queries during the writes`);
+    await compareSet(f, undefined, written);
+  } finally { await f.kernel.stop(); await f.close(); }
 });

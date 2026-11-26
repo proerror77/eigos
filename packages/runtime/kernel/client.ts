@@ -81,9 +81,12 @@ export class KernelClient {
     if (!response.ok) throw new Error(`Kernel ${path} failed: ${value.error ?? response.status}`);
     return value;
   }
-  /** Loads the projection of `model` from the database the kernel can reach at `database`. */
+  /**
+   * Loads the projection of `model` from the database the kernel can reach at `database`, or restores the kernel's last
+   * checkpoint of it when that belongs to the database; `restored` says which.
+   */
   async load(db: Database, model: PublishedOntology, database: string) {
-    const loaded = await this.post<{ objects: number; edges: number; bytes: number; elapsedMs: number }>('/load', {
+    const loaded = await this.post<{ objects: number; edges: number; bytes: number; restored: boolean; elapsedMs: number }>('/load', {
       database, schema: db.schema.replaceAll('"', ''), projection: model.projection,
       types: [...model.objects.keys()].map(name => ({ name, columns: loadedColumns(model, name), classification: model.object(name).classificationProperty })),
       links: [...model.links.keys()], ranks: sensitivityRank,
@@ -104,6 +107,12 @@ export class KernelClient {
   }
   /** The last commit the kernel has applied for each owner. */
   async positions() { return await (await fetch(this.url + '/positions')).json() as Record<string, number>; }
+  /** Writes a checkpoint of the kernel's current version to its data directory. */
+  async checkpoint() {
+    const written = await this.post<{ checkpoint: string; elapsedMs: number }>('/checkpoint', {});
+    if (!written) throw new Error('Kernel checkpoint failed');
+    return written;
+  }
 }
 
 /**
