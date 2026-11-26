@@ -52,6 +52,21 @@ export const aggregateSetViewSchema = aggregateSetSchema.extend({ scenarioId: z.
 export const saveSetSchema = z.strictObject({ id: z.uuid().optional(), revision: z.number().int().positive().optional(), requestId: z.string().min(1).max(128), name: z.string().min(1).max(200), mode: z.enum(['static', 'dynamic']), set: setExpressionSchema, readers: z.array(z.string().min(1).max(200)).max(100).default([]) }).refine(value => Boolean(value.id) === Boolean(value.revision), 'Updating a set requires its ID and revision');
 export const listSetsSchema = z.strictObject({ cursor: z.uuid().optional(), limit: z.number().int().min(1).max(100).default(50) });
 
+/** An object as `view` shows it, as Object Set evaluation and aggregation project each member. */
+export function projectView(access: Access, model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
+  if (!view || view === object.ref.type) return object;
+  if (!model.implements(object.ref.type, view)) throw new Conflict('The requested view is incompatible with an object in this set');
+  const properties = model.interfaces.get(view)?.properties;
+  if (!properties) throw new Conflict('Use an Object Type or Interface view');
+  return { ...object, properties: Object.fromEntries(Object.keys(properties).map(name => {
+    const local = model.propertyName(object.ref.type, view, name);
+    const label = properties[name]?.classification;
+    const visible = access.canSeeModelData(label);
+    if (visible) access.observeClassification(label);
+    return [name, local && visible ? object.properties[local] ?? null : null];
+  })) };
+}
+
 export async function initializeObjectSets(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.object_sets (
     id uuid PRIMARY KEY, ontology text NOT NULL, owner text NOT NULL, request_id text NOT NULL,
@@ -223,17 +238,7 @@ export class ObjectSets {
     return sorted([...(await visit(set, new Set(rootId ? [rootId] : []))).values()]);
   }
   private project(access: Access, model: PublishedOntology, object: ObjectData, view?: string): ObjectData {
-    if (!view || view === object.ref.type) return object;
-    if (!model.implements(object.ref.type, view)) throw new Conflict('The requested view is incompatible with an object in this set');
-    const properties = model.interfaces.get(view)?.properties;
-    if (!properties) throw new Conflict('Use an Object Type or Interface view');
-    return { ...object, properties: Object.fromEntries(Object.keys(properties).map(name => {
-      const local = model.propertyName(object.ref.type, view, name);
-      const label = properties[name]?.classification;
-      const visible = access.canSeeModelData(label);
-      if (visible) access.observeClassification(label);
-      return [name, local && visible ? object.properties[local] ?? null : null];
-    })) };
+    return projectView(access, model, object, view);
   }
   private async storedPlan(access: Access, model: PublishedOntology, set: SetExpression, client: Sql, rootId?: string) {
     const seen = new Set(rootId ? [rootId] : []);

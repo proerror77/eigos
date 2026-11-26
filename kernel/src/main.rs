@@ -264,16 +264,21 @@ enum SetNode {
 #[derive(Deserialize)]
 struct Metric { name: String, op: String, column: Option<String> }
 
-/// A field an aggregation reads through a mask: hidden for every row, or shown only where a cell policy permits.
+/// A field an aggregation reads on one member type: from the type's own column, hidden for every row or shown only where
+/// a cell policy permits, or null where the type does not map the field.
 #[derive(Deserialize)]
-struct Mask { column: String, hidden: bool, policy: Option<Predicate> }
+struct PartField { name: String, column: Option<String>, #[serde(default)] hidden: bool, policy: Option<Predicate> }
+/// One member type of an aggregation and the fields it contributes.
+#[derive(Deserialize)]
+struct Part { r#type: String, fields: Vec<PartField> }
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum Output {
   Page { offset: usize, limit: usize },
+  /// `kinds` holds the kind of each field across the member types.
   #[serde(rename_all = "camelCase")]
-  Aggregate { r#type: String, group_by: Vec<String>, metrics: Vec<Metric>, #[serde(default)] masks: Vec<Mask> },
+  Aggregate { parts: Vec<Part>, kinds: HashMap<String, Kind>, group_by: Vec<String>, metrics: Vec<Metric> },
 }
 
 /// How to report one type the evaluation reads: the ids of every row read when its rows are tracked, and the markings
@@ -813,30 +818,41 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
   match request.output {
     Output::Page { offset, limit } => {
       let total = set.clone().count().await.map_err(internal)?;
-      let page = set.sort(vec![column("$key").sort(true, false)]).map_err(internal)?
+      let page = set.clone().sort(vec![column("$key").sort(true, false)]).map_err(internal)?
         .limit(offset, Some(limit)).map_err(internal)?.select(vec![column("$type"), column("$id")]).map_err(internal)?;
       let refs: Vec<Value> = rows(page).await?.into_iter().map(|row| json!({ "type": row["$type"], "id": row["$id"] })).collect();
-      Ok(json!({ "total": total, "refs": refs, "reads": reads, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+      // The types of the members, which a view must be able to show.
+      let types: Vec<Value> = rows(set.select(vec![column("$type")]).map_err(internal)?.distinct().map_err(internal)?).await?
+        .into_iter().map(|row| row["$type"].clone()).collect();
+      Ok(json!({ "total": total, "refs": refs, "types": types, "reads": reads, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
-    Output::Aggregate { r#type, group_by, metrics, masks } => {
-      let kinds = kinds_of(snapshot, &owner, &r#type)?;
-      let members = set.filter(column("$type").eq(lit(r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
-      let mut objects = objects(snapshot, &owner, &r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
-      // Masked fields read as the reference shows them: hidden fields are null, and a cell policy keeps the value only where it permits.
-      if !masks.is_empty() {
+    Output::Aggregate { parts, kinds, group_by, metrics } => {
+      // Each member type's fields as the aggregation reads them, under one kind per field, then all members together.
+      let mut frames = Vec::new();
+      for part in &parts {
+        let local = kinds_of(snapshot, &owner, &part.r#type)?;
+        let members = set.clone().filter(column("$type").eq(lit(part.r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
+        let objects = objects(snapshot, &owner, &part.r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
         let mut projection = vec![column("$key")];
-        for name in kinds.keys() {
-          let null = || ScalarValue::try_from(&data_type(kinds[name])).map(lit).map_err(internal);
-          let value = match masks.iter().find(|m| &m.column == name) {
-            None => column(name),
-            Some(mask) if mask.hidden => null()?,
-            Some(Mask { policy: Some(policy), .. }) => when(predicate(policy, &kinds)?, column(name)).otherwise(null()?).map_err(internal)?,
-            Some(_) => column(name),
+        for field in &part.fields {
+          let kind = *kinds.get(&field.name).ok_or_else(|| invalid(format!("No kind for {}", field.name)))?;
+          let null = || ScalarValue::try_from(&data_type(kind)).map(lit).map_err(internal);
+          let value = match &field.column {
+            None => null()?,
+            Some(_) if field.hidden => null()?,
+            Some(name) => {
+              if !local.contains_key(name) { return Err(invalid(format!("Unknown column {name} of {}", part.r#type))); }
+              let value = cast(column(name), data_type(kind));
+              match &field.policy { Some(policy) => when(predicate(policy, &local)?, value).otherwise(null()?).map_err(internal)?, None => value }
+            }
           };
-          projection.push(value.alias(name.clone()));
+          projection.push(value.alias(field.name.clone()));
         }
-        objects = objects.select(projection).map_err(internal)?;
+        frames.push(objects.select(projection).map_err(internal)?);
       }
+      let mut iter = frames.into_iter();
+      let first = iter.next().ok_or_else(|| invalid("An aggregation needs a member type"))?;
+      let objects = iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?;
       let mut aggregates = vec![min(column("$key")).alias("$first"), count(lit(1i64)).alias("$count")];
       for m in &metrics {
         let target = || m.column.as_ref().filter(|c| kinds.contains_key(*c)).map(|c| column(c)).ok_or_else(|| invalid(format!("Metric {} needs a loaded column", m.name)));

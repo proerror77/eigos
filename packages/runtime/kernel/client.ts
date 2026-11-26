@@ -1,19 +1,20 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { Conflict } from '../../core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../../core/identity.js';
 import { combineClassification, marksClassification, sensitivityRank, type Classification } from '../../ontology/classification.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import type { Access } from '../access.js';
 import type { Database } from '../database.js';
 import type { PublishedOntology } from '../metadata.js';
+import { projectView } from '../object-sets.js';
 import type { Objects } from '../objects.js';
-import { compileAggregate, compileSet, loadedColumns, type KernelPlan } from './plan.js';
+import { compileAggregate, compileSet, loadedColumns, showsType, type KernelPlan } from './plan.js';
 
 /** What the kernel read of one type: the rows the reference reads to evaluate the same set. */
 type Reads = { type: string; count: number; rank?: number | null; compartments?: string[]; ids?: string[]; overLimit?: true; markings?: string[];
   /** Some rows read are rows the reference reads with their derived values. */
   enriched?: true }[];
-type PageResponse = { total: number; refs: ObjectRef[]; reads: Reads; elapsedMs: number };
+type PageResponse = { total: number; refs: ObjectRef[]; types: string[]; reads: Reads; elapsedMs: number };
 type AggregateResponse = { count: number; items: { group: Record<string, unknown>; metrics: Record<string, number | null> }[]; reads: Reads; elapsedMs: number };
 
 /**
@@ -90,23 +91,58 @@ export class KernelClient {
 }
 
 /**
- * Evaluates one page of an Object Set with the kernel and reads the page's objects through `graph`. Undefined means the
- * set has no kernel plan, or the reference's evaluation would fail, so the caller evaluates it with the reference.
+ * The checks the reference makes on a view before it evaluates a set: true when the principal may see the view, false
+ * when the view's label is beyond the clearance (the reference then shows nothing), and undefined when the reference
+ * reports an error or the kernel path does not cover the view: an Interface with labelled properties, whose labels the
+ * reference observes on each object it projects.
+ */
+function viewShown(access: Access, model: PublishedOntology, view: string) {
+  const contract = model.interfaces.get(view);
+  try { access.definition(model, contract ? 'interface' : 'object', view); }
+  catch (error) {
+    if (error instanceof PermissionDenied || error instanceof NotFound || error instanceof InvalidInput) return undefined;
+    throw error;
+  }
+  if (contract && Object.values(contract.properties).some(property => property.classification)) return undefined;
+  const label = (contract ?? model.objects.get(view))?.classification;
+  if (!access.canSeeModelData(label)) return false;
+  access.observeClassification(label);
+  return true;
+}
+
+/**
+ * Evaluates one page of an Object Set with the kernel and reads the page's objects through `graph`, shown in `view`.
+ * Undefined means the set has no kernel plan, or the reference's evaluation would fail, so the caller evaluates it with
+ * the reference.
  */
 export async function evaluateWithKernel(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects,
-  input: { set: Parameters<typeof compileSet>[3]; offset?: number; limit: number }) {
+  input: { set: Parameters<typeof compileSet>[3]; view?: string; offset?: number; limit: number }) {
+  const shown = input.view ? viewShown(access, model, input.view) : true;
+  if (shown === undefined) return undefined;
+  if (!shown) return { items: [] as ObjectData[], total: 0, elapsedMs: 0 };
   const plan = await compileSet(model, access, graph, input.set);
   if (!plan) return undefined;
   const response = await kernel.page(access.principal.owner, plan, input.offset ?? 0, input.limit);
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
+  // The reference shows every member in the view, and fails for a member of a type the view cannot show.
+  if (input.view && response.types.some(type => !showsType(model, input.view!, type))) return undefined;
   const items: ObjectData[] = [];
-  for (const ref of response.refs) items.push(await graph.read(ref));
+  for (const ref of response.refs) items.push(projectView(access, model, await graph.read(ref), input.view));
   return { items, total: response.total, elapsedMs: response.elapsedMs };
 }
 
 /** Aggregates an Object Set with the kernel. Undefined means the reference aggregates it, as for `evaluateWithKernel`. */
 export async function aggregateWithKernel(kernel: KernelClient, model: PublishedOntology, access: Access, graph: Objects,
   input: { set: Parameters<typeof compileSet>[3] } & Parameters<typeof compileAggregate>[3]) {
+  const shown = input.view ? viewShown(access, model, input.view) : true;
+  if (shown === undefined) return undefined;
+  if (!shown) {
+    // The reference aggregates no members, after it checks the fields against the view.
+    try { for (const field of [...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])]) model.propertyPath(input.view!, field); }
+    catch (error) { if (error instanceof InvalidInput) return undefined; throw error; }
+    return { count: 0, elapsedMs: 0, items: input.groupBy.length ? [] : [{ group: {},
+      metrics: Object.fromEntries(Object.entries(input.metrics).map(([name, metric]) => [name, metric.op === 'count' ? 0 : null])) }] };
+  }
   const plan = await compileSet(model, access, graph, input.set);
   const output = plan && compileAggregate(model, access, plan, input);
   if (!plan || !output) return undefined;
