@@ -3,14 +3,15 @@ import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../../core/i
 import type { Ontology } from '../../ontology/model.js';
 import { processLogTarget } from '../../ontology/process-definition.js';
 import { valueKinds } from '../../ontology/property-path.js';
-import type { ObjectRef } from '../../ontology/schema.js';
+import type { DerivedExpression, ObjectRef } from '../../ontology/schema.js';
 import type { Access, RowRule } from '../access.js';
 import type { aggregateSetSchema, setExpressionSchema } from '../object-sets.js';
 import type { Objects } from '../objects.js';
 import { queryFields, querySchema } from '../objects.js';
-import type { Predicate } from '../query-filter.js';
+import { predicateFields, type Predicate } from '../query-filter.js';
 import { scenarioMetadataType } from '../scenario-metadata.js';
 import type { ObjectPolicy } from '../security.js';
+import { supportsStoredPredicate } from '../stored-query.js';
 
 /**
  * Semantic planning for the Ontology query kernel (route C).
@@ -21,6 +22,14 @@ import type { ObjectPolicy } from '../security.js';
  * predicates on every table the plan reads, and property security masks the cells predicates and aggregations see.
  * Access checks the reference would make are made here first; a check that would fail also yields `undefined`, so the
  * reference reports its own error.
+ *
+ * The kernel reports every row the reference reads, so the client records the same row classifications, markings and
+ * row dependencies:
+ * - the members of every node, and every readable row of a type whose filter reads derived values;
+ * - each traversal step's targets;
+ * - the objects the derived properties of those rows reach.
+ * Type-level checks are made while planning, also for inputs that turn out to be empty, where the reference may skip
+ * them; the kernel path then records at least what the reference records.
  */
 
 export type KernelKind = 'string' | 'integer' | 'number' | 'boolean' | 'strings';
@@ -37,22 +46,46 @@ export type KernelPredicate =
   | { op: 'subset'; column: string; values: string[] }
   /** A string list holds at least one of `values`. */
   | { op: 'hasAny'; column: string; values: string[] };
-export type KernelMove = { source: string; link: string; forward: boolean; target: string; filter?: KernelPredicate };
+/** `candidates`: the filter reads derived values, so the reference reads every candidate before it filters. */
+export type KernelMove = { source: string; link: string; forward: boolean; target: string; filter?: KernelPredicate; candidates?: true };
 export type KernelSet =
   | { op: 'empty' }
-  | { op: 'scan'; type: string; filter?: KernelPredicate }
-  | { op: 'refs'; refs: ObjectRef[] }
+  | { op: 'scan'; type: string; filter?: KernelPredicate; candidates?: true }
+  /** `enrich: false` for the source of a relationship query, which the reference reads without derived values. */
+  | { op: 'refs'; refs: ObjectRef[]; enrich?: false }
   | { op: 'union' | 'intersect'; sets: KernelSet[] }
   | { op: 'except'; left: KernelSet; right: KernelSet }
   | { op: 'traverse'; set: KernelSet; steps: KernelMove[][] };
-/** What the kernel reports about each member type: the rows to record for policy-bound types, and markings read. */
+/** One step of a derived relationship path; a link whose label the principal may not see reaches nothing. */
+export type KernelStep = { link: string; forward: boolean; target: string; visible?: false };
+/** A derived value as the kernel computes it; see `kernel/src/main.rs`. */
+export type KernelDerived =
+  | { op: 'literal'; value: number }
+  | { op: 'field'; column: string; hidden?: boolean; policy?: KernelPredicate }
+  | { op: 'derived'; column: string }
+  | { op: 'arith'; kind: 'add' | 'subtract' | 'multiply' | 'divide'; left: KernelDerived; right: KernelDerived }
+  | { op: 'linked'; steps: KernelStep[]; aggregate: string; value?: KernelDerived };
+const bounds = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'] as const;
+/** A derived column with the numeric bounds of its property schema, which the reference validates each value against. */
+export type KernelDerivedSpec = { column: string; kind: Exclude<KernelKind, 'strings'>; expr: KernelDerived }
+  & Partial<Record<typeof bounds[number], number>>;
+/** How the kernel reports each type the plan reads: the rows to record for policy-bound types, and markings read. */
 export type KernelMember = { type: string; track: boolean; markings?: string };
 export type KernelPlan = {
   set: KernelSet; types: Set<string>;
   /** The row predicate the kernel applies to every read of each type. */
   rows: Record<string, KernelPredicate>;
   members: Map<string, KernelMember>;
+  /** The derived columns each type's reads carry. */
+  derived: Record<string, KernelDerivedSpec[]>;
+  /**
+   * The derived properties of each type whose rows the reference reads with their derived values. The reference checks
+   * their visibility for each such row it reads, so the client records the checks where the kernel read such rows.
+   */
+  enriched: Map<string, string[]>;
 };
+/** The planning state of each plan, which an aggregation over the plan extends. */
+const scopes = new WeakMap<KernelPlan, Scope>();
 
 type SetExpression = z.output<typeof setExpressionSchema>;
 type AggregateInput = z.output<typeof aggregateSetSchema>;
@@ -93,12 +126,18 @@ const conjunction = (parts: KernelPredicate[]): KernelPredicate | undefined =>
 class Scope {
   readonly rows: Record<string, KernelPredicate> = {};
   readonly members = new Map<string, KernelMember>();
+  readonly derived: Record<string, KernelDerivedSpec[]> = {};
+  private readonly compiling = new Set<string>();
+  readonly enriched = new Map<string, string[]>();
   private readonly rules = new Map<string, RowRule>();
   constructor(readonly model: Ontology, readonly access: Access) {}
   /** The row rule of a type, or undefined when only the reference can evaluate it or it has no kernel equivalent. */
   rule(type: string): RowRule | undefined {
     const { model, access } = this;
     if (!model.objects.has(type) || type === scenarioMetadataType || processLogTarget(model, type)) return undefined;
+    // The reference observes a property's own label on each row it reads that holds the property. The kernel does not
+    // track which properties a row holds, so types with labelled properties stay on the reference path.
+    if (Object.values(model.object(type).properties).some(property => property.classification)) return undefined;
     let rule = this.rules.get(type);
     if (!rule) {
       rule = access.rowRule(model, type);
@@ -124,8 +163,29 @@ class Scope {
     const rule = this.rule(type);
     if (!rule) return undefined;
     this.access.read(this.model, type);
-    if (rule.kind === 'deny') return false;
-    if (!this.members.has(type)) this.members.set(type, { type, track: rule.kind === 'rows' && rule.tracked, markings: rule.kind === 'rows' ? rule.markingsProperty : undefined });
+    this.describe(type, rule);
+    return rule.kind !== 'deny';
+  }
+  /** Tells the kernel how to report the rows it reads of a type; a type the principal may not read has none. */
+  describe(type: string, rule?: RowRule) {
+    if (!this.members.has(type)) this.members.set(type, { type, track: rule?.kind === 'rows' && rule.tracked,
+      markings: rule?.kind === 'rows' ? rule.markingsProperty : undefined });
+  }
+  /**
+   * Registers every derived property of a type whose rows the reference reads with their derived values, or returns
+   * false when one has no kernel equivalent. The reference evaluates a derived property only where it is visible, so
+   * the kernel computes only plainly visible ones.
+   */
+  enrich(type: string): boolean {
+    if (this.enriched.has(type)) return true;
+    const names: string[] = [];
+    this.enriched.set(type, names);
+    for (const [name, property] of Object.entries(this.model.object(type).properties)) {
+      if (!property.derived) continue;
+      const cell = this.access.cellVisibility(this.model, type, name);
+      if (!cell.visible || cell.policy || !this.derivedColumn(type, name)) return false;
+      names.push(name);
+    }
     return true;
   }
   /** `null` when every row is readable, a predicate when some are, undefined when there is no kernel equivalent. */
@@ -166,12 +226,126 @@ class Scope {
     if (any.length) parts.push({ op: 'any', predicates: any as KernelPredicate[] });
     return conjunction(parts) ?? constant(true);
   }
+  /** A field's kernel kind: a stored column, or a derived column the planner can compute; undefined otherwise. */
+  kind(type: string, field: string): KernelKind | undefined {
+    if (field.includes('.')) return undefined;
+    const definition = this.model.object(type).properties[field];
+    if (!definition) return undefined;
+    if (!definition.derived) return columnKind(this.model, type, field);
+    return this.derivedColumn(type, field);
+  }
+  /**
+   * Registers the derived column `field` of `type` and returns its kind. The reference validates each derived value
+   * against the property schema, so a schema with constraints beyond its type, or an integer property whose expression
+   * can produce a fraction, stays on the reference path.
+   */
+  private derivedColumn(type: string, field: string): KernelKind | undefined {
+    const known = this.derived[type]?.find(spec => spec.column === field);
+    if (known) return known.kind;
+    const key = type + '.' + field;
+    if (this.compiling.has(key)) return undefined;
+    const definition = this.model.object(type).properties[field]!;
+    const schema = definition.schema as Record<string, unknown>;
+    if (Object.keys(schema).some(name => !['type', 'description', 'title', ...bounds].includes(name))) return undefined;
+    const kinds = valueKinds(schema).filter(kind => kind !== 'null');
+    const kind = kinds.length === 1 && ['string', 'integer', 'boolean'].includes(kinds[0]!) ? kinds[0] as 'string' | 'integer' | 'boolean'
+      : kinds.every(kind => kind === 'integer' || kind === 'number') && kinds.length ? 'number' : undefined;
+    if (!kind) return undefined;
+    const limits = bounds.filter(name => schema[name] !== undefined);
+    if (limits.length && (kind !== 'integer' && kind !== 'number' || limits.some(name => typeof schema[name] !== 'number' || !Number.isFinite(schema[name]))))
+      return undefined;
+    this.compiling.add(key);
+    try {
+      const expr = this.derivedExpression(type, definition.derived!);
+      if (!expr || kind === 'integer' && !this.integral(type, expr)) return undefined;
+      (this.derived[type] ??= []).push({ column: field, kind, expr, ...Object.fromEntries(limits.map(name => [name, schema[name]])) });
+      return kind;
+    } finally { this.compiling.delete(key); }
+  }
+  /** Whether a derived value is always an integer. */
+  private integral(type: string, expr: KernelDerived): boolean {
+    switch (expr.op) {
+      case 'literal': return Number.isInteger(expr.value);
+      case 'field': return expr.hidden || columnKind(this.model, type, expr.column) === 'integer';
+      case 'derived': return this.derived[type]?.find(spec => spec.column === expr.column)?.kind === 'integer';
+      case 'arith': return expr.kind !== 'divide' && this.integral(type, expr.left) && this.integral(type, expr.right);
+      case 'linked': {
+        if (expr.aggregate === 'count' || !expr.value) return true;
+        if (expr.aggregate === 'avg') return false;
+        return this.integral(expr.steps.at(-1)!.target, expr.value);
+      }
+    }
+  }
+  /** A derived expression over `type` as the kernel computes it, mirroring the reference evaluator. */
+  private derivedExpression(type: string, expression: DerivedExpression): KernelDerived | undefined {
+    if (expression.op === 'literal') return { op: 'literal', value: expression.value };
+    if (expression.op === 'property') return this.derivedValue(type, expression.property, false);
+    if (expression.op === 'linked') {
+      let current = type, visible = true;
+      const steps: KernelStep[] = [];
+      for (const step of expression.path) {
+        if (step.as) return undefined;
+        const navigation = this.model.navigation(current, step.link);
+        if (visible) {
+          // As the reference's relationship reads: the target type, the link and its label, then the target rows.
+          this.access.read(this.model, navigation.target);
+          this.access.definition(this.model, 'link', navigation.link);
+          const label = this.model.links.get(navigation.link)?.classification;
+          visible = this.access.canSeeModelData(label);
+          if (visible) {
+            this.access.observeClassification(label);
+            const readable = this.access.canRead(this.model, navigation.target) ? this.readable(navigation.target) : false;
+            if (readable === undefined) return undefined;
+            if (!readable) { this.describe(navigation.target); this.rows[navigation.target] = constant(false); }
+          }
+        }
+        steps.push({ link: navigation.link, forward: navigation.forward, target: navigation.target, ...(visible ? {} : { visible: false as const }) });
+        current = navigation.target;
+      }
+      if (expression.aggregate === 'count') return { op: 'linked', steps, aggregate: 'count' };
+      if (!expression.property) return undefined;
+      // A path the principal cannot follow reaches nothing, so the reference never reads the value.
+      if (!visible) return { op: 'linked', steps, aggregate: expression.aggregate };
+      const value = this.derivedValue(current, expression.property, expression.aggregate !== 'select');
+      return value && { op: 'linked', steps, aggregate: expression.aggregate, value };
+    }
+    const left = this.derivedExpression(type, expression.left), right = this.derivedExpression(type, expression.right);
+    if (!left || !right || !this.numeric(type, left) || !this.numeric(type, right)) return undefined;
+    return { op: 'arith', kind: expression.op, left, right };
+  }
+  private numeric(type: string, expr: KernelDerived): boolean {
+    if (expr.op === 'field') { const kind = columnKind(this.model, type, expr.column); return kind === 'integer' || kind === 'number'; }
+    if (expr.op === 'derived') { const kind = this.derived[type]?.find(spec => spec.column === expr.column)?.kind; return kind === 'integer' || kind === 'number'; }
+    if (expr.op === 'linked') return expr.aggregate !== 'select' || !expr.value || this.numeric(expr.steps.at(-1)!.target, expr.value);
+    return true;
+  }
+  /** A property read inside a derived expression: a stored field through its cell mask, or another derived column. */
+  private derivedValue(type: string, path: string, numeric: boolean): KernelDerived | undefined {
+    if (path.includes('.')) return undefined;
+    const definition = this.model.object(type).properties[path];
+    if (!definition) return undefined;
+    if (definition.derived) {
+      // The reference applies the derived property's own visibility; masked derived inputs stay on the reference path.
+      const cell = this.access.cellRule(this.model, type, path);
+      if (!cell.visible || cell.policy) return undefined;
+      const kind = this.derivedColumn(type, path);
+      if (!kind || numeric && kind !== 'integer' && kind !== 'number') return undefined;
+      return { op: 'derived', column: path };
+    }
+    const kind = columnKind(this.model, type, path);
+    if (!kind || kind === 'strings' || numeric && kind !== 'integer' && kind !== 'number') return undefined;
+    const cell = this.cell(type, path);
+    if (!cell) return undefined;
+    if (cell.hidden) return { op: 'field', column: path, hidden: true };
+    return cell.policy ? { op: 'field', column: path, policy: cell.policy } : { op: 'field', column: path };
+  }
   /**
    * A field as predicates and aggregations see it: hidden fields read as null for every row, and a cell policy shows the
    * value only on rows it permits. Undefined when the field has no kernel column.
    */
   cell(type: string, field: string): { hidden: true } | { hidden: false; policy?: KernelPredicate } | undefined {
-    if (field.includes('.') || !columnKind(this.model, type, field) || columnKind(this.model, type, field) === 'strings') return undefined;
+    const kind = this.kind(type, field);
+    if (!kind || kind === 'strings') return undefined;
     const cell = this.access.cellRule(this.model, type, field);
     if (!cell.visible) return { hidden: true };
     if (!cell.policy) return { hidden: false };
@@ -206,7 +380,7 @@ function compilePredicate(scope: Scope, type: string, predicate: Predicate): Ker
   }
   const cell = scope.cell(type, predicate.property);
   if (!cell) return undefined;
-  const kind = columnKind(scope.model, type, predicate.property)!;
+  const kind = scope.kind(type, predicate.property)!;
   const column = predicate.property;
   let atom: KernelPredicate;
   switch (predicate.op) {
@@ -255,7 +429,11 @@ function compileQuery(scope: Scope, input: Extract<SetExpression, { op: 'query' 
     if (!compiled) return undefined;
     parts.push(compiled);
   }
-  return { type: q.type, empty: false as const, filter: conjunction(parts), from: q.from };
+  // As the reference decides: a filter it cannot run in storage reads every candidate and then filters them.
+  const fields = [...Object.keys(q.where ?? {}), ...predicateFields(q.filter as Predicate | undefined)];
+  const candidates = !supportsStoredPredicate(q.filter as Predicate | undefined)
+    || fields.some(field => model.object(q.type).properties[field.split('.')[0]!]?.derived);
+  return { type: q.type, empty: false as const, filter: conjunction(parts), from: q.from, ...(candidates ? { candidates: true as const } : {}) };
 }
 
 /**
@@ -266,7 +444,10 @@ export async function compileSet(model: Ontology, access: Access, graph: Objects
   const scope = new Scope(model, access);
   try {
     const compiled = await compile(scope, graph, expression, 0);
-    return compiled && { ...compiled, rows: scope.rows, members: scope.members };
+    if (!compiled) return undefined;
+    const plan = { ...compiled, rows: scope.rows, members: scope.members, derived: scope.derived, enriched: scope.enriched };
+    scopes.set(plan, scope);
+    return plan;
   } catch (error) {
     // The reference path reports its own permission, existence and definition errors.
     if (error instanceof PermissionDenied || error instanceof NotFound || error instanceof InvalidInput || error instanceof Conflict) return undefined;
@@ -285,19 +466,27 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
       const query = compileQuery(scope, node.query);
       if (!query) return undefined;
       if (query.empty) return empty();
-      if (!query.from) return { set: { op: 'scan', type: query.type, filter: query.filter }, types: new Set([query.type]) };
+      const candidates = query.candidates ? { candidates: true as const } : {};
+      if (!query.from) {
+        if (!scope.enrich(query.type)) return undefined;
+        return { set: { op: 'scan', type: query.type, filter: query.filter, ...candidates }, types: new Set([query.type]) };
+      }
       if (query.from.as) return undefined;
       const navigation = model.navigation(query.from.object.type, query.from.link);
       if (navigation.target !== query.type) return empty();
       const source = scope.readable(query.from.object.type);
       if (source === undefined) return undefined;
-      await graph.read(query.from.object);
+      // The reference reads the source object, without its derived values, before it reads the relationship.
+      await graph.readStored(query.from.object);
       access.read(model, navigation.target);
       access.definition(model, 'link', navigation.link);
-      if (!access.canSeeModelData(model.links.get(navigation.link)?.classification)) return empty();
+      const label = model.links.get(navigation.link)?.classification;
+      if (!access.canSeeModelData(label)) return empty();
+      access.observeClassification(label);
+      if (!scope.enrich(query.type)) return undefined;
       return {
-        set: { op: 'traverse', set: { op: 'refs', refs: [query.from.object] },
-          steps: [[{ source: query.from.object.type, link: navigation.link, forward: navigation.forward, target: query.type, filter: query.filter }]] },
+        set: { op: 'traverse', set: { op: 'refs', refs: [query.from.object], enrich: false },
+          steps: [[{ source: query.from.object.type, link: navigation.link, forward: navigation.forward, target: query.type, filter: query.filter, ...candidates }]] },
         types: new Set([query.type]),
       };
     }
@@ -309,7 +498,9 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
         if (!access.canRead(model, ref.type)) continue;
         const readable = scope.readable(ref.type);
         if (readable === undefined) return undefined;
-        if (readable) refs.push(ref);
+        if (!readable) continue;
+        if (!scope.enrich(ref.type)) return undefined;
+        refs.push(ref);
       }
       return { set: { op: 'refs', refs }, types: new Set(refs.map(ref => ref.type)) };
     }
@@ -342,10 +533,13 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
           access.read(model, source);
           access.read(model, navigation.target);
           access.definition(model, 'link', navigation.link);
-          if (!access.canSeeModelData(model.links.get(navigation.link)?.classification)) continue;
+          const label = model.links.get(navigation.link)?.classification;
+          if (!access.canSeeModelData(label)) continue;
+          access.observeClassification(label);
           const readable = scope.readable(navigation.target);
           if (readable === undefined) return undefined;
           if (!readable) continue;
+          if (!scope.enrich(navigation.target)) return undefined;
           moves.push({ source, link: navigation.link, forward: navigation.forward, target: navigation.target });
           next.add(navigation.target);
         }
@@ -362,11 +556,11 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
 /** A field an aggregation reads, masked as predicates see it. */
 export type KernelMask = { column: string; hidden: boolean; policy?: KernelPredicate };
 
-/** Aggregation over one concrete type's stored scalar fields, or undefined. */
+/** Aggregation over one concrete type's stored and derived scalar fields, or undefined. */
 export function compileAggregate(model: Ontology, access: Access, plan: KernelPlan, input: Pick<AggregateInput, 'view' | 'groupBy' | 'metrics'>) {
-  if (input.view || plan.types.size !== 1) return undefined;
+  const scope = scopes.get(plan);
+  if (!scope || scope.model !== model || scope.access !== access || input.view || plan.types.size !== 1) return undefined;
   const type = [...plan.types][0]!;
-  const scope = new Scope(model, access);
   if (!scope.readable(type)) return undefined;
   const masks: KernelMask[] = [];
   for (const field of new Set([...input.groupBy, ...Object.values(input.metrics).flatMap(metric => metric.property ? [metric.property] : [])])) {
@@ -376,7 +570,7 @@ export function compileAggregate(model: Ontology, access: Access, plan: KernelPl
   }
   for (const metric of Object.values(input.metrics)) {
     if (metric.op === 'count') continue;
-    const kind = columnKind(model, type, metric.property!);
+    const kind = scope.kind(type, metric.property!);
     if (kind !== 'integer' && kind !== 'number') return undefined;
   }
   return {

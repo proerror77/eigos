@@ -168,45 +168,68 @@ async function securedSetup() {
   return { ...f, model, kernel, sets: new ObjectSets(f.db) };
 }
 
+type Setup = Awaited<ReturnType<typeof securedSetup>>;
+type Clearance = { sensitivity: 'INTERNAL' | 'CONFIDENTIAL'; compartments: string[] } | undefined;
+const clearances: Clearance[] = [undefined, { sensitivity: 'INTERNAL', compartments: [] }, { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] }];
+const sorted = (requirements: unknown[]) => requirements.map(item => JSON.stringify(item)).sort();
+/**
+ * The kernel records the dependencies of what it reads: every row the reference reads, the type-level grants and
+ * security, and the fields its predicates read and the objects it returns hold. The reference reads every declared field
+ * of every row, so it records a superset of field dependencies. Rows and type-level dependencies must match; field
+ * dependencies are a subset.
+ */
+function sameDependencies(kernel: string[], reference: string[], label: string) {
+  type Requirement = { permission: string; resource: string; security?: string; row?: { type: string; id: string; fields: string[] } };
+  const parse = (items: string[]) => items.map(item => JSON.parse(item) as Requirement);
+  const rows = (items: Requirement[]) => new Map(items.filter(item => item.row).map(item => [item.row!.type + '/' + item.row!.id, new Set(item.row!.fields)]));
+  const typeLevel = (items: Requirement[]) => items.filter(item => !item.row && item.permission !== 'view_property').map(item => JSON.stringify(item)).sort();
+  const fields = (items: Requirement[]) => items.filter(item => item.permission === 'view_property').map(item => item.resource);
+  const k = parse(kernel), r = parse(reference);
+  assert.deepEqual([...rows(k).keys()].sort(), [...rows(r).keys()].sort(), label + ' rows');
+  for (const [key, read] of rows(k)) assert([...read].every(field => rows(r).get(key)!.has(field)), label + ' fields of ' + key);
+  assert.deepEqual(typeLevel(k), typeLevel(r), label + ' type-level');
+  assert(fields(k).every(field => fields(r).includes(field)), label + ' property dependencies');
+}
+/** Runs an operation with a fresh principal context inside an egress scope, and reports what it recorded. */
+async function measured(f: Setup, clearance: Clearance, operation: (access: Access, graph: Objects) => Promise<unknown>) {
+  const access = await Access.load(f.db, principal);
+  const result = await access.measureEgress(() => operation(access, new Objects(f.db, f.model, access)), clearance);
+  return { result: result.result, classification: result.classification, requirements: sorted(result.requirements), markings: access.readMarkingsSnapshot().sort() };
+}
+async function referenceSet(f: Setup, access: Access, set: unknown) {
+  const items = [];
+  let cursor: string | undefined;
+  do { const page = await f.sets.evaluate(access, f.model, { set, limit: 100, cursor }); items.push(...page.items); cursor = page.cursor; } while (cursor);
+  return { items: values(items), total: items.length };
+}
+async function kernelSet(f: Setup, access: Access, graph: Objects, set: unknown) {
+  const result = await evaluateWithKernel(f.kernel, f.model, access, graph, { set: set as never, limit: 100 });
+  assert(result, JSON.stringify(set) + ' has a kernel plan');
+  return { items: values(result.items), total: result.total };
+}
+function same(kernel: Awaited<ReturnType<typeof measured>>, reference: Awaited<ReturnType<typeof measured>>, label: string) {
+  assert.deepEqual(kernel.result, reference.result, label);
+  assert.deepEqual(kernel.classification, reference.classification, label + ' observed classification');
+  sameDependencies(kernel.requirements, reference.requirements, label);
+  assert.deepEqual(kernel.markings, reference.markings, label + ' read markings');
+}
+/** Compares an Object Set on both paths: results, observed classification, recorded dependencies and read markings. */
+async function compareSet(f: Setup, clearance: Clearance, set: unknown) {
+  same(await measured(f, clearance, (access, graph) => kernelSet(f, access, graph, set)),
+    await measured(f, clearance, access => referenceSet(f, access, set)), JSON.stringify({ clearance, set }));
+}
+async function compareAggregate(f: Setup, clearance: Clearance, input: Record<string, unknown>) {
+  const kernel = await measured(f, clearance, async (access, graph) => {
+    const result = await aggregateWithKernel(f.kernel, f.model, access, graph, input as never);
+    assert(result, JSON.stringify(input) + ' has a kernel plan');
+    return { count: result.count, items: result.items };
+  });
+  same(kernel, await measured(f, clearance, access => f.sets.aggregate(access, f.model, input)), JSON.stringify({ clearance, input }));
+}
+
 test('the query kernel applies object policies, markings, property security and model clearance like the reference', { skip: !binary }, async () => {
   const f = await securedSetup();
   try {
-    const sorted = (requirements: unknown[]) => requirements.map(item => JSON.stringify(item)).sort();
-    /**
-     * The kernel records the dependencies of what it returns: every member row, the type-level grants and security, and
-     * the fields of the objects it returns. The reference reads every declared field of every member, so it records a
-     * superset of field dependencies. Rows and type-level dependencies must match; field dependencies are a subset.
-     */
-    const sameDependencies = (kernel: string[], reference: string[], label: string) => {
-      type Requirement = { permission: string; resource: string; security?: string; row?: { type: string; id: string; fields: string[] } };
-      const parse = (items: string[]) => items.map(item => JSON.parse(item) as Requirement);
-      const rows = (items: Requirement[]) => new Map(items.filter(item => item.row).map(item => [item.row!.type + '/' + item.row!.id, new Set(item.row!.fields)]));
-      const typeLevel = (items: Requirement[]) => items.filter(item => !item.row && item.permission !== 'view_property').map(item => JSON.stringify(item)).sort();
-      const fields = (items: Requirement[]) => items.filter(item => item.permission === 'view_property').map(item => item.resource);
-      const k = parse(kernel), r = parse(reference);
-      assert.deepEqual([...rows(k).keys()].sort(), [...rows(r).keys()].sort(), label + ' rows');
-      for (const [key, read] of rows(k)) assert([...read].every(field => rows(r).get(key)!.has(field)), label + ' fields of ' + key);
-      assert.deepEqual(typeLevel(k), typeLevel(r), label + ' type-level');
-      assert(fields(k).every(field => fields(r).includes(field)), label + ' property dependencies');
-    };
-    const run = async (clearance: { sensitivity: 'INTERNAL' | 'CONFIDENTIAL'; compartments: string[] } | undefined,
-      operation: (access: Access, graph: Objects) => Promise<unknown>) => {
-      const access = await Access.load(f.db, principal);
-      const measured = await access.measureEgress(() => operation(access, new Objects(f.db, f.model, access)), clearance);
-      return { result: measured.result, classification: measured.classification, requirements: sorted(measured.requirements),
-        markings: access.readMarkingsSnapshot().sort() };
-    };
-    const all = async (access: Access, set: unknown) => {
-      const items = [];
-      let cursor: string | undefined;
-      do { const page = await f.sets.evaluate(access, f.model, { set, limit: 100, cursor }); items.push(...page.items); cursor = page.cursor; } while (cursor);
-      return { items: values(items), total: items.length };
-    };
-    const viaKernel = async (access: Access, graph: Objects, set: unknown) => {
-      const result = await evaluateWithKernel(f.kernel, f.model, access, graph, { set: set as never, limit: 100 });
-      assert(result, JSON.stringify(set) + ' has a kernel plan');
-      return { items: values(result.items), total: result.total };
-    };
     const expressions = [
       { op: 'query', query: { type: 'Route' } },
       { op: 'query', query: { type: 'Route', filter: { op: 'gte', property: 'distance', value: 2 } } },
@@ -214,33 +237,153 @@ test('the query kernel applies object policies, markings, property security and 
       { op: 'query', query: { type: 'Route', filter: { op: 'not', predicate: { op: 'lt', property: 'distance', value: 3 } } } },
       { op: 'traverse', set: { op: 'query', query: { type: 'Place' } }, path: [{ link: 'departingRoutes' }] },
       { op: 'refs', objects: [route('a'), route('b'), route('c'), route('e')] },
+      // The reference reads every member of a traversal's start set and of both sides of a set operation.
+      { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin' }] },
+      { op: 'difference', left: { op: 'query', query: { type: 'Route' } }, right: { op: 'query', query: { type: 'Route', filter: { op: 'gte', property: 'distance', value: 3 } } } },
+      { op: 'intersection', sets: [{ op: 'query', query: { type: 'Route', where: { open: true } } }, { op: 'query', query: { type: 'Route', filter: { op: 'lt', property: 'distance', value: 5 } } }] },
     ];
-    for (const clearance of [undefined, { sensitivity: 'INTERNAL' as const, compartments: [] }, { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] }]) {
-      for (const set of expressions) {
-        const reference = await run(clearance, access => all(access, set));
-        const kernel = await run(clearance, (access, graph) => viaKernel(access, graph, set));
-        const label = JSON.stringify({ clearance, set });
-        assert.deepEqual(kernel.result, reference.result, label);
-        assert.deepEqual(kernel.classification, reference.classification, label + ' observed classification');
-        sameDependencies(kernel.requirements, reference.requirements, label);
-        assert.deepEqual(kernel.markings, reference.markings, label + ' read markings');
-      }
+    for (const clearance of clearances) {
+      for (const set of expressions) await compareSet(f, clearance, set);
       for (const input of [
         { set: { op: 'query', query: { type: 'Route' } }, groupBy: ['open'], metrics: { total: { op: 'count' }, distance: { op: 'sum', property: 'distance' }, lanes: { op: 'max', property: 'lanes' } } },
         { set: { op: 'query', query: { type: 'Route' } }, groupBy: ['lanes'], metrics: { total: { op: 'count' } } },
-      ]) {
-        const reference = await run(clearance, access => f.sets.aggregate(access, f.model, input));
-        const kernel = await run(clearance, async (access, graph) => {
-          const result = await aggregateWithKernel(f.kernel, f.model, access, graph, input as never);
-          assert(result, JSON.stringify(input) + ' has a kernel plan');
-          return { count: result.count, items: result.items };
-        });
-        const label = JSON.stringify({ clearance, input });
-        assert.deepEqual(kernel.result, reference.result, label);
-        assert.deepEqual(kernel.classification, reference.classification, label + ' observed classification');
-        sameDependencies(kernel.requirements, reference.requirements, label);
-        assert.deepEqual(kernel.markings, reference.markings, label + ' read markings');
-      }
+      ]) await compareAggregate(f, clearance, input);
     }
   } finally { await f.kernel.stop(); await f.close(); }
+});
+
+/**
+ * Derived properties on both sides of the RouteOrigin link: relationship counts, a select, sums, averages and maxima over
+ * visible targets, a two-step path, a derived value read through a relationship, arithmetic with division by zero, and a
+ * schema bound. Routes are under an object policy with markings, and both types carry row classifications.
+ */
+async function derivedSetup() {
+  const f = await fixture();
+  const document = structuredClone(f.model.document);
+  const properties = (name: string) => document.objectTypes.find(type => type.apiName === name)!.properties;
+  const field = (description: string, schema: Record<string, unknown>, derived?: unknown) =>
+    ({ description, schema, required: false, ...(derived ? { derived } : {}) }) as never;
+  const number = { type: 'number' }, integer = { type: 'integer' }, strings = { type: 'array', items: { type: 'string' } };
+  const departing = (aggregate: string, property?: string) => ({ op: 'linked', path: [{ link: 'departingRoutes' }], aggregate, ...(property ? { property } : {}) });
+  const origin = (aggregate: string, property?: string) => ({ op: 'linked', path: [{ link: 'origin' }], aggregate, ...(property ? { property } : {}) });
+  Object.assign(properties('Route'), {
+    distance: field('Synthetic distance', number), lanes: field('Synthetic lane count', integer),
+    teams: field('Synthetic teams', strings), markings: field('Synthetic markings', strings),
+    originCount: field('Origins', integer, origin('count')),
+    originCity: field('Origin city', { type: 'string' }, origin('select', 'city')),
+    originCapacity: field('Origin capacity', integer, origin('max', 'capacity')),
+    doubleLanes: field('Twice the lanes', integer, { op: 'multiply', left: { op: 'property', property: 'lanes' }, right: { op: 'literal', value: 2 } }),
+    distancePerLane: field('Distance per lane', number, { op: 'divide', left: { op: 'property', property: 'distance' }, right: { op: 'property', property: 'lanes' } }),
+  });
+  Object.assign(properties('Place'), {
+    capacity: field('Synthetic capacity', integer), rating: field('Synthetic rating', number),
+    routeCount: field('Departing routes', { type: 'integer', minimum: 0 }, departing('count')),
+    totalDistance: field('Total distance', number, departing('sum', 'distance')),
+    meanLanes: field('Mean lanes', number, departing('avg', 'lanes')),
+    widest: field('Most doubled lanes', integer, departing('max', 'doubleLanes')),
+    siblings: field('Origins of departing routes', integer, { op: 'linked', path: [{ link: 'departingRoutes' }, { link: 'origin' }], aggregate: 'count' }),
+    load: field('Distance per capacity', number, { op: 'divide', left: { op: 'property', property: 'totalDistance' }, right: { op: 'property', property: 'capacity' } }),
+  });
+  const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+  await setGrants(f.db, principal.owner, businessGrants(model));
+  const graph = new Objects(f.db, model, await Access.load(f.db, principal));
+  const confidential = { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] };
+  for (const [id, fields] of [
+    ['p1', { city: 'Shanghai', capacity: 4, rating: 4.5 }], ['p2', { city: 'Beijing', capacity: 0, rating: 3 }],
+    ['p3', { city: 'Shenzhen', capacity: 2, locationClassification: confidential }], ['p4', { city: 'Hangzhou' }],
+  ] as const) await graph.create(place(id), { id, name: id, address: 'A', coordinates: { lat: 31, lng: 121 }, coordinateSystem: 'GCJ02',
+    sourceBinding: 'test', observedAt: new Date().toISOString(), ...fields });
+  for (const [id, to, fields] of [
+    ['a', 'p1', { distance: 2, lanes: 1, teams: ['ops'] }],
+    ['b', 'p1', { distance: 6, lanes: 2, teams: ['ops'], locationClassification: { sensitivity: 'INTERNAL', compartments: [] } }],
+    ['c', 'p2', { distance: 3, lanes: 0, teams: ['ops'], markings: ['M1'] }],
+    ['d', 'p3', { distance: 1.5, lanes: 3, teams: ['sales'] }],
+    ['e', undefined, { distance: 4, teams: ['ops'], locationClassification: confidential }],
+    ['f', 'p2', { distance: 0.5, lanes: 2, teams: ['ops'], markings: ['M2'] }],
+    ['g', 'p3', { distance: 2.5, lanes: 1, teams: ['ops'] }],
+  ] as const) {
+    await graph.create(route(id), { id, name: 'route ' + id, ...fields });
+    if (to) await graph.link({ type: 'RouteOrigin', from: route(id), to: place(to) });
+  }
+  // Team ops with marking M1 sees routes a, b, c, e and g; d belongs to another team and f carries a marking it lacks.
+  await f.db.query(`INSERT INTO ${f.db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`, [{
+    read: { all: [], any: [{ op: 'member', property: 'teams' }] }, markingsProperty: 'markings', properties: {} }]);
+  await f.db.query(`INSERT INTO ${f.db.schema}.security_memberships(subject,kind,name) VALUES($1,'group','ops'),($1,'marking','M1')`, [principal.owner]);
+  const kernel = await KernelClient.start(binary!);
+  await kernel.load(f.db, model, process.env.EIGOS_TEST_DATABASE_URL!);
+  return { ...f, model, kernel, sets: new ObjectSets(f.db) };
+}
+
+test('the query kernel computes derived properties and records what evaluating them reads, like the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup();
+  try {
+    const places = (filter: unknown) => ({ op: 'query', query: { type: 'Place', filter } });
+    const routes = (filter: unknown) => ({ op: 'query', query: { type: 'Route', filter } });
+    const expressions = [
+      { op: 'query', query: { type: 'Place' } },
+      places({ op: 'gte', property: 'routeCount', value: 1 }),
+      places({ op: 'eq', property: 'load', value: null }),
+      places({ op: 'gt', property: 'meanLanes', value: 1 }),
+      places({ op: 'eq', property: 'siblings', value: 1 }),
+      routes({ op: 'eq', property: 'originCity', value: 'Shanghai' }),
+      routes({ op: 'any', predicates: [{ op: 'eq', property: 'distancePerLane', value: null }, { op: 'gte', property: 'doubleLanes', value: 4 }] }),
+      routes({ op: 'not', predicate: { op: 'lt', property: 'originCapacity', value: 4 } }),
+      { op: 'traverse', set: places({ op: 'gte', property: 'widest', value: 4 }), path: [{ link: 'departingRoutes' }] },
+      { op: 'traverse', set: places({ op: 'gt', property: 'routeCount', value: 99 }), path: [{ link: 'departingRoutes' }] },
+      { op: 'traverse', set: routes({ op: 'gte', property: 'distance', value: 3 }), path: [{ link: 'origin' }] },
+      { op: 'query', query: { type: 'Route', from: { object: place('p1'), link: 'departingRoutes' }, filter: { op: 'lt', property: 'distancePerLane', value: 2.5 } } },
+      { op: 'difference', left: { op: 'query', query: { type: 'Route' } }, right: routes({ op: 'eq', property: 'originCount', value: 0 }) },
+      { op: 'refs', objects: [place('p1'), place('p3'), route('e')] },
+    ];
+    for (const clearance of clearances) {
+      for (const set of expressions) await compareSet(f, clearance, set);
+      for (const input of [
+        { set: { op: 'query', query: { type: 'Place' } }, groupBy: ['routeCount'], metrics: { total: { op: 'count' },
+          distance: { op: 'sum', property: 'totalDistance' }, lanes: { op: 'avg', property: 'meanLanes' }, widest: { op: 'max', property: 'widest' } } },
+        { set: { op: 'query', query: { type: 'Route' } }, groupBy: ['originCity'], metrics: { total: { op: 'count' },
+          per: { op: 'max', property: 'distancePerLane' }, double: { op: 'sum', property: 'doubleLanes' } } },
+      ]) await compareAggregate(f, clearance, input);
+    }
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
+test('the reference evaluates sets whose derived values it fails to evaluate', { skip: !binary }, async () => {
+  const f = await fixture();
+  const document = structuredClone(f.model.document);
+  Object.assign(document.objectTypes.find(type => type.apiName === 'Route')!.properties, {
+    distance: { description: 'Synthetic distance', schema: { type: 'number' }, required: false },
+    lanes: { description: 'Synthetic lane count', schema: { type: 'integer' }, required: false },
+    huge: { description: 'Overflows for distances above 1', schema: { type: 'number' }, required: false,
+      derived: { op: 'multiply', left: { op: 'property', property: 'distance' }, right: { op: 'literal', value: 1e308 } } },
+    bounded: { description: 'At most two lanes', schema: { type: 'integer', maximum: 2 }, required: false, derived: { op: 'property', property: 'lanes' } },
+  });
+  const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+  await setGrants(f.db, principal.owner, businessGrants(model));
+  const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+  for (const [id, fields] of [['ok', { distance: 1, lanes: 1 }], ['big', { distance: 2, lanes: 1 }], ['wide', { distance: 1, lanes: 3 }]] as const)
+    await graph.create(route(id), { id, name: id, ...fields });
+  const kernel = await KernelClient.start(binary!);
+  try {
+    await kernel.load(f.db, model, process.env.EIGOS_TEST_DATABASE_URL!);
+    const sets = new ObjectSets(f.db), setup = { ...f, model, kernel, sets } as unknown as Setup;
+    for (const [set, fails] of [
+      [{ op: 'refs', objects: [route('ok')] }, false],
+      [{ op: 'query', query: { type: 'Route', where: { name: 'ok' } } }, false],
+      [{ op: 'refs', objects: [route('big')] }, 'Derived arithmetic overflow'],
+      [{ op: 'refs', objects: [route('ok'), route('wide')] }, true],
+      [{ op: 'query', query: { type: 'Route' } }, true],
+    ] as const) {
+      const label = JSON.stringify(set);
+      const result = await evaluateWithKernel(kernel, model, access, graph, { set: set as never, limit: 100 });
+      if (!fails) {
+        assert(result, label + ' has a kernel plan');
+        assert.deepEqual({ items: values(result.items), total: result.total }, await referenceSet(setup, access, set), label);
+        continue;
+      }
+      assert.equal(result, undefined, label + ' is left to the reference');
+      await assert.rejects(referenceSet(setup, access, set), typeof fails === 'string' ? new RegExp(fails) : Error, label + ' fails on the reference path');
+    }
+    assert.equal(await aggregateWithKernel(kernel, model, access, graph, { set: { op: 'query', query: { type: 'Route' } }, groupBy: [],
+      metrics: { total: { op: 'count' } } } as never), undefined, 'an aggregation over a failing row is left to the reference');
+  } finally { await kernel.stop(); await f.close(); }
 });

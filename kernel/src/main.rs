@@ -1,4 +1,4 @@
-//! EIGOS Ontology query kernel (prototype C1).
+//! EIGOS Ontology query kernel (prototype, phases C1 and C2).
 //!
 //! Loads a snapshot of one publication projection from PostgreSQL into per-type object tables and per-link edge
 //! tables, and executes Object Set plans compiled by the TypeScript planner (`packages/runtime/kernel/`) on
@@ -14,10 +14,10 @@ use datafusion::common::{Column, TableReference};
 use datafusion::datasource::MemTable;
 use datafusion::functions::core::expr_fn::coalesce;
 use datafusion::functions::unicode::expr_fn::strpos;
-use datafusion::functions_aggregate::expr_fn::{avg, count, max, min, sum};
+use datafusion::functions_aggregate::expr_fn::{avg, bool_or, count, max, min, sum};
 use datafusion::functions_nested::expr_fn::{array_has_all, array_has_any, cardinality, make_array};
 use datafusion::common::ScalarValue;
-use datafusion::logical_expr::when;
+use datafusion::logical_expr::{cast, when};
 use datafusion::logical_expr::{lit, Expr, JoinType};
 use datafusion::prelude::{DataFrame, SessionConfig, SessionContext};
 use futures_util::{pin_mut, TryStreamExt};
@@ -239,15 +239,21 @@ enum Predicate {
 #[derive(Deserialize)]
 struct Reference { r#type: String, id: String }
 
+fn yes() -> bool { true }
+
+/// One move of a traversal step. `candidates`: the move's filter reads derived values, so the reference reads every visible
+/// target before it filters them.
 #[derive(Deserialize)]
-struct Move { source: String, link: String, forward: bool, target: String, filter: Option<Predicate> }
+struct Move { source: String, link: String, forward: bool, target: String, filter: Option<Predicate>, #[serde(default)] candidates: bool }
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 enum SetNode {
   Empty,
-  Scan { r#type: String, filter: Option<Predicate> },
-  Refs { refs: Vec<Reference> },
+  /// `candidates`: the filter reads derived values, so the reference reads every readable row of the type.
+  Scan { r#type: String, filter: Option<Predicate>, #[serde(default)] candidates: bool },
+  /// `enrich` is false for the source of a relationship query, which the reference reads without its derived values.
+  Refs { refs: Vec<Reference>, #[serde(default = "yes")] enrich: bool },
   Union { sets: Vec<SetNode> },
   Intersect { sets: Vec<SetNode> },
   Except { left: Box<SetNode>, right: Box<SetNode> },
@@ -270,16 +276,62 @@ enum Output {
   Aggregate { r#type: String, group_by: Vec<String>, metrics: Vec<Metric>, #[serde(default)] masks: Vec<Mask> },
 }
 
-/// What one member type reports: the ids of every member when its rows are tracked, and the markings its members carry.
+/// How to report one type the evaluation reads: the ids of every row read when its rows are tracked, and the markings
+/// property its rows carry.
 #[derive(Deserialize)]
 struct MemberSpec { r#type: String, #[serde(default)] track: bool, markings: Option<String> }
 
 #[derive(Deserialize)]
 struct QueryRequest { owner: String, set: SetNode, output: Output, #[serde(default)] members: Vec<MemberSpec>,
-  #[serde(default)] rows: HashMap<String, Predicate> }
+  #[serde(default)] rows: HashMap<String, Predicate>, #[serde(default)] derived: HashMap<String, Vec<DerivedSpec>> }
 
-/// The owner a query reads and the row predicate of each type, applied to every read of that type's table.
-struct Ctx { owner: String, rows: HashMap<String, Predicate> }
+/// One row set the evaluation reads, as the reference reads it: `ids` has one `$id` column, and `enrich` says whether the
+/// reference evaluates the rows' derived properties.
+struct Read { kind: String, ids: DataFrame, enrich: bool }
+
+/// One query: the owner it reads, the row predicate of each type (applied to every read of that type's table), the
+/// derived columns each type's reads carry, each derived column once computed, and the row sets read so far.
+struct Ctx {
+  owner: String, rows: HashMap<String, Predicate>, derived: HashMap<String, Vec<DerivedSpec>>,
+  columns: tokio::sync::Mutex<HashMap<(String, String), DataFrame>>,
+  reads: std::sync::Mutex<Vec<Read>>,
+}
+
+impl Ctx {
+  fn read(&self, kind: &str, frame: DataFrame, enrich: bool) -> Result<(), Failure> {
+    let ids = frame.select(vec![column("$id")]).map_err(internal)?;
+    self.reads.lock().unwrap().push(Read { kind: kind.to_string(), ids, enrich });
+    Ok(())
+  }
+}
+
+/// A derived value over one type's rows: a stored field read through its cell mask, a literal, arithmetic over numbers,
+/// another derived column of the same type, or an aggregation over the visible objects a relationship path reaches,
+/// whose `value` is evaluated on the path's last type.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+enum Derived {
+  Literal { value: f64 },
+  Field { column: String, #[serde(default)] hidden: bool, policy: Option<Predicate> },
+  Derived { column: String },
+  Arith { kind: String, left: Box<Derived>, right: Box<Derived> },
+  Linked { steps: Vec<LinkStep>, aggregate: String, value: Option<Box<Derived>> },
+}
+/// One step of a derived relationship path. A step whose link the principal may not see reaches nothing.
+#[derive(Deserialize)]
+struct LinkStep { link: String, forward: bool, target: String, #[serde(default = "yes")] visible: bool }
+/// A derived column and the bounds its property schema puts on its numbers.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DerivedSpec { column: String, kind: Kind, expr: Derived,
+  minimum: Option<f64>, maximum: Option<f64>, exclusive_minimum: Option<f64>, exclusive_maximum: Option<f64> }
+
+/// The reference fails these evaluations; the kernel returns `fallback` so the caller runs the reference.
+fn fallback(reason: &str) -> Failure { failure(StatusCode::UNPROCESSABLE_ENTITY, format!("fallback: {reason}")) }
+/// The most objects one step of a derived relationship may reach from one object, as in the reference.
+const DERIVED_REACH: i64 = 10000;
+/// Zod's integers are safe integers.
+const SAFE_LIMIT: f64 = 9007199254740992.0;
 
 fn literal(kind: Kind, value: &Value) -> Result<Expr, Failure> {
   Ok(match (kind, value) {
@@ -344,12 +396,197 @@ fn refs_frame(ctx: &SessionContext, refs: &[(String, String)]) -> Result<DataFra
   ctx.read_batch(batch).map_err(internal)
 }
 
-async fn objects(snapshot: &Snapshot, owner: &Ctx, kind: &str, filter: Option<&Predicate>) -> Result<DataFrame, Failure> {
+/// The rows of a type the query may read: the owner's rows under the type's row predicate, without derived columns.
+async fn base(snapshot: &Snapshot, owner: &Ctx, kind: &str) -> Result<DataFrame, Failure> {
   let kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
   let mut frame = snapshot.ctx.table(object_table(kind)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?;
   if let Some(rows) = owner.rows.get(kind) { frame = frame.filter(predicate(rows, kinds)?).map_err(internal)?; }
-  if let Some(p) = filter { frame = frame.filter(predicate(p, kinds)?).map_err(internal)?; }
   Ok(frame)
+}
+
+/// The column kinds a type's reads carry: its stored columns and the derived columns the query asked for.
+fn kinds_of(snapshot: &Snapshot, owner: &Ctx, kind: &str) -> Result<HashMap<String, Kind>, Failure> {
+  let mut kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?.clone();
+  for spec in owner.derived.get(kind).into_iter().flatten() { kinds.insert(spec.column.clone(), spec.kind); }
+  Ok(kinds)
+}
+
+/// The readable rows of a type with its derived columns, under an optional filter.
+async fn objects(snapshot: &Snapshot, owner: &Ctx, kind: &str, filter: Option<&Predicate>) -> Result<DataFrame, Failure> {
+  let mut frame = base(snapshot, owner, kind).await?;
+  for (i, spec) in owner.derived.get(kind).into_iter().flatten().enumerate() {
+    let key = format!("$d{i}");
+    let values = derived_column(snapshot, owner, kind, &spec.column).await?
+      .select(vec![column("$did").alias(key.clone()), column("$value").alias(spec.column.clone())]).map_err(internal)?;
+    frame = frame.join(values, JoinType::Left, &["$id"], &[key.as_str()], None).map_err(internal)?;
+  }
+  if let Some(p) = filter { frame = frame.filter(predicate(p, &kinds_of(snapshot, owner, kind)?)?).map_err(internal)?; }
+  Ok(frame)
+}
+
+fn flag(value: Expr) -> Expr { coalesce(vec![value, lit(false)]) }
+
+/// True for a value that is not a finite number, false for null.
+fn not_finite(value: Expr) -> Expr { flag(!(value.clone().gt_eq(lit(-f64::MAX)).and(value.lt_eq(lit(f64::MAX))))) }
+
+/// A derived column of `kind`, computed once per query over every readable row: `$did`, `$value` of the spec's kind, and
+/// `$err`, true where the reference's evaluation of the row's value fails.
+fn derived_column<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, kind: &'a str, name: &'a str) -> futures_util::future::BoxFuture<'a, Result<DataFrame, Failure>> {
+  Box::pin(async move {
+    let key = (kind.to_string(), name.to_string());
+    let known = owner.columns.lock().await.get(&key).cloned();
+    if let Some(frame) = known { return Ok(frame); }
+    let spec = owner.derived.get(kind).into_iter().flatten().find(|s| s.column == name)
+      .ok_or_else(|| invalid(format!("Derived column {name} of {kind} is not defined")))?;
+    let mut frame = base(snapshot, owner, kind).await?;
+    let mut joined = 0usize;
+    let (value, failed) = derived_expr(snapshot, owner, kind, &spec.expr, &mut frame, &mut joined).await?;
+    let (typed, rejected) = typed_value(spec, value)?;
+    let computed = frame.select(vec![column("$id").alias("$did"), typed.alias("$value"), failed.or(rejected).alias("$err")]).map_err(internal)?
+      .cache().await.map_err(internal)?;
+    owner.columns.lock().await.insert(key, computed.clone());
+    Ok(computed)
+  })
+}
+
+/// The value as its property's kind, and whether the reference's validation against the property schema rejects it:
+/// integers must be safe integers, and numbers must respect the schema's bounds.
+fn typed_value(spec: &DerivedSpec, value: Expr) -> Result<(Expr, Expr), Failure> {
+  let number = cast(value.clone(), DataType::Float64);
+  let mut rejected = lit(false);
+  let typed = match spec.kind {
+    Kind::Integer => {
+      let safe = number.clone().gt(lit(-SAFE_LIMIT)).and(number.clone().lt(lit(SAFE_LIMIT)));
+      rejected = flag(!safe.clone());
+      when(safe, cast(number.clone(), DataType::Int64)).otherwise(lit(ScalarValue::Int64(None))).map_err(internal)?
+    }
+    Kind::Number => number.clone(),
+    other => cast(value, data_type(other)),
+  };
+  if matches!(spec.kind, Kind::Integer | Kind::Number) {
+    if let Some(bound) = spec.minimum { rejected = rejected.or(flag(number.clone().lt(lit(bound)))); }
+    if let Some(bound) = spec.maximum { rejected = rejected.or(flag(number.clone().gt(lit(bound)))); }
+    if let Some(bound) = spec.exclusive_minimum { rejected = rejected.or(flag(number.clone().lt_eq(lit(bound)))); }
+    if let Some(bound) = spec.exclusive_maximum { rejected = rejected.or(flag(number.clone().gt_eq(lit(bound)))); }
+  }
+  Ok((typed, rejected))
+}
+
+/// Builds a derived expression over `frame` as (value, failed), joining the relationship aggregations and other derived
+/// columns it uses. `failed` holds where the reference's evaluation throws.
+fn derived_expr<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, kind: &'a str, expr: &'a Derived, frame: &'a mut DataFrame, joined: &'a mut usize)
+  -> futures_util::future::BoxFuture<'a, Result<(Expr, Expr), Failure>> {
+  Box::pin(async move {
+    let kinds = snapshot.kinds.get(kind).ok_or_else(|| invalid(format!("Type {kind} is not loaded")))?;
+    let number = |e: Expr| cast(e, DataType::Float64);
+    Ok(match expr {
+      Derived::Literal { value } => (lit(*value), lit(false)),
+      Derived::Field { column: name, hidden, policy } => {
+        let field_kind = *kinds.get(name).ok_or_else(|| invalid(format!("Unknown column {name}")))?;
+        let null = || ScalarValue::try_from(&data_type(field_kind)).map(lit).map_err(internal);
+        let value = if *hidden { null()? }
+          else if let Some(p) = policy { when(predicate(p, kinds)?, column(name)).otherwise(null()?).map_err(internal)? }
+          else { column(name) };
+        (value, lit(false))
+      }
+      Derived::Derived { column: name } => {
+        let n = *joined;
+        *joined += 1;
+        let (key, value, error) = (format!("$r{n}"), format!("$rv{n}"), format!("$re{n}"));
+        let values = derived_column(snapshot, owner, kind, name).await?
+          .select(vec![column("$did").alias(key.clone()), column("$value").alias(value.clone()), column("$err").alias(error.clone())]).map_err(internal)?;
+        *frame = frame.clone().join(values, JoinType::Left, &["$id"], &[key.as_str()], None).map_err(internal)?;
+        (column(&value), flag(column(&error)))
+      }
+      Derived::Arith { kind: op, left, right } => {
+        let (l, left_failed) = derived_expr(snapshot, owner, kind, left, frame, joined).await?;
+        let (r, right_failed) = derived_expr(snapshot, owner, kind, right, frame, joined).await?;
+        let (l, r) = (number(l), number(r));
+        let value = match op.as_str() {
+          "add" => l + r, "subtract" => l - r, "multiply" => l * r,
+          // Division by zero is null in the reference; null operands give null.
+          "divide" => when(r.clone().eq(lit(0f64)), lit(ScalarValue::Float64(None))).otherwise(l / r).map_err(internal)?,
+          other => return Err(invalid(format!("Unknown arithmetic {other}"))),
+        };
+        // The reference fails when an operand fails or the result is not a finite number.
+        (value.clone(), left_failed.or(right_failed).or(not_finite(value)))
+      }
+      Derived::Linked { steps, aggregate, value } => {
+        let n = *joined;
+        *joined += 1;
+        let (key, out, error) = (format!("$l{n}"), format!("$lv{n}"), format!("$le{n}"));
+        let values = linked_frame(snapshot, owner, kind, steps, aggregate, value.as_deref()).await?
+          .select(vec![column("$src").alias(key.clone()), column("$agg").alias(out.clone()), column("$aerr").alias(error.clone())]).map_err(internal)?;
+        *frame = frame.clone().join(values, JoinType::Left, &["$id"], &[key.as_str()], None).map_err(internal)?;
+        (if aggregate == "count" { coalesce(vec![column(&out), lit(0i64)]) } else { column(&out) }, flag(column(&error)))
+      }
+    })
+  })
+}
+
+/// The value a linked aggregation reads on each readable row of `kind`: (`$vid`, `$v`, `$verr`).
+async fn value_frame(snapshot: &Snapshot, owner: &Ctx, kind: &str, value: &Derived) -> Result<DataFrame, Failure> {
+  let mut frame = base(snapshot, owner, kind).await?;
+  let mut joined = 0usize;
+  let (v, failed) = derived_expr(snapshot, owner, kind, value, &mut frame, &mut joined).await?;
+  frame.select(vec![column("$id").alias("$vid"), v.alias("$v"), failed.alias("$verr")]).map_err(internal)
+}
+
+/// One row per readable source row (`$src`, `$agg`, `$aerr`): the aggregation over the distinct visible objects the path
+/// reaches from it, each step deduplicated like the reference's traversal, and whether the reference fails for the row:
+/// a step that reaches more than 10,000 objects, a `select` over more than one object, a failing value, or a sum or
+/// average that is not finite.
+async fn linked_frame(snapshot: &Snapshot, owner: &Ctx, kind: &str, steps: &[LinkStep], aggregate: &str, value: Option<&Derived>) -> Result<DataFrame, Failure> {
+  let sources = base(snapshot, owner, kind).await?.select(vec![column("$id").alias("$src")]).map_err(internal)?;
+  let mut reach = sources.clone().select(vec![column("$src"), column("$src").alias("$node")]).map_err(internal)?;
+  let mut crowded: Option<DataFrame> = None;
+  let mut target = kind.to_string();
+  for step in steps {
+    if !step.visible { reach = reach.filter(lit(false)).map_err(internal)?; break; }
+    if !snapshot.links.contains(&step.link) { return Err(invalid(format!("Link {} is not loaded", step.link))); }
+    let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
+    let edges = snapshot.ctx.table(edge_table(&step.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+      .select(vec![column(from).alias("$efrom"), column(to).alias("$eto")]).map_err(internal)?;
+    let visible = base(snapshot, owner, &step.target).await?.select(vec![column("$id").alias("$visible")]).map_err(internal)?;
+    reach = reach.join(edges, JoinType::Inner, &["$node"], &["$efrom"], None).map_err(internal)?
+      .select(vec![column("$src"), column("$eto").alias("$node")]).map_err(internal)?
+      .join(visible, JoinType::LeftSemi, &["$node"], &["$visible"], None).map_err(internal)?
+      .distinct().map_err(internal)?;
+    let over = reach.clone().aggregate(vec![column("$src")], vec![count(column("$node")).alias("$n")]).map_err(internal)?
+      .filter(column("$n").gt(lit(DERIVED_REACH))).map_err(internal)?.select(vec![column("$src").alias("$over")]).map_err(internal)?;
+    crowded = Some(match crowded { None => over, Some(previous) => previous.union(over).map_err(internal)? });
+    target = step.target.clone();
+  }
+  let grouped = if aggregate == "count" {
+    reach.aggregate(vec![column("$src")], vec![count(column("$node")).alias("$gagg")]).map_err(internal)?
+      .select(vec![column("$src").alias("$gsrc"), column("$gagg"), lit(false).alias("$gerr")]).map_err(internal)?
+  } else if let Some(value) = value {
+    let values = value_frame(snapshot, owner, &target, value).await?;
+    let number = |e: Expr| cast(e, DataType::Float64);
+    let agg = match aggregate {
+      "select" => max(column("$v")), "max" => max(number(column("$v"))), "min" => min(number(column("$v"))),
+      "sum" => sum(number(column("$v"))), "avg" => avg(number(column("$v"))),
+      other => return Err(invalid(format!("Unknown linked aggregate {other}"))),
+    };
+    let grouped = reach.join(values, JoinType::Left, &["$node"], &["$vid"], None).map_err(internal)?
+      .aggregate(vec![column("$src")], vec![agg.alias("$gagg"), bool_or(column("$verr")).alias("$verr"), count(column("$node")).alias("$n")]).map_err(internal)?;
+    let mut failed = flag(column("$verr"));
+    if aggregate == "select" { failed = failed.or(column("$n").gt(lit(1i64))); }
+    if aggregate == "sum" || aggregate == "avg" { failed = failed.or(not_finite(column("$gagg"))); }
+    grouped.select(vec![column("$src").alias("$gsrc"), column("$gagg"), failed.alias("$gerr")]).map_err(internal)?
+  } else {
+    // A path the principal cannot follow reaches nothing, so no value is read.
+    if steps.iter().all(|s| s.visible) { return Err(invalid("A linked aggregation needs a value")); }
+    reach.aggregate(vec![column("$src")], vec![count(column("$node")).alias("$n")]).map_err(internal)?
+      .select(vec![column("$src").alias("$gsrc"), lit(ScalarValue::Float64(None)).alias("$gagg"), lit(false).alias("$gerr")]).map_err(internal)?
+  };
+  let mut result = sources.join(grouped, JoinType::Left, &["$src"], &["$gsrc"], None).map_err(internal)?;
+  let mut failed = flag(column("$gerr"));
+  if let Some(over) = crowded {
+    result = result.join(over.distinct().map_err(internal)?, JoinType::Left, &["$src"], &["$over"], None).map_err(internal)?;
+    failed = failed.or(column("$over").is_not_null());
+  }
+  result.select(vec![column("$src"), column("$gagg").alias("$agg"), failed.alias("$aerr")]).map_err(internal)
 }
 
 fn as_refs(frame: DataFrame, kind: &str) -> Result<DataFrame, Failure> {
@@ -362,13 +599,19 @@ fn distinct_union(ctx: &SessionContext, frames: Vec<DataFrame>) -> Result<DataFr
   iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?.distinct().map_err(internal)
 }
 
+/// Evaluates a set node and records the rows the reference reads for it: a scan's matches (every readable row when its
+/// filter reads derived values), the existing references, and every traversal step's targets.
 fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> futures_util::future::BoxFuture<'a, Result<DataFrame, Failure>> {
   Box::pin(async move {
     let ctx = &snapshot.ctx;
     match node {
       SetNode::Empty => refs_frame(ctx, &[]),
-      SetNode::Scan { r#type, filter } => as_refs(objects(snapshot, owner, r#type, filter.as_ref()).await?, r#type),
-      SetNode::Refs { refs } => {
+      SetNode::Scan { r#type, filter, candidates } => {
+        let matched = objects(snapshot, owner, r#type, filter.as_ref()).await?;
+        owner.read(r#type, if *candidates { base(snapshot, owner, r#type).await? } else { matched.clone() }, true)?;
+        as_refs(matched, r#type)
+      }
+      SetNode::Refs { refs, enrich } => {
         // Only references to existing objects of loaded types remain.
         let mut by_type: HashMap<&str, Vec<(String, String)>> = HashMap::new();
         for r in refs { if snapshot.kinds.contains_key(&r.r#type) { by_type.entry(&r.r#type).or_default().push((r.r#type.clone(), r.id.clone())); } }
@@ -376,6 +619,7 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
         for (kind, items) in by_type {
           let wanted = refs_frame(ctx, &items)?.select(vec![column("$id").alias("wanted")]).map_err(internal)?;
           let existing = objects(snapshot, owner, kind, None).await?.join(wanted, JoinType::LeftSemi, &["$id"], &["wanted"], None).map_err(internal)?;
+          owner.read(kind, existing.clone(), *enrich)?;
           frames.push(as_refs(existing, kind)?);
         }
         distinct_union(ctx, frames)
@@ -406,13 +650,75 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
             let edges = ctx.table(edge_table(&m.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
               .join(sources, JoinType::LeftSemi, &[from], &["source"], None).map_err(internal)?
               .select(vec![column(to).alias("target")]).map_err(internal)?;
-            let targets = objects(snapshot, owner, &m.target, m.filter.as_ref()).await?
-              .join(edges, JoinType::LeftSemi, &["$id"], &["target"], None).map_err(internal)?;
+            let reached = objects(snapshot, owner, &m.target, None).await?.join(edges, JoinType::LeftSemi, &["$id"], &["target"], None).map_err(internal)?;
+            let targets = match &m.filter {
+              Some(p) => reached.clone().filter(predicate(p, &kinds_of(snapshot, owner, &m.target)?)?).map_err(internal)?,
+              None => reached.clone(),
+            };
+            owner.read(&m.target, if m.candidates { reached } else { targets.clone() }, true)?;
             frames.push(as_refs(targets, &m.target)?);
           }
           current = distinct_union(ctx, frames)?;
         }
         Ok(current)
+      }
+    }
+  })
+}
+
+/// Records what evaluating the derived properties of every row the reference enriches reads, and fails over to the
+/// reference when it would fail to evaluate one of them.
+async fn enrich(snapshot: &Snapshot, owner: &Ctx) -> Result<(), Failure> {
+  let enriched: Vec<(String, DataFrame)> = owner.reads.lock().unwrap().iter()
+    .filter(|read| read.enrich && owner.derived.contains_key(&read.kind)).map(|read| (read.kind.clone(), read.ids.clone())).collect();
+  for (kind, ids) in enriched {
+    let wanted = ids.clone().select(vec![column("$id").alias("$rid")]).map_err(internal)?;
+    for spec in owner.derived.get(&kind).into_iter().flatten() {
+      let failed = derived_column(snapshot, owner, &kind, &spec.column).await?.filter(column("$err")).map_err(internal)?
+        .join(wanted.clone(), JoinType::LeftSemi, &["$did"], &["$rid"], None).map_err(internal)?
+        .limit(0, Some(1)).map_err(internal)?.count().await.map_err(internal)?;
+      if failed > 0 { return Err(fallback(&format!("the reference fails to evaluate {kind}.{}", spec.column))); }
+      expression_reads(snapshot, owner, &kind, &spec.expr, ids.clone()).await?;
+    }
+  }
+  Ok(())
+}
+
+/// Records the rows the reference reads to evaluate `expr` on the rows `ids` (one `$id` column) of `kind`: every object
+/// each step of a relationship path reaches, and what evaluating a derived value on the reached objects reads.
+fn expression_reads<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, kind: &'a str, expr: &'a Derived, ids: DataFrame)
+  -> futures_util::future::BoxFuture<'a, Result<(), Failure>> {
+  Box::pin(async move {
+    match expr {
+      Derived::Literal { .. } | Derived::Field { .. } => Ok(()),
+      Derived::Derived { column: name } => {
+        let spec = owner.derived.get(kind).into_iter().flatten().find(|s| &s.column == name)
+          .ok_or_else(|| invalid(format!("Derived column {name} is not defined")))?;
+        expression_reads(snapshot, owner, kind, &spec.expr, ids).await
+      }
+      Derived::Arith { left, right, .. } => {
+        expression_reads(snapshot, owner, kind, left, ids.clone()).await?;
+        expression_reads(snapshot, owner, kind, right, ids).await
+      }
+      Derived::Linked { steps, aggregate, value } => {
+        let mut frontier = ids;
+        let mut target = kind;
+        for step in steps {
+          if !step.visible { return Ok(()); }
+          let (from, to) = if step.forward { ("from_id", "to_id") } else { ("to_id", "from_id") };
+          let sources = frontier.select(vec![column("$id").alias("$fid")]).map_err(internal)?;
+          let edges = snapshot.ctx.table(edge_table(&step.link)).await.map_err(internal)?.filter(column("$owner").eq(lit(owner.owner.clone()))).map_err(internal)?
+            .join(sources, JoinType::LeftSemi, &[from], &["$fid"], None).map_err(internal)?
+            .select(vec![column(to).alias("$tid")]).map_err(internal)?;
+          frontier = base(snapshot, owner, &step.target).await?.join(edges, JoinType::LeftSemi, &["$id"], &["$tid"], None).map_err(internal)?
+            .select(vec![column("$id")]).map_err(internal)?;
+          owner.read(&step.target, frontier.clone(), false)?;
+          target = &step.target;
+        }
+        match (aggregate.as_str(), value.as_deref()) {
+          ("count", _) | (_, None) => Ok(()),
+          (_, Some(value)) => expression_reads(snapshot, owner, target, value, frontier).await,
+        }
       }
     }
   })
@@ -429,11 +735,6 @@ async fn rows(frame: DataFrame) -> Result<Vec<Value>, Failure> {
   Ok(parsed.as_array().cloned().unwrap_or_default())
 }
 
-/**
- * For each requested type present in the set: how many members it has and, for a classified type, the highest row
- * sensitivity rank and every compartment its members carry. The caller observes the combined label, as the reference
- * observes each member it reads.
- */
 /// The distinct strings of a string-list column over `frame`'s rows, sorted.
 async fn distinct_strings(frame: DataFrame, name: &str) -> Result<Vec<String>, Failure> {
   let values = rows(frame.filter(column(name).is_not_null()).map_err(internal)?.select(vec![column(name)]).map_err(internal)?.distinct().map_err(internal)?).await?;
@@ -444,23 +745,30 @@ async fn distinct_strings(frame: DataFrame, name: &str) -> Result<Vec<String>, F
   Ok(out)
 }
 
-/// The most member ids a tracked type reports, the reference's complete-evaluation limit.
+/// The most row ids a tracked type reports, the reference's complete-evaluation limit.
 const TRACKED: usize = 10000;
 
 /**
- * For each requested type present in the set: how many members it has; for a classified type, the highest row
- * sensitivity rank and every compartment; for a tracked (policy-bound) type, every member id, or `overLimit`; and the
- * markings its members carry. The caller records these as the reference does for each member it reads.
+ * For each type the evaluation reads, over the distinct rows read: how many; for a classified type, the highest row
+ * sensitivity rank and every compartment; for a tracked (policy-bound) type, every id, or `overLimit`; and the markings
+ * the rows carry. The caller records these as the reference does for each row it reads.
  */
-async fn members(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, specs: &[MemberSpec]) -> Result<Vec<Value>, Failure> {
+async fn read_stats(snapshot: &Snapshot, owner: &Ctx, specs: &[MemberSpec]) -> Result<Vec<Value>, Failure> {
+  let mut by_type: HashMap<String, (Vec<DataFrame>, Vec<DataFrame>)> = HashMap::new();
+  for read in owner.reads.lock().unwrap().iter() {
+    let entry = by_type.entry(read.kind.clone()).or_default();
+    entry.0.push(read.ids.clone());
+    if read.enrich { entry.1.push(read.ids.clone()); }
+  }
   let mut out = Vec::new();
-  for spec in specs {
-    let kind = &spec.r#type;
-    if !snapshot.kinds.contains_key(kind) { continue; }
-    let ids = set.clone().filter(column("$type").eq(lit(kind.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
-    let rows_frame = objects(snapshot, owner, kind, None).await?.join(ids, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
+  for (kind, (frames, enriched)) in by_type {
+    let spec = specs.iter().find(|s| s.r#type == kind).ok_or_else(|| invalid(format!("The planner did not describe {kind}")))?;
+    let mut iter = frames.into_iter().map(|frame| frame.select(vec![column("$id").alias("$rid")]));
+    let first = iter.next().ok_or_else(|| invalid("No reads"))?.map_err(internal)?;
+    let ids = iter.try_fold(first, |acc, next| acc.union(next?)).map_err(internal)?;
+    let rows_frame = base(snapshot, owner, &kind).await?.join(ids, JoinType::LeftSemi, &["$id"], &["$rid"], None).map_err(internal)?;
     let mut entry = serde_json::Map::new();
-    let total = if snapshot.classified.contains(kind) {
+    let total = if snapshot.classified.contains(&kind) {
       let summary = rows(rows_frame.clone().aggregate(vec![], vec![count(lit(1i64)).alias("count"), max(column("$rank")).alias("rank")]).map_err(internal)?).await?;
       let total = summary.first().and_then(|row| row["count"].as_i64()).unwrap_or(0) as usize;
       entry.insert("rank".into(), summary.first().and_then(|row| row.get("rank").cloned()).unwrap_or(Value::Null));
@@ -480,8 +788,15 @@ async fn members(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, specs: &[Mem
       }
     }
     if let Some(name) = &spec.markings {
-      if snapshot.kinds.get(kind).and_then(|k| k.get(name)) != Some(&Kind::Strings) { return Err(invalid(format!("{name} is not a string list"))); }
+      if snapshot.kinds.get(&kind).and_then(|k| k.get(name)) != Some(&Kind::Strings) { return Err(invalid(format!("{name} is not a string list"))); }
       entry.insert("markings".into(), json!(distinct_strings(rows_frame, name).await?));
+    }
+    // Whether the reference reads some of these rows with their derived values, and so checks their visibility.
+    if owner.derived.contains_key(&kind) && !enriched.is_empty() {
+      let mut iter = enriched.into_iter();
+      let first = iter.next().ok_or_else(|| invalid("No reads"))?;
+      let any = iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?.limit(0, Some(1)).map_err(internal)?.count().await.map_err(internal)?;
+      if any > 0 { entry.insert("enriched".into(), json!(true)); }
     }
     out.push(Value::Object(entry));
   }
@@ -490,20 +805,21 @@ async fn members(snapshot: &Snapshot, owner: &Ctx, set: &DataFrame, specs: &[Mem
 
 async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Failure> {
   let started = Instant::now();
-  // The set is computed once and reused by the page, the total and the member statistics.
-  let owner = Ctx { owner: request.owner.clone(), rows: request.rows };
+  let owner = Ctx { owner: request.owner.clone(), rows: request.rows, derived: request.derived, columns: Default::default(), reads: Default::default() };
+  // The set is computed once and reused by the page, the total and the read statistics.
   let set = set_frame(snapshot, &owner, &request.set).await?.cache().await.map_err(internal)?;
-  let observed = members(snapshot, &owner, &set, &request.members).await?;
+  enrich(snapshot, &owner).await?;
+  let reads = read_stats(snapshot, &owner, &request.members).await?;
   match request.output {
     Output::Page { offset, limit } => {
       let total = set.clone().count().await.map_err(internal)?;
       let page = set.sort(vec![column("$key").sort(true, false)]).map_err(internal)?
         .limit(offset, Some(limit)).map_err(internal)?.select(vec![column("$type"), column("$id")]).map_err(internal)?;
       let refs: Vec<Value> = rows(page).await?.into_iter().map(|row| json!({ "type": row["$type"], "id": row["$id"] })).collect();
-      Ok(json!({ "total": total, "refs": refs, "members": observed, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+      Ok(json!({ "total": total, "refs": refs, "reads": reads, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
     Output::Aggregate { r#type, group_by, metrics, masks } => {
-      let kinds = snapshot.kinds.get(&r#type).ok_or_else(|| invalid(format!("Type {} is not loaded", r#type)))?;
+      let kinds = kinds_of(snapshot, &owner, &r#type)?;
       let members = set.filter(column("$type").eq(lit(r#type.clone()))).map_err(internal)?.select(vec![column("$id").alias("member")]).map_err(internal)?;
       let mut objects = objects(snapshot, &owner, &r#type, None).await?.join(members, JoinType::LeftSemi, &["$id"], &["member"], None).map_err(internal)?;
       // Masked fields read as the reference shows them: hidden fields are null, and a cell policy keeps the value only where it permits.
@@ -514,7 +830,7 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
           let value = match masks.iter().find(|m| &m.column == name) {
             None => column(name),
             Some(mask) if mask.hidden => null()?,
-            Some(Mask { policy: Some(policy), .. }) => when(predicate(policy, kinds)?, column(name)).otherwise(null()?).map_err(internal)?,
+            Some(Mask { policy: Some(policy), .. }) => when(predicate(policy, &kinds)?, column(name)).otherwise(null()?).map_err(internal)?,
             Some(_) => column(name),
           };
           projection.push(value.alias(name.clone()));
@@ -544,7 +860,7 @@ async fn query(snapshot: &Snapshot, request: QueryRequest) -> Result<Value, Fail
         let values: serde_json::Map<String, Value> = metrics.iter().map(|m| (m.name.clone(), row.get(&format!("m:{}", m.name)).cloned().unwrap_or(Value::Null))).collect();
         json!({ "group": group, "metrics": values })
       }).collect();
-      Ok(json!({ "count": total, "items": items, "members": observed, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
+      Ok(json!({ "count": total, "items": items, "reads": reads, "elapsedMs": started.elapsed().as_secs_f64() * 1000.0 }))
     }
   }
 }
