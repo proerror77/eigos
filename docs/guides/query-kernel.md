@@ -244,6 +244,48 @@ EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel npm test -- --suite=46
 
 ## 基准
 
+### Engine Benchmark 08
+
+`scripts/benchmarks/engine-08.ts` 在同一份合成数据上分别运行参考实现和内核：
+
+```bash
+cargo build --release --manifest-path kernel/Cargo.toml
+EIGOS_KERNEL_BIN=$PWD/kernel/target/release/eigos-kernel \
+EIGOS_TEST_DATABASE_URL=postgres://postgres:synthetic-only@127.0.0.1:5432/postgres \
+  node --import tsx scripts/benchmarks/engine-08.ts --sizes=100000,1000000 --runs=7 --out=engine-08.json
+```
+
+- **数据：** 每个规模 N 有 N 个 Route、N 个 RideRequest、N/10 个 Place，以及 2N 条边。还有一个 Interface `Measured`，由 Route 和 Place 实现。
+- **读取：**
+  - 过滤 0.5% 后取首页；
+  - 从 0.5% 的请求走 1 跳和 3 跳；
+  - 聚合 0.5% 和全部 Route；
+  - 全部 Route 取首页；
+  - 过滤 10% 后按两个键排序取首页（C4b）；
+  - Interface 查询。
+
+  每项先预热一次，再运行 `--runs` 次。
+- **写入：**
+  - 每次单对象编辑的提交耗时，以及紧接着的内核查询耗时，也就是读后写延迟；
+  - 导入 1% 的对象作为一次源提交，以及之后第一次查询的耗时。
+- **恢复：** 全量载入、写检查点、重启后从检查点恢复的耗时，以及检查点大小。
+- **报告字段：**
+  - 每项的 p50、p95、p99；
+  - 数据库语句数；
+  - 内核引擎自身的耗时；
+  - 内核进程的常驻内存和峰值内存。Linux 上读 `/proc`；macOS 会压缩内存，读数偏低。
+- **超出上限：** 参考实现超出 10,000 个对象的完整求值上限时，记为错误。加 `--skip-over-limit` 后，更大规模上不再尝试。
+
+每晚在 main 上运行 `Nightly` 工作流（`.github/workflows/nightly.yml`）：
+- **基准：** 在 10 万规模上运行 Engine Benchmark 08，报告保存为 `engine-08` 产物，保留 90 天。`scripts/benchmarks/compare.mjs` 把它与前一晚的报告比较：
+  - 内核中位数变慢 20% 以上时，在摘要里标出；
+  - 变慢 1 倍以上时，工作流失败。
+
+  共享 runner 两次运行之间常差几十个百分点，所以门槛只拦截明显的退化，趋势看摘要。
+- **严格影子：** 以 `EIGOS_KERNEL=shadow EIGOS_KERNEL_SHADOW_STRICT=true` 运行全量测试，任何比对不一致都会让它失败。摘要汇总比对、交回参考实现和跳过的次数。
+
+### 本机测量（C1–C3）
+
 在本机 Docker 的 PostgreSQL 17 上测量。数据规模：
 - Route 和 RideRequest 各 N 个，Place 为 N/10 个；
 - 每个请求有一条 `RequestRoute`，每条路线有一条 `RouteOrigin`。

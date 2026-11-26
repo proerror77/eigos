@@ -1,0 +1,93 @@
+name: Nightly
+# Each night on main:
+# - Engine Benchmark 08 at 100,000 objects, compared with the previous night's report;
+# - the full test suite with the query kernel in strict shadow mode, which compares every Object Set evaluation,
+#   aggregation and complete query with the reference and fails on a difference.
+on:
+  schedule:
+    - cron: '17 18 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  engine-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-only
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      EIGOS_TEST_DATABASE_URL: postgres://postgres:synthetic-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build the query kernel
+        run: |
+          cargo build --release --locked --manifest-path kernel/Cargo.toml
+          echo "EIGOS_KERNEL_BIN=$GITHUB_WORKSPACE/kernel/target/release/eigos-kernel" >> "$GITHUB_ENV"
+      - name: Run Engine Benchmark 08
+        run: node --import tsx scripts/benchmarks/engine-08.ts --sizes=100000 --runs=7 --out=engine-08.json
+      - name: Compare with the previous night
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$previous" ] || ! gh run download "$previous" --repo "$GITHUB_REPOSITORY" --name engine-08 --dir previous; then
+            echo 'No previous report; this report becomes the first one.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node scripts/benchmarks/compare.mjs previous/engine-08.json engine-08.json
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-08
+          path: engine-08.json
+          retention-days: 90
+          if-no-files-found: ignore
+  kernel-shadow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-only
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      EIGOS_TEST_DATABASE_URL: postgres://postgres:synthetic-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Build the query kernel
+        run: |
+          cargo build --release --locked --manifest-path kernel/Cargo.toml
+          echo "EIGOS_KERNEL_BIN=$GITHUB_WORKSPACE/kernel/target/release/eigos-kernel" >> "$GITHUB_ENV"
+      - name: Full suite in strict shadow mode
+        env:
+          EIGOS_KERNEL: shadow
+          EIGOS_KERNEL_SHADOW_STRICT: 'true'
+          EIGOS_KERNEL_SHADOW_REPORT: 'true'
+        run: npm test 2>&1 | tee shadow.log
+      - if: always()
+        name: Shadow comparisons
+        run: |
+          grep -o '{"event":"kernel_shadow"[^}]*}' shadow.log | jq -s 'reduce .[] as $r ({}; reduce ($r | del(.event) | to_entries[]) as $e (.; .[$e.key] += $e.value))' | tee -a "$GITHUB_STEP_SUMMARY" || true
