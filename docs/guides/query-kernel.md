@@ -277,7 +277,7 @@ EIGOS_TEST_DATABASE_URL=postgres://postgres:synthetic-only@127.0.0.1:5432/postgr
 - **超出上限：** 参考实现超出 10,000 个对象的完整求值上限时，记为错误。加 `--skip-over-limit` 后，更大规模上不再尝试。
 
 每晚在 main 上运行 `Nightly` 工作流（`.github/workflows/nightly.yml`）：
-- **基准：** 在 10 万规模上运行 Engine Benchmark 08，报告保存为 `engine-08` 产物，保留 90 天。`scripts/benchmarks/compare.mjs` 把它与前一晚的报告比较：
+- **基准：** 在 10 万规模上运行 Engine Benchmark 08，报告保存为 `engine-08` 产物，保留 90 天。手动触发时可以用 `sizes` 输入指定其他规模，例如 `100000,1000000`。`scripts/benchmarks/compare.mjs` 把它与前一晚的报告比较：
   - 内核中位数变慢 20% 以上时，在摘要里标出；
   - 变慢 1 倍以上时，工作流失败。
 
