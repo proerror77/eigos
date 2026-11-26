@@ -88,6 +88,12 @@ export class ArchiveCodec {
   }
 }
 
+/** The archive this process reads, from EIGOS_LOG_ARCHIVE_DIR and EIGOS_ARCHIVE_BIN, if both are set. */
+export function configuredArchive(): { dir: string; codec: ArchiveCodec } | undefined {
+  const dir = process.env.EIGOS_LOG_ARCHIVE_DIR, binary = process.env.EIGOS_ARCHIVE_BIN;
+  return dir && binary ? { dir, codec: new ArchiveCodec(binary) } : undefined;
+}
+
 export async function initializeLogArchives(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.log_archives (
     owner text NOT NULL, month text NOT NULL CHECK (month ~ '^[0-9]{4}-[0-9]{2}$'),

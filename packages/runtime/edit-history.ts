@@ -1,4 +1,6 @@
 import pg from 'pg';
+import { join } from 'node:path';
+import { configuredArchive } from './log-retention.js';
 import { z } from 'zod';
 import { Conflict, digest } from '../core/identity.js';
 import type { ObjectRef } from '../ontology/schema.js';
@@ -278,21 +280,48 @@ export async function resolveSourceEdits(graph: Objects, observations: readonly 
   return results;
 }
 
+type HistoryRow = { sequence: string; operation: string; source: string | null; before_values: Properties | null; after_values: Properties | null;
+  actor: string; happened_at: Date; release: string; action: string | null; request_id: string | null; task_id: string | null;
+  observed_at: Date | null; executor_kind: string | null; executor_id: string | null };
+
 export class EditHistory {
-  constructor(private readonly db: Database) {}
+  /** `archive` reads history that commit log retention archived; without it, only the tables' history is read. */
+  constructor(private readonly db: Database, private readonly archive = configuredArchive()) {}
   async read(graph: Objects, ref: ObjectRef, after = '0', limit = 100) {
     z.string().regex(/^\d+$/).parse(after); z.number().int().min(1).max(100).parse(limit);
     // Current object visibility governs historical data too. Deleted instances cannot be loaded through this endpoint.
     await graph.read(ref);
-    const rows = (await this.db.query(`SELECT h.sequence::text,h.operation,h.source,h.before_values,h.after_values,h.actor,h.happened_at,h.release,h.action,h.request_id,h.task_id,h.observed_at,h.executor_kind,h.executor_id
+    const live = (await this.db.query<HistoryRow>(`SELECT h.sequence::text,h.operation,h.source,h.before_values,h.after_values,h.actor,h.happened_at,h.release,h.action,h.request_id,h.task_id,h.observed_at,h.executor_kind,h.executor_id
       FROM ${this.db.schema}.edit_history h JOIN ${this.db.schema}.releases r ON r.digest=h.release
       WHERE r.body->>'id'=$1 AND h.owner=$2 AND h.type=$3 AND h.id=$4 AND h.sequence>$5::bigint ORDER BY h.sequence LIMIT $6`,[graph.model.document.id,graph.owner,ref.type,ref.id,after,limit+1],graph.client)).rows;
+    const { rows: archived, unavailable } = await this.archived(graph, ref, after, limit + 1);
+    // Archived and kept rows can interleave at a month's edge, so the page takes the lowest sequences of both.
+    const rows = [...archived, ...live].sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence))).slice(0, limit + 1);
     const mask = (properties: Properties | null) => properties && graph.maskSnapshot(ref,properties);
     const items = rows.slice(0,limit).map(row => ({ sequence: row.sequence, operation: row.operation, source: row.source, before: mask(row.before_values), after: mask(row.after_values), actor: row.actor, at: row.happened_at, release: row.release,
       action: row.action, requestId: row.request_id, taskId: row.task_id, observedAt: row.observed_at,
       executor: row.executor_kind && row.executor_id ? { kind: row.executor_kind, id: row.executor_id } : null }));
     await graph.access.refresh(graph.client);
-    return { items, cursor: rows.length > limit ? items.at(-1)!.sequence : undefined };
+    return { items, cursor: rows.length > limit ? items.at(-1)!.sequence : undefined, ...(unavailable ? { archive: 'unavailable' as const } : {}) };
+  }
+
+  /** The object's archived history after `after`, in this ontology's releases, as the tables would return it. */
+  private async archived(graph: Objects, ref: ObjectRef, after: string, take: number): Promise<{ rows: HistoryRow[]; unavailable?: true }> {
+    const s = this.db.schema;
+    const files = (await this.db.query<{ path: string }>(`SELECT path FROM ${s}.log_archives
+      WHERE owner=$1 AND table_name='edit_history' AND last_key>$2::bigint ORDER BY month`, [graph.owner, after], graph.client)).rows;
+    if (!files.length) return { rows: [] };
+    if (!this.archive) return { rows: [], unavailable: true };
+    const found = await this.archive.codec.read('edit_history', { owner: graph.owner, type: ref.type, id: ref.id, after, limit: String(take) },
+      files.map(file => join(this.archive!.dir, file.path)));
+    const releases = new Set((await this.db.query<{ digest: string }>(`SELECT digest FROM ${s}.releases WHERE body->>'id'=$1 AND digest=ANY($2::text[])`,
+      [graph.model.document.id, [...new Set(found.map(row => row.release!))]], graph.client)).rows.map(row => row.digest));
+    const json = (text: string | null | undefined) => text == null ? null : JSON.parse(text) as Properties;
+    return { rows: found.filter(row => releases.has(row.release!)).map(row => ({
+      sequence: row.sequence!, operation: row.operation!, source: row.source ?? null, before_values: json(row.before_values), after_values: json(row.after_values),
+      actor: row.actor!, happened_at: new Date(row.happened_at!), release: row.release!, action: row.action ?? null, request_id: row.request_id ?? null,
+      task_id: row.task_id ?? null, observed_at: row.observed_at == null ? null : new Date(row.observed_at), executor_kind: row.executor_kind ?? null,
+      executor_id: row.executor_id ?? null })) };
   }
 }
 
