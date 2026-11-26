@@ -51,7 +51,8 @@ jobs:
   tests:
     needs: suites
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The query kernel suite compiles DataFusion first.
+    timeout-minutes: ${{ matrix.suite == '46' && 30 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +93,11 @@ jobs:
           scripts/prepare-spared-quote-pilot.sh "$RUNNER_TEMP/spared-quote"
           echo "EIGOS_TEST_SPARED_BIN=$RUNNER_TEMP/spared-quote/spared" >> "$GITHUB_ENV"
           echo "EIGOS_TEST_SPARED_WASM=$RUNNER_TEMP/spared-quote/quote.wasm" >> "$GITHUB_ENV"
+      - if: matrix.suite == '46'
+        name: Build the query kernel
+        run: |
+          cargo build --locked --manifest-path kernel/Cargo.toml
+          echo "EIGOS_KERNEL_BIN=$GITHUB_WORKSPACE/kernel/target/debug/eigos-kernel" >> "$GITHUB_ENV"
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'
