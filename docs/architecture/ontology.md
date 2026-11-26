@@ -11,7 +11,7 @@
 | Interface | 属性、关系约束、Action 参数约束及具体类型的映射 | 对象集查询、关系导航、`resolveAction` |
 | Link Type | 两侧对象、两侧名称、基数 | PostgreSQL 关系表及 `Objects.follow` |
 | Action Type | 参数、对象参数类型、提交条件、对象与关系编辑规则 | `Actions.apply` 的单次事务 |
-| Function | 参数、返回值、依赖及可选版本 | 已发布实现绑定与 `Functions.invoke` |
+| Function | 参数、返回值、依赖及可选版本；组件函数另声明组件的 SHA-256 和上限 | 已发布实现绑定与 `Functions.invoke`；组件函数由 [函数宿主](../guides/function-host.md) 执行 |
 | Shared Property / Value Type / Struct | 具名共享属性、固定版本的值约束、字段结构 | 定义编译、来源及 Action 输入校验 |
 | Type Group / Metadata | 资源分组、生命周期、显示格式与提示 | 定义发现与对象视图 |
 

@@ -1,5 +1,5 @@
-// Test component for the function host. It echoes its input, or on request spins, allocates, writes a long output,
-// writes to stderr, fails or panics.
+// Test component for the function host. It echoes its input, or on request returns a given answer, spins, allocates,
+// writes a long output, writes to stderr, fails or panics.
 wit_bindgen::generate!({ world: "handler", path: "../../wit" });
 
 struct Function;
@@ -11,8 +11,16 @@ fn number(input: &str, key: &str) -> Option<u64> {
     rest.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().ok()
 }
 
+/// The JSON value after `"answer":`, up to the input's last `}`.
+fn answer(input: &str) -> Option<&str> {
+    let at = input.find("\"answer\"")? + "\"answer\"".len();
+    let rest = input[at..].trim_start().strip_prefix(':')?;
+    Some(rest[..rest.rfind('}')?].trim())
+}
+
 impl Guest for Function {
     fn invoke(input: String) -> Result<String, Failure> {
+        if let Some(value) = answer(&input) { return Ok(value.to_string()); }
         if let Some(n) = number(&input, "spin") {
             let mut x: u64 = 0;
             for i in 0..n { x = x.wrapping_add(std::hint::black_box(i % 7)); }

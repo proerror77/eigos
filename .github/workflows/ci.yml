@@ -51,8 +51,8 @@ jobs:
   tests:
     needs: suites
     runs-on: ubuntu-latest
-    # The query kernel suite compiles DataFusion first, and the function host suite compiles wasmtime.
-    timeout-minutes: ${{ (matrix.suite == '46' || matrix.suite == '49') && 30 || 10 }}
+    # The query kernel suite compiles DataFusion first, and the function host suites compile wasmtime.
+    timeout-minutes: ${{ (matrix.suite == '46' || matrix.suite == '49' || matrix.suite == '50') && 30 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +98,7 @@ jobs:
         run: |
           cargo build --locked --manifest-path kernel/Cargo.toml
           echo "EIGOS_KERNEL_BIN=$GITHUB_WORKSPACE/kernel/target/debug/eigos-kernel" >> "$GITHUB_ENV"
-      - if: matrix.suite == '49'
+      - if: matrix.suite == '49' || matrix.suite == '50'
         name: Build the function host and its test components
         run: |
           rustup target add wasm32-wasip2

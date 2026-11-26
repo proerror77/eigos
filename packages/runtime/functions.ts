@@ -1,6 +1,7 @@
-import { Conflict, InvalidInput, NotFound, SourceReadFailure, digest, type Principal, type ExecutionActor } from '../core/identity.js';
+import { Conflict, FunctionFailed, InvalidInput, NotFound, ServiceUnavailable, SourceReadFailure, digest, type Principal, type ExecutionActor } from '../core/identity.js';
+import type { ComponentFunctions } from './component-functions.js';
 import { timeOperation } from '../core/operation-timing.js';
-import { validator, Ontology } from '../ontology/model.js';
+import { validator, type Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
 import type { ObjectRef, OntologyDocument } from '../ontology/schema.js';
@@ -40,9 +41,13 @@ export interface VersionedFunction {
 }
 const contract = ({ parameters, returns, source, edits, dependencies }: Definition) => digest({ parameters, returns, source, edits, ...(dependencies?{dependencies}:{}) });
 const key = (definition: Definition) => JSON.stringify([definition.apiName, definition.version ?? null]);
+/** A component Function's binding follows from its definition, so every runtime with a function host agrees on it. */
+const componentBinding = (definition: Definition) =>
+  digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation });
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
-  constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = []) {
+  constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
+    private readonly components?: ComponentFunctions) {
     for (const definition of definitions) {
       if (definition.version) continue;
       const handler = handlers.get(definition.apiName);
@@ -66,14 +71,23 @@ export class Functions {
   }
   bindings(model: Ontology): Record<string, string> {
     return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
+      if (fn.implementation) return [fn.apiName, componentBinding(fn)];
       const entry = this.registered.get(key(fn));
       const reply = contract(fn);
       if (!entry || entry.contract !== reply && entry.legacy !== reply) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
       return [fn.apiName, entry.legacy === reply ? reply : entry.binding];
     }));
   }
+  /** Checks a release's component Functions before it is prepared. */
+  async checkRelease(model: Ontology) {
+    if (!model.resolvedDocument.functionTypes.some(fn => fn.implementation)) return;
+    if (!this.components) throw new Conflict('Component Functions are unavailable in this runtime');
+    await this.components.check(model);
+  }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
+    // A component Function reads nothing but its input, so it evaluates offline as it does live.
+    if (definition?.implementation) return true;
     return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
   }
   requireScenarioEvaluation(model: PublishedOntology, name: string) {
@@ -85,6 +99,7 @@ export class Functions {
     access.function(model, name);
     const definition = model.functions.get(name), entry = definition && this.registered.get(key(definition));
     if (!definition) throw new NotFound(`Function is unavailable: ${name}`);
+    if (definition.implementation) return await this.invokeComponent(model, definition, input, context);
     if (!entry) throw new Error(`Published Function implementation is unavailable: ${name}`);
     const reply = contract(definition), binding = entry.legacy === reply ? reply : entry.binding;
     if ((!definition.version && model.runtimeId !== access.runtimeId) || model.bindings.functions[name] !== binding ||
@@ -106,5 +121,20 @@ export class Functions {
     if (result.success) return result.data;
     if (definition.source) throw new SourceReadFailure('Source result does not match its published contract', { cause: result.error });
     throw new Error('Function result does not match its published contract', { cause: result.error });
+  }
+  /** A Function implemented by a WebAssembly component: the function host runs it on the validated parameters. */
+  private async invokeComponent(model: PublishedOntology, definition: Definition, input: Record<string, unknown>, context: FunctionContext) {
+    const name = definition.apiName;
+    if (model.bindings.functions[name] !== componentBinding(definition)) throw new Conflict('Historical Function implementation is unavailable in this runtime');
+    if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
+    context.signal.throwIfAborted();
+    const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
+    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal), name);
+    context.signal.throwIfAborted();
+    await context.objects.access.refresh(context.scenarioEvaluation?.client);
+    const result = validator(definition.returns).safeParse(output);
+    if (result.success) return result.data;
+    // The author's component returned it, so it is the Function's failure rather than the runtime's.
+    throw new FunctionFailed(`${name} returned a result that does not match its published contract`, 'contract', { cause: result.error });
   }
 }

@@ -1,3 +1,4 @@
+import { ComponentFunctions } from '../../runtime/component-functions.js';
 import {EntityResolution} from '../../runtime/entity-resolution.js';
 import type { RuntimeExtensions } from '../../runtime/extensions.js';
 import { Effects } from '../../runtime/effects.js';
@@ -29,7 +30,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
     ['prepareRideInquiry', prepare],
     ['prepareRideInquiryWithPlaceClues', prepareInteractive],
     [prepareWithEndpoints, prepareInteractive],
-  ]), definitions, extensions.functions);
+  ]), definitions, extensions.functions, new ComponentFunctions(db));
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {
@@ -99,5 +100,5 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
   return { functions, actions: new Actions(db, functions, effects, committedEffects), effects, sources, describe: (model: Ontology) => {
     effects.check(model.resolvedDocument.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
     return {functions:functions.bindings(model),sources:sources.bindings(model)};
-  } };
+  }, checkRelease: (model: Ontology) => functions.checkRelease(model) };
 }

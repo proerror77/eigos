@@ -42,6 +42,22 @@ export const functionDependenciesSchema = z.strictObject({
   functions:z.array(name).optional(),dataSources:z.array(name).optional(),actions:z.array(name).optional(),
 });
 export type FunctionDependencies = z.infer<typeof functionDependenciesSchema>;
+/**
+ * A Function implemented by a WebAssembly component of the world `eigos:function/handler@0.1.0`, which the function host
+ * runs within these limits. The maxima are the host's (`function-host/`).
+ */
+export const componentImplementationSchema = z.strictObject({
+  kind: z.literal('component'),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  limits: z.strictObject({
+    fuel: z.number().int().min(1).max(200_000_000_000),
+    memoryMb: z.number().int().min(1).max(512),
+    deadlineMs: z.number().int().min(1).max(30_000),
+    inputBytes: z.number().int().min(1).max(1 << 20).optional(),
+    outputBytes: z.number().int().min(1).max(1 << 20).optional(),
+  }),
+});
+export const semanticVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const actionConstraint = z.strictObject({ parameters: jsonSchema, objectParameters: z.record(name, name), required: z.boolean() });
 
 const machineryState = z.string().min(1).max(200);
@@ -103,8 +119,9 @@ export const ontologySchema = z.strictObject({
   functionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1), parameters: jsonSchema, returns: jsonSchema,
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
-    dependencies:functionDependenciesSchema.optional(),
-  })),
+    dependencies:functionDependenciesSchema.optional(), implementation: componentImplementationSchema.optional(),
+  }).refine(fn => !fn.implementation || semanticVersion.test(fn.version ?? ''), 'A component Function needs a semantic version such as 1.0.0')
+    .refine(fn => !fn.implementation || !fn.source && !fn.edits, 'A component Function cannot read a source or edit objects yet')),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
     submissionCriteria: z.array(z.strictObject({
