@@ -12,6 +12,8 @@ import { Automation } from '../../packages/runtime/automation.js';
 import { configuredCapabilities } from '../../packages/capabilities/index.js';
 import { connectionConfigSchema } from '../../packages/core/config.js';
 import { dispatchAutomation } from './dispatch.js';
+import { ChangeSubscriptions } from '../../packages/runtime/change-subscriptions.js';
+import { Tasks } from '../../packages/runtime/tasks.js';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const db = new Database(process.env.DATABASE_URL, process.env.EIGOS_PG_SCHEMA);
@@ -24,6 +26,7 @@ const { effects } = capabilities;
 const automation = new Automation(db, metadata, capabilities.actions);
 const scenarios = new Scenarios(db);
 const observations = new ObservationInterests(db,metadata);
+const subscriptions = new ChangeSubscriptions(db, new Tasks(db, metadata));
 const machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, capabilities.actions, capabilities.functions));
 const controller = new AbortController();
 process.on('SIGTERM', () => controller.abort());
@@ -36,7 +39,7 @@ async function deliverEffects() {
 }
 const dispatch = () => dispatchAutomation({
   cleanup: () => scenarios.cleanup(),
-  scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules()],
+  scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules(), () => subscriptions.scanOne()],
   run: signal => automation.runOne(signal),
 }, controller.signal);
 async function reviewProcesses() {

@@ -17,6 +17,8 @@
 
 ## 05.4：变化订阅
 
+**状态：** 已实现，见 [索引指南](../../guides/indexing.md#变化订阅funnel-054)。分发器挂在 Indexer 的扫描里。唤醒以任务形式投递到订阅的会话。
+
 **目标：** 订阅方只在相关提交之后被唤醒，不漏，也不重复。Agent 唤醒（06.5）和 Machinery 的局部重规划（M3）都依赖它。
 
 - **数据：** 新表 `change_subscriptions(id uuid, owner text, subscriber text, footprint jsonb, position bigint, created_at, cancelled_at)`。
