@@ -188,7 +188,8 @@ function sameDependencies(kernel: string[], reference: string[], label: string) 
   assert.deepEqual([...rows(k).keys()].sort(), [...rows(r).keys()].sort(), label + ' rows');
   for (const [key, read] of rows(k)) assert([...read].every(field => rows(r).get(key)!.has(field)), label + ' fields of ' + key);
   assert.deepEqual(typeLevel(k), typeLevel(r), label + ' type-level');
-  assert(fields(k).every(field => fields(r).includes(field)), label + ' property dependencies');
+  const extra = fields(k).filter(field => !fields(r).includes(field));
+  assert.deepEqual(extra, [], label + ' property dependencies the reference does not record');
 }
 /** Runs an operation with a fresh principal context inside an egress scope, and reports what it recorded. */
 async function measured(f: Setup, clearance: Clearance, operation: (access: Access, graph: Objects) => Promise<unknown>) {
@@ -196,15 +197,15 @@ async function measured(f: Setup, clearance: Clearance, operation: (access: Acce
   const result = await access.measureEgress(() => operation(access, new Objects(f.db, f.model, access)), clearance);
   return { result: result.result, classification: result.classification, requirements: sorted(result.requirements), markings: access.readMarkingsSnapshot().sort() };
 }
-async function referenceSet(f: Setup, access: Access, set: unknown) {
+async function referenceSet(f: Setup, access: Access, set: unknown, view?: string) {
   const items = [];
   let cursor: string | undefined;
-  do { const page = await f.sets.evaluate(access, f.model, { set, limit: 100, cursor }); items.push(...page.items); cursor = page.cursor; } while (cursor);
+  do { const page = await f.sets.evaluate(access, f.model, { set, view, limit: 100, cursor }); items.push(...page.items); cursor = page.cursor; } while (cursor);
   return { items: values(items), total: items.length };
 }
-async function kernelSet(f: Setup, access: Access, graph: Objects, set: unknown) {
-  const result = await evaluateWithKernel(f.kernel, f.model, access, graph, { set: set as never, limit: 100 });
-  assert(result, JSON.stringify(set) + ' has a kernel plan');
+async function kernelSet(f: Setup, access: Access, graph: Objects, set: unknown, view?: string) {
+  const result = await evaluateWithKernel(f.kernel, f.model, access, graph, { set: set as never, view, limit: 100 });
+  assert(result, JSON.stringify({ set, view }) + ' has a kernel plan');
   return { items: values(result.items), total: result.total };
 }
 function same(kernel: Awaited<ReturnType<typeof measured>>, reference: Awaited<ReturnType<typeof measured>>, label: string) {
@@ -214,9 +215,9 @@ function same(kernel: Awaited<ReturnType<typeof measured>>, reference: Awaited<R
   assert.deepEqual(kernel.markings, reference.markings, label + ' read markings');
 }
 /** Compares an Object Set on both paths: results, observed classification, recorded dependencies and read markings. */
-async function compareSet(f: Setup, clearance: Clearance, set: unknown) {
-  same(await measured(f, clearance, (access, graph) => kernelSet(f, access, graph, set)),
-    await measured(f, clearance, access => referenceSet(f, access, set)), JSON.stringify({ clearance, set }));
+async function compareSet(f: Setup, clearance: Clearance, set: unknown, view?: string) {
+  same(await measured(f, clearance, (access, graph) => kernelSet(f, access, graph, set, view)),
+    await measured(f, clearance, access => referenceSet(f, access, set, view)), JSON.stringify({ clearance, set, view }));
 }
 async function compareAggregate(f: Setup, clearance: Clearance, input: Record<string, unknown>) {
   const kernel = await measured(f, clearance, async (access, graph) => {
@@ -257,7 +258,7 @@ test('the query kernel applies object policies, markings, property security and 
  * visible targets, a two-step path, a derived value read through a relationship, arithmetic with division by zero, and a
  * schema bound. Routes are under an object policy with markings, and both types carry row classifications.
  */
-async function derivedSetup() {
+async function derivedSetup(extend: (document: Awaited<ReturnType<typeof fixture>>['model']['document']) => void = () => {}) {
   const f = await fixture();
   const document = structuredClone(f.model.document);
   const properties = (name: string) => document.objectTypes.find(type => type.apiName === name)!.properties;
@@ -284,6 +285,7 @@ async function derivedSetup() {
     siblings: field('Origins of departing routes', integer, { op: 'linked', path: [{ link: 'departingRoutes' }, { link: 'origin' }], aggregate: 'count' }),
     load: field('Distance per capacity', number, { op: 'divide', left: { op: 'property', property: 'totalDistance' }, right: { op: 'property', property: 'capacity' } }),
   });
+  extend(document);
   const model = await f.metadata.publish(document, f.capabilities, f.publisher);
   await setGrants(f.db, principal.owner, businessGrants(model));
   const graph = new Objects(f.db, model, await Access.load(f.db, principal));
@@ -386,4 +388,76 @@ test('the reference evaluates sets whose derived values it fails to evaluate', {
     assert.equal(await aggregateWithKernel(kernel, model, access, graph, { set: { op: 'query', query: { type: 'Route' } }, groupBy: [],
       metrics: { total: { op: 'count' } } } as never), undefined, 'an aggregation over a failing row is left to the reference');
   } finally { await kernel.stop(); await f.close(); }
+});
+
+/**
+ * Two Interfaces over the derived setup. Routes and Places implement `Measured` through different properties, stored and
+ * derived, Routes leave `tag` unmapped, and Places map its `next` link. Routes also implement `Restricted`, whose label
+ * the INTERNAL clearance cannot see.
+ */
+function addInterfaces(document: Awaited<ReturnType<typeof fixture>>['model']['document']) {
+  const property = (description: string, type: string, required = false) => ({ description, schema: { type }, required });
+  document.interfaceTypes.push({
+    apiName: 'Measured', description: 'Synthetic measured things',
+    properties: { label: property('Label', 'string', true), size: property('Size', 'number'), tag: property('Tag', 'string'), load: property('Load', 'number') },
+    optionalProperties: ['size', 'tag', 'load'], links: { next: { target: 'Measured', cardinality: 'many', required: false } }, actions: {},
+  } as never, {
+    apiName: 'Restricted', description: 'Synthetic restricted view', classification: { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] },
+    properties: { label: property('Label', 'string', true) }, optionalProperties: [], links: {}, actions: {},
+  } as never);
+  const implementations = (name: string) => document.objectTypes.find(type => type.apiName === name)!.interfaces;
+  Object.assign(implementations('Route'), {
+    Measured: { properties: { label: 'name', size: 'distance', load: 'distancePerLane' }, links: {}, actions: {} },
+    Restricted: { properties: { label: 'name' }, links: {}, actions: {} },
+  });
+  implementations('Place').Measured = { properties: { label: 'city', size: 'capacity', tag: 'address', load: 'load' }, links: { next: 'departingRoutes' }, actions: {} };
+}
+
+test('the query kernel evaluates Interfaces, Interface navigation and views like the reference', { skip: !binary }, async () => {
+  const f = await derivedSetup(addInterfaces);
+  try {
+    const measuredBy = (filter?: unknown, where?: unknown) => ({ op: 'query', query: { type: 'Measured', ...(filter ? { filter } : {}), ...(where ? { where } : {}) } });
+    const expressions = [
+      measuredBy(),
+      measuredBy({ op: 'gte', property: 'size', value: 2 }),
+      measuredBy({ op: 'eq', property: 'tag', value: null }),
+      measuredBy(undefined, { label: 'Shanghai' }),
+      // Routes map `load` to distancePerLane and Places to load, both derived, so the reference reads every candidate.
+      measuredBy({ op: 'gt', property: 'load', value: 1 }),
+      { op: 'query', query: { type: 'Location', filter: { op: 'eq', property: 'city', value: 'Beijing' } } },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Place', filter: { op: 'gte', property: 'capacity', value: 2 } } }, path: [{ link: 'next', as: 'Measured' }] },
+      { op: 'traverse', set: { op: 'query', query: { type: 'Route' } }, path: [{ link: 'origin', as: 'RideEstimatable' }] },
+      { op: 'query', query: { type: 'Measured', from: { object: place('p1'), link: 'next', as: 'Measured' }, filter: { op: 'lt', property: 'size', value: 5 } } },
+      { op: 'query', query: { type: 'Restricted' } },
+      { op: 'union', sets: [measuredBy(undefined, { label: 'route a' }), { op: 'refs', objects: [place('p2')] }] },
+    ];
+    const routesAndPlaces = { op: 'union', sets: [{ op: 'query', query: { type: 'Route' } }, { op: 'query', query: { type: 'Place' } }] };
+    const views: [unknown, string][] = [
+      [{ op: 'query', query: { type: 'Route' } }, 'Measured'],
+      [routesAndPlaces, 'Measured'],
+      [{ op: 'query', query: { type: 'Route' } }, 'Restricted'],
+      [{ op: 'query', query: { type: 'Place' } }, 'Location'],
+      [{ op: 'query', query: { type: 'Place' } }, 'Place'],
+    ];
+    const aggregations = [
+      { set: measuredBy(), view: 'Measured', groupBy: ['tag'], metrics: { total: { op: 'count' }, size: { op: 'sum', property: 'size' },
+        high: { op: 'max', property: 'size' }, load: { op: 'avg', property: 'load' } } },
+      { set: measuredBy(), groupBy: ['name'], metrics: { total: { op: 'count' } } },
+      { set: routesAndPlaces, view: 'Measured', groupBy: [], metrics: { total: { op: 'count' }, labels: { op: 'count', property: 'label' }, low: { op: 'min', property: 'size' } } },
+      { set: { op: 'query', query: { type: 'Route' } }, view: 'Restricted', groupBy: ['label'], metrics: { total: { op: 'count' } } },
+      { set: { op: 'query', query: { type: 'Route' } }, view: 'Restricted', groupBy: [], metrics: { total: { op: 'count' }, labels: { op: 'count', property: 'label' } } },
+    ];
+    for (const clearance of clearances) {
+      for (const set of expressions) await compareSet(f, clearance, set);
+      for (const [set, view] of views) await compareSet(f, clearance, set, view);
+      for (const input of aggregations) await compareAggregate(f, clearance, input);
+      // Places cannot be shown as `Restricted`: the reference fails where it can see the view, so the kernel leaves the set to it.
+      if (clearance?.sensitivity === 'INTERNAL') await compareSet(f, clearance, routesAndPlaces, 'Restricted');
+      else {
+        await measured(f, clearance, async (access, graph) => assert.equal(await evaluateWithKernel(f.kernel, f.model, access, graph,
+          { set: routesAndPlaces as never, view: 'Restricted', limit: 100 }), undefined, 'an incompatible view is left to the reference'));
+        await measured(f, clearance, access => assert.rejects(referenceSet(f, access, routesAndPlaces, 'Restricted'), /incompatible/));
+      }
+    }
+  } finally { await f.kernel.stop(); await f.close(); }
 });
