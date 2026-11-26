@@ -67,6 +67,52 @@ DATABASE_URL=… node --import tsx scripts/ontology.ts replay-check [--owner=<su
 - **输出：** 前三类以外都算一致。有不一致时，命令以状态码 1 退出，并列出最多 20 个例子。owner 和 id 默认输出哈希，`--show-identifiers` 输出原值。
 - **owner 隔离：** 开启 owner 隔离时，运行时角色只能读取当前 owner 的行，所以要用 `--owner` 逐个检查；或者用可以绕过行级安全的只读角色检查全部 owner。
 
+## 提交日志保留
+
+`edit_history`、`link_history` 和 `change_commits` 保留 90 天，更早的按 owner 和月份归档为 Parquet，归档后仍可查询。这是用户 2026-11-27 采纳的建议。归档默认不运行，由维护命令执行：
+
+```bash
+EIGOS_ARCHIVE_BIN=…/eigos-archive DATABASE_URL=…postgres… node --import tsx scripts/ontology.ts archive-logs --archive=<目录> [--days=90] [--owner=<subject>] [--dry-run] [--limit=<月数>]
+node --import tsx scripts/ontology.ts audit --owner=<subject> [--table=edit_history|link_history] [--type=… --id=… --request=… --task=… --from=… --to=…] --archive=<目录>
+```
+
+### 哪些行会归档
+
+一个 owner 的一个月，只有同时满足下列条件时才归档：
+
+- **时间：** 整个月都早于保留期，例如保留 90 天时，只归档截止日所在月份之前的月份。
+- **消费方：** 这个月所有提交都早于该 owner 的边界。边界取下列位置中最早的一个，即任何消费方还没读到的位置：
+  - 保留期之后的第一个提交；
+  - 未取消的变化订阅的 `position`；
+  - 打开的持久 Scenario 的 `sync_position`；
+  - 启用的对象规则的位置（过程规则的 `process_commit`、对象集规则的 `match_commit`）。
+
+  一个月被挡住时，之后的月份也等待，归档和保留的历史之间不留空洞。
+- **ProcessLog：** 任何活动或已退役发布里有 ProcessLog 跟踪的对象类型，其 `edit_history` 行不归档。这些行就是 ProcessLog 对象，Machinery 最多分析 366 天，所以它们留在表里。
+- **提交记录：** 只有不再被保留下来的历史行引用时，提交记录才归档。所以归档和表里的数据不重叠。
+- **提交日志之前的历史：** 只有所有消费方都已越过提交日志的起点（边界大于 0）时才归档。
+
+查询内核的检查点只有几分钟前的位置，远在 90 天之内。即使检查点指向的提交已归档，内核恢复时也只是退回到完整载入，不会出错。
+
+### 归档与校验
+
+每个 owner 的每个月在一个 REPEATABLE READ 事务里完成：
+
+1. 以文本取出三张表的行。整数用十进制文本，时间用微秒精度的 UTC 文本，JSON 用其文本形式，所以写入和读回逐字节一致。
+2. `eigos-archive write` 把行写成 Parquet，即 `<目录>/<owner 的 SHA-256 前 32 位>/<表>/<yyyy-mm>.parquet`。文件名不含 owner。
+3. `eigos-archive read` 读回文件，比较行数和内容摘要。一致后才把文件改成正式的名字。
+4. 在 `log_archives` 记下路径、行数、文件的 SHA-256 和内容摘要，然后删除归档的行。
+
+任何一步失败，事务就回滚，写出的文件也被删除。
+
+`eigos-archive` 是内核 crate 的第二个二进制，与内核用同一套 DataFusion 和 Parquet。`Kernel release` 工作流同时发布它，并检查它能写入一行再读回。
+
+### 查询归档
+
+- `audit` 合并表里和归档里的行，按 sequence 输出 NDJSON。归档前后，同一查询的结果相同。
+- `replay-check` 把历史已归档的行计为 `carried`，不比较。
+- 对象的 `edit_history` 接口目前只读表里的行，读取归档是下一步。
+
 ## 物化
 
 `Materializations.capture` 在可重复读事务中保存选定对象类型的最新合成值和类型间关系。来源值与用户编辑已经由对象运行层合成，物化保存捕获时的结果。调用者提交 `requestId`、`name` 和 `types`，相同请求可安全重传。单次物化最多 10000 个对象，超过上限会明确失败并回滚。

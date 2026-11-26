@@ -11,6 +11,7 @@ import { initializeMachineryStates } from './machinery-state.js';
 import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeChangeSubscriptions } from './change-subscriptions.js';
+import { initializeLogArchives } from './log-retention.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
@@ -364,6 +365,7 @@ export class Database {
     await initializeEffects(this);
     await initializeEditHistory(this);
     await initializeChangeSubscriptions(this);
+    await initializeLogArchives(this);
     await initializeFunctionArtifacts(this);
     await initializeExecutionTrace(this);
     await initializeIndexing(this);
