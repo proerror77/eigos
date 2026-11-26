@@ -92,6 +92,20 @@ else {
       const bindings = createCapabilities(db, configuredSource(process.env.EIGOS_DIDI_CONNECTION_FILE),
         await loadExtensions(process.env.EIGOS_EXTENSION_MODULE));
       console.log(JSON.stringify(await provisionPublicPlaceCatalogue(db, metadata, bindings, access, project)));
+    } else if (command === 'replay-check') {
+      // Read-only: whether the commit log explains the active projection's rows. Owners and ids are hashed unless
+      // --show-identifiers is given; --owner checks one owner in its context, which owner isolation requires.
+      const flag = (name: string) => process.argv.find(arg => arg.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
+      const owner = flag('owner'), show = process.argv.includes('--show-identifiers');
+      const { replayCheck } = await import('../packages/runtime/replay-check.js');
+      const { createHash } = await import('node:crypto');
+      const projection = (await metadata.active()).projection;
+      const result = owner ? await db.withOwner(owner, () => replayCheck(db, projection)) : await replayCheck(db, projection);
+      const hide = (value: string) => show ? value : createHash('sha256').update(value).digest('hex').slice(0, 12);
+      console.log(JSON.stringify({ ...result, types: result.types.map(entry => ({ ...entry, owner: hide(entry.owner) })),
+        links: result.links.map(entry => ({ ...entry, owner: hide(entry.owner) })),
+        differences: result.differences.map(entry => ({ ...entry, owner: hide(entry.owner), id: hide(entry.id) })) }));
+      if (!result.consistent) process.exitCode = 1;
     } else if (command === 'grant-business') {
       const owner = process.argv[3]; if (!owner) throw new Error('Provide the verified owner');
       await setGrants(db, owner, businessGrants(model, db.sandboxEnabled));
