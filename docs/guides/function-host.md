@@ -25,6 +25,7 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 
   没有上面两个环境变量时跳过。
 - **CI：** 套件 49 的 job 先构建宿主和测试组件，再运行这个套件。
+- **发布：** `Function host release` 工作流手动触发，输入一个 CI 已经通过的 main 提交。它在 ubuntu-24.04（x86_64，glibc 2.39，与生产主机相同）上编译。之后检查服务能启动、只监听 loopback，并能上传和调用一个测试组件。最后以 `function-host-<提交号前 12 位>` 发布二进制和它的 SHA-256。已有的发布不会被替换。
 
 ## 组件函数
 
