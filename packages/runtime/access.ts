@@ -192,6 +192,14 @@ export class Access {
     return this.available(model, 'object', type) && this.canDefine(model, 'object', type)
       && this.allows({ ontology: model.document.id, permission: 'view_objects', resource: resource(model.document.id, 'object', type) });
   }
+  /**
+   * Whether this principal sees only some rows of the type: an object policy, markings, a model clearance over row
+   * classifications, document chunks and process logs all filter rows. It evaluates the reference row filter, with
+   * the same type-level effects a query of the type has.
+   */
+  rowFiltered(model: Ontology, type: string) { return this.rowSql(model, type, []) !== '(TRUE AND TRUE)'; }
+  /** Whether a property's cells are subject to property security, so its visibility can differ per object. */
+  hasPropertySecurity(model: Ontology, type: string, property: string) { return this.properties.has(`${model.document.id}/property/${type}/${property}`); }
   hasObjectPolicy(model: Ontology, type: string) { return type === documentChunkType || Boolean(model.object(type).classificationProperty) || this.policies.has(model.document.id + '/' + type); }
   workbenchRole(ontology: string): 'admin' | 'editor' | 'member' {
     if (this.allows({ontology, resource:ontology, permission:'manage_definition'})) return 'admin';
