@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import pg from 'pg';
 import { test } from 'node:test';
 import { fixture, principal, route, document } from './fixture.js';
 import { Database } from '../packages/runtime/database.js';
@@ -79,40 +80,46 @@ test('owner turns admit another owner before the first of 1,000 tasks finishes a
   } finally { await f.close(); }
 });
 
-for (const ownerSlots of [2, 4]) {
-  test(`four concurrent claims admit another owner when one owner may occupy ${ownerSlots} slots`, async () => {
+for (const { ownerSlots, concurrent, competingOwner } of [
+  { ownerSlots: 2, concurrent: 4, competingOwner: true },
+  { ownerSlots: 4, concurrent: 4, competingOwner: true },
+  { ownerSlots: 8, concurrent: 8, competingOwner: false },
+  { ownerSlots: 8, concurrent: 8, competingOwner: true },
+]) {
+  test(`${concurrent} concurrent claims make progress with a share of ${ownerSlots} and competing owner = ${competingOwner}`, async () => {
     const f = await fixture();
-    const ownerLock = await f.db.pool.connect();
+    const ownerLock = new pg.Client({ connectionString: process.env.EIGOS_TEST_DATABASE_URL });
     let claims: Promise<Awaited<ReturnType<Tasks['claim']>>[]> | undefined;
     try {
       const tasks = new Tasks(f.db, f.metadata, ownerSlots);
       const other = { ...principal, owner: 'contested-other-owner' };
-      for (let index = 0; index < 4; index++)
+      await ownerLock.connect();
+      for (let index = 0; index < concurrent; index++)
         await tasks.submit(principal, { requestId: 'contended-' + index, message: '只询价', route });
-      await tasks.submit(other, { requestId: 'contended-other', message: '只询价', route });
+      if (competingOwner) await tasks.submit(other, { requestId: 'contended-other', message: '只询价', route });
       const key = f.db.lockKey('task-owner-claim', principal.owner);
       await ownerLock.query('BEGIN');
       await ownerLock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
       // Every claimant selects one of the first owner's rows before any can fill its share.
-      claims = Promise.all(Array.from({ length: 4 }, () => tasks.claim('interactive')));
+      claims = Promise.all(Array.from({ length: concurrent }, () => tasks.claim('interactive')));
       const deadline = Date.now() + 1000;
       let blocked: number;
       do {
-        const result = await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks
+        const result = await ownerLock.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks
           WHERE locktype='advisory' AND NOT granted AND objsubid=1
             AND classid::bigint=((hashtextextended($1,0)>>32) & 4294967295)
             AND objid::bigint=(hashtextextended($1,0) & 4294967295)`, [key]);
         blocked = result.rows[0]!.n;
-        if (blocked < 4) await delay(5);
-      } while (blocked < 4 && Date.now() < deadline);
+        if (blocked < concurrent) await delay(5);
+      } while (blocked < concurrent && Date.now() < deadline);
       await ownerLock.query('COMMIT');
-      assert.equal(blocked, 4);
+      assert.equal(blocked, concurrent);
       const claimed = (await claims).flatMap(task => task ? [task.owner] : []);
-      const expected = [other.owner, ...Array<string>(Math.min(ownerSlots, 3)).fill(principal.owner)];
+      const otherOwners = competingOwner ? [other.owner] : [];
+      const expected = [...otherOwners, ...Array<string>(Math.min(ownerSlots, concurrent - otherOwners.length)).fill(principal.owner)];
       assert.deepEqual(claimed.sort(), expected.sort());
     } finally {
-      await ownerLock.query('ROLLBACK');
-      ownerLock.release();
+      await ownerLock.end();
       await claims?.catch(() => {});
       await f.close();
     }
