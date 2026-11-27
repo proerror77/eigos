@@ -7,7 +7,7 @@ const scenarioProperties = {
   state:text('Proposal lifecycle state'),
   revision:{description:'Revision to inspect before changing or merging the proposal',schema:{type:'integer',minimum:1},required:true},
   expiresAt:{description:'Expiration time',schema:{type:'string',format:'date-time'},required:true},
-  syncConflict:{description:'Whether automatic synchronization observed a conflict',schema:{type:'boolean'},required:true},
+  syncConflict:{description:'Whether automatic synchronization observed a conflict',schema:{type:'boolean'},required:false},
 };
 export const scenarioInterface: OntologyDocument['interfaceTypes'][number] = {
   apiName: scenarioInterfaceName, description: 'An owned or explicitly shared Scenario proposal',
