@@ -23,7 +23,7 @@ import { localDeliveryDefinition, localDeliveryProviders } from './local-deliver
 import { deliveryTradeServices, hemaCheckoutStates, localDeliveryTradeDefinition, taobaoCheckoutStates } from './local-delivery-trade.js';
 import {localEmbeddingDefinition} from './embedding-definition.js';
 import { applicationDefinition as applications, geometryUploadCriterion } from './applications.js';
-import {scenarioObjectType} from './scenario-definition.js';
+import {scenarioInterface,scenarioObjectType} from './scenario-definition.js';
 import { rideWatchDefinition, rideWatchState, rideWatchClosed, rideWatchType } from './ride-watch.js';
 import { petRideDefinition, petRideType } from './pet-ride.js';
 import { addProcessLogs } from './process-definition.js';
@@ -58,7 +58,7 @@ const diningActivityFunction: OntologyDocument['functionTypes'][number] = {
 export const businessDefinition: OntologyDocument = {
   id: ride.id, version: '50',
   agentProfiles: businessAgentProfiles,
-  objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes],
+  objectTypes: [...ride.objectTypes, ...scheduling.objectTypes, ...services.objectTypes, ...travel.objectTypes, ...journey.objectTypes, ...flight.objectTypes, ...payments.objectTypes,...luckin.objectTypes,...applications.objectTypes,...documents.objectTypes,scenarioObjectType], interfaceTypes: [...ride.interfaceTypes, ...scheduling.interfaceTypes, ...services.interfaceTypes, ...travel.interfaceTypes, ...payments.interfaceTypes, scenarioInterface],
   linkTypes: [...ride.linkTypes, ...scheduling.linkTypes, ...services.linkTypes, ...travel.linkTypes, ...journey.linkTypes, ...flight.linkTypes, ...payments.linkTypes,...luckin.linkTypes,...applications.linkTypes,...documents.linkTypes], functionTypes: [...ride.functionTypes, ...scheduling.functionTypes, ...services.functionTypes, ...travel.functionTypes, ...journey.functionTypes, ...flight.functionTypes,flightPositionFunction, ...payments.functionTypes,...deliveryFunctions,...locationFunctions,...mapFunctions,...luckin.functionTypes,...applications.functionTypes,...documents.functionTypes,localEmbeddingDefinition],
   actionTypes: [...ride.actionTypes, ...scheduling.actionTypes, ...services.actionTypes, ...travel.actionTypes, ...journey.actionTypes, ...flight.actionTypes, ...payments.actionTypes,...luckin.actionTypes,...applications.actionTypes,...documents.actionTypes], dataSources: [...ride.dataSources, ...scheduling.dataSources, ...services.dataSources],
 };

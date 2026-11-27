@@ -63,6 +63,10 @@
 
 ## S3：方案对象与审批
 
+**状态：** `OntologyScenario` 已实现 `Scenario` Interface。查询经同一
+方案元数据读取路径检查所有者和共享读者，并返回最近记录的同步冲突状态。
+审阅提交、批准和驳回 Action 的迁移待继续实现。
+
 1. **Scenario 接口：** 定义一个 Interface，属性包括名称、状态、所有者、修订号、过期时间和冲突状态。
    - 方案元数据类型（`OntologyScenario`，见 `scenario-metadata.ts`）实现这个 Interface；
    - 方案因此可以出现在 Object Set、查询和工作台中，按对象策略控制谁能看到。
