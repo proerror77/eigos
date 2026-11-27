@@ -86,7 +86,7 @@ export class Functions {
   }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
-    // A component Function reads nothing but its input, so it evaluates offline as it does live.
+    // A component Function reads its input and, through its call's own Objects, the evaluated Scenario.
     if (definition?.implementation) return true;
     return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
   }
@@ -129,7 +129,7 @@ export class Functions {
     if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
-    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal), name);
+    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal, context), name);
     context.signal.throwIfAborted();
     await context.objects.access.refresh(context.scenarioEvaluation?.client);
     const result = validator(definition.returns).safeParse(output);

@@ -1,12 +1,34 @@
-package eigos:function@0.1.0;
+package eigos:function@0.2.0;
 
-/// An EIGOS Function compiled to a WebAssembly component.
-world handler {
-  /// Why a Function returned no value: a stable code callers can act on, and a message for people.
+interface types {
+  /// Why a call returned no value: a stable code callers can act on, and a message for people.
   record failure {
     code: string,
     message: string,
   }
+}
+
+/// The Ontology as the caller of the Function may read it. Every value is JSON text, as the runtime's own read
+/// operations return it; the runtime checks permissions, masks values and records dependencies as for a direct read.
+interface ontology {
+  use types.{failure};
+
+  /// The object as `{ref, revision, properties}`, or none when it does not exist or the caller may not see it.
+  get: func(object-type: string, id: string) -> result<option<string>, failure>;
+  /// The objects a link reaches from `object` (`{type, id}` as JSON), as a JSON array.
+  follow: func(object: string, link: string) -> result<string, failure>;
+  /// A page of an object query, as `Objects.query` takes and returns it.
+  query: func(query: string) -> result<string, failure>;
+  /// A page of an Object Set, as `ObjectSets.evaluate` takes and returns it.
+  evaluate: func(request: string) -> result<string, failure>;
+  /// An Object Set aggregation, as `ObjectSets.aggregate` takes and returns it.
+  aggregate: func(request: string) -> result<string, failure>;
+}
+
+/// An EIGOS Function compiled to a WebAssembly component.
+world handler {
+  use types.{failure};
+  import ontology;
 
   /// Runs the Function on its JSON input and returns its JSON output.
   export invoke: func(input: string) -> result<string, failure>;
