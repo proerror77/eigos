@@ -155,7 +155,8 @@ export function immediateDidiRideFunctions(
     await guard(context.objects);
     if (paConnection) {
       const dispatch = didiPAOrderInput.parse({
-        reference: immediateOperation(task.id), connectionRef: paConnection, quoteDigest, pickup, destination: dropoff,
+        reference: immediateOperation(task.id), connectionRef: paConnection, dispatchProtocol: 'server-claim-v1',
+        quoteDigest, pickup, destination: dropoff,
         fare, expiresAt: terms.expiresAt, arguments: confirmedRoute, ...(route ? { endpoints: route } : {}),
         instruction: didiPAOrderInstruction,
       });

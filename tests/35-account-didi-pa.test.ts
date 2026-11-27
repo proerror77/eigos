@@ -25,10 +25,11 @@ import { Objects } from '../packages/runtime/objects.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
 import { fixture, route } from './fixture.js';
 
-test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one order on the original task', async () => {
+test('two personal PA instances can claim only one authorized DiDi order from the original A2A task', async () => {
   const f = await fixture(), g = await accountGateway(f, { signup: 'invite' });
   const client = new Client({ name: 'private-didi-pa', version: '1' });
   const directory = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-fixture-'));
+  const secondDirectory = await mkdtemp(join(tmpdir(), 'eigos-didi-pa-second-executor-'));
   const source = withDidiPAReads(async () => { throw new Error('The member must use their own PA'); }, true);
   const worker = new Worker(f.tasks, new OntologyAgent(f.db, f.metadata, f.tasks, createCapabilities(f.db, source), {
     model: 'selected-action', async run() { throw new Error('The selected Action must resume without model selection'); },
@@ -36,6 +37,9 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
   const reference = digest('the customer PA connection');
   const orderId = 'synthetic-private-pa-order';
   let sent = 0, checked = 0, loseReply = false, readbackAvailable = false;
+  let quoted = 0, grantCount = 0;
+  let releaseQuotes!: () => void;
+  const bothQuoted = new Promise<void>(resolve => { releaseQuotes = resolve; });
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await client.callTool({ name, arguments: args });
     assert(!result.isError, JSON.stringify(result.content));
@@ -43,11 +47,16 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
   };
   const adapter = { async request<T>(path: string, body?: unknown): Promise<T> {
     const taskId = path.split('/')[1];
+    if (path.endsWith('/pa-dispatch-claim')) {
+      const result = await call('claim_task_dispatch', { taskId, ...body as object });
+      grantCount++;
+      return result;
+    }
     if (body && loseReply) { loseReply = false; throw new Error('PA lost its response to EIGOS'); }
     return body ? call('respond_to_task', { taskId, ...body as object }) : call('get_task', { taskId });
   } };
   const order = () => ({ orderId, status: '匹配中', observedAt: new Date().toISOString(), contentDigest: digest(orderId), evidence: 'live' as const });
-  const pa = new DidiPA({ ontology: adapter, privateDirectory: directory, connection: {
+  const makePA = (privateDirectory: string) => new DidiPA({ ontology: adapter, privateDirectory, connection: {
     reference,
     reads: {
       async discover() { return { endpoint: didiEndpoint('production'), environment: 'production', bindingId: reference,
@@ -58,6 +67,8 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
       async checkOrderConnection() {},
       async quote(args, category) {
         assert(args.from_name && args.to_name);
+        if (++quoted === 2) releaseQuotes();
+        await bothQuoted;
         return { traceId: 'private-estimate-trace', category, amountMinor: '7305', currency: 'CNY' };
       },
       async create(quote, _signal, beforeDispatch) {
@@ -74,6 +85,7 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
       },
     },
   } });
+  const pa = makePA(directory), secondPA = makePA(secondDirectory);
   const finishResponse = async (taskId: string, expected: string) => {
     assert(await worker.runOne('interactive'));
     const pending = await call('get_task', { taskId });
@@ -133,12 +145,28 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
     const dispatch = await finishResponse(task.id, didiPAOrderCapability);
     await assert.rejects(pa.answer(task.id, signal), /user already approved/);
     assert.equal(dispatch.input.quoteDigest, approval.input.quoteDigest);
+    assert.equal(dispatch.input.dispatchProtocol, 'server-claim-v1');
     assert.equal(JSON.stringify(dispatch).includes('private-estimate-trace'), false);
     assert.equal(sent, 0);
+    const terms = { reference: dispatch.input.reference, quoteDigest: dispatch.input.quoteDigest, connectionRef: reference };
+    await assert.rejects(call('respond_to_task', { taskId: task.id, requestId: dispatch.requestId,
+      response: { ...terms, status: 'unknown' },
+    }), /requires the original dispatch claim/);
     loseReply = true;
-    await assert.rejects(pa.answer(task.id, signal, true), /PA lost its response/);
-    assert.deepEqual([sent, checked], [1, 1]);
-    await pa.answer(task.id, signal, true);
+    const attempts = await Promise.allSettled([pa.answer(task.id, signal, true), secondPA.answer(task.id, signal, true)]);
+    assert.equal(attempts.filter(attempt => attempt.status === 'rejected').length, 2);
+    const lostReply = attempts.findIndex(attempt => attempt.status === 'rejected' &&
+      /PA lost its response/.test(String(attempt.reason)));
+    assert(lostReply >= 0, JSON.stringify(attempts.map(attempt => attempt.status === 'rejected' ? String(attempt.reason) : attempt.value)));
+    const rejected = attempts[1 - lostReply]!;
+    assert(rejected.status === 'rejected');
+    assert.match(String(rejected.reason), /already been claimed/);
+    assert.deepEqual([grantCount, sent, checked], [1, 1, 1]);
+    assert.equal((await call('get_task', { taskId: task.id })).result.requestId, dispatch.requestId);
+    await assert.rejects(call('respond_to_task', { taskId: task.id, requestId: dispatch.requestId,
+      response: { ...terms, status: 'expired' },
+    }), /requires the original dispatch claim/);
+    await [pa, secondPA][lostReply]!.answer(task.id, signal, true);
     assert(await worker.runOne('interactive'));
     const done = await call('get_task', { taskId: task.id });
     assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
@@ -177,7 +205,7 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
     assert.deepEqual(recorded.rows, [{ state: 'confirmed' }]);
   } finally {
     await client.close(); await g.close(); await f.close();
-    await rm(directory, { recursive: true, force: true });
+    await Promise.all([directory, secondDirectory].map(path => rm(path, { recursive: true, force: true })));
   }
 });
 

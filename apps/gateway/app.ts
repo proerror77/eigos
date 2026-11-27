@@ -21,7 +21,7 @@ import { Database, type Sql } from '../../packages/runtime/database.js';
 import { Metadata, type PublishedOntology } from '../../packages/runtime/metadata.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { Scenarios, createScenarioSchema } from '../../packages/runtime/scenarios.js';
-import { PARequests, paResponseSchema,paInboxSchema } from '../../packages/runtime/pa.js';
+import { PARequests, paDispatchClaimSchema, paResponseSchema, paInboxSchema } from '../../packages/runtime/pa.js';
 import { HotelWorkflows, hotelApprovalSchema } from '../../packages/capabilities/services/hotel-workflows.js';
 import { amendMapPlace } from '../../packages/capabilities/amap/task-correction.js';
 import { Tasks, submitSchema, routeInputSchema, publicTask as projectTask, taskPlaceAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, type Task } from '../../packages/runtime/tasks.js';
@@ -270,6 +270,9 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
     if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Model permissions changed');
     res.setHeader('Cache-Control','no-store');res.type('application/octet-stream').send(file.bytes);
   });
+  app.post('/tasks/:id/pa-dispatch-claim', async (req,res)=>{
+    res.set('Cache-Control','no-store').json(await pa.claimDispatch(principal(req),String(req.params.id),req.body));
+  });
   app.post('/tasks/:id/pa-response', async (req,res)=>res.json(publicTask(await pa.respond(principal(req),String(req.params.id),req.body))));
   app.get('/pa/requests',async(req,res)=>res.json(await pa.pending(principal(req),{...(typeof req.query.cursor==='string'?{cursor:req.query.cursor}:{}),...(typeof req.query.limit==='string'?{limit:Number(req.query.limit)}:{})})));
   app.get('/identity', (req, res) => {
@@ -447,6 +450,12 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: codeModeInput.extend({ requestId: submitSchema.shape.requestId }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     }, ({ code, requestId }) => response(() => runCode(code, requestId)));
+    server.registerTool('claim_task_dispatch', {
+      description: 'Claim the one-time dispatch grant for a pending authorized PA operation. Preserve the returned token privately and include it with the response for this dispatch.',
+      inputSchema: z.strictObject({ taskId: z.uuid(), ...paDispatchClaimSchema.shape }),
+      annotations: { readOnlyHint: false },
+    }, ({ taskId, ...input }) => response(() =>
+      pa.claimDispatch(p, taskId, input, member ? authorizeMemberSubmission(req) : undefined)));
     if (member) {
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
       const queueAction = async (requestId: string, ontology: string | undefined, action: ActionCall,
@@ -525,7 +534,7 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       description: 'Continue the original task with a user-confirmed endpoint. For ride Actions use an address or landmark and pass keep if the unchanged side has multiple candidates. For an older Amap clarification use the confirmed Amap place ID, a fresh request ID and the original task updatedAt. Restore a canceled task only with specific user authorization.',
       inputSchema: z.strictObject({ taskId: z.uuid(), amendment: taskPlaceAmendmentSchema }),
     }, input => response(async () => publicTask(await amendPlace(p, input.taskId, input.amendment))));
-    server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response}))));
+    server.registerTool('respond_to_task', { description:'Supply the authenticated PA response to the original task information request. Use the responseSchema returned with that request.',inputSchema:z.strictObject({taskId:z.uuid(),...paResponseSchema.shape}) }, input=>response(async()=>publicTask(await pa.respond(p,input.taskId,{requestId:input.requestId,response:input.response,dispatchToken:input.dispatchToken}))));
     server.registerTool('list_pa_requests',{description:'Read your pending PA requests, including scheduled calendar journey checks, event and ride executions. Preserve returned taskId and requestId when replying. Follow cursor for subsequent pages.',inputSchema:paInboxSchema},input=>response(()=>pa.pending(p,input)));
     server.registerTool('create_scenario', { description:'Create an isolated what-if view over the selected Ontology.',inputSchema:scenarioCreateInput }, input=>response(()=>scenarioCreate(p,input)));
     server.registerTool('list_scenarios', { description:'List your open scenarios in the selected Ontology; follow cursor for the next page.',inputSchema:z.strictObject({ontology:z.string().optional(),cursor:z.uuid().optional()}) }, input=>response(()=>scenarioList(p,input.cursor,input.ontology)));
