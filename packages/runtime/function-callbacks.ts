@@ -4,6 +4,7 @@ import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../core/iden
 import { objectRefSchema, ontologyName } from '../ontology/schema.js';
 import type { Database } from './database.js';
 import type { FunctionContext } from './functions.js';
+import type { FunctionInvocationMetrics } from './function-invocations.js';
 import { ObjectSets } from './object-sets.js';
 import { querySchema, type Objects } from './objects.js';
 
@@ -41,10 +42,6 @@ function writer(session: Session) {
 const clientOf = (session: Session) => session.writer?.client ?? session.context.scenarioEvaluation?.client;
 
 const operations: Record<string, (session: Session, input: Record<string, unknown>) => Promise<unknown>> = {
-  async outgoing(session, input) {
-    if (!session.outgoing) throw new PermissionDenied('The Function has no declared HTTP Source');
-    return session.outgoing(input.request);
-  },
   async get({ context }, input) {
     const ref = objectRefSchema.parse({ type: input.type, id: input.id });
     try { return await context.objects.read(ref); }
@@ -77,6 +74,10 @@ const operations: Record<string, (session: Session, input: Record<string, unknow
   },
   async link(session, input) { await writer(session).link(edge(input)); return null; },
   async unlink(session, input) { await writer(session).unlink(edge(input)); return null; },
+  async outgoing(session, input) {
+    if (!session.outgoing) throw new PermissionDenied('The Function has no declared HTTP Source');
+    return session.outgoing(input.request);
+  },
 };
 
 /** How an error reaches the Function: a stable code it can act on. Anything unexpected is the runtime's problem. */
@@ -94,7 +95,12 @@ export class FunctionCallbacks {
   private readonly server = new FunctionCallbackServer();
 
   /** Opens the session of one call; `close` ends it, after which its token is refused. */
-  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits, outgoing?: Session['outgoing']) {
+  async open(db: Database, context: FunctionContext, writer?: Objects, options: {
+    limits?: OntologyLimits;
+    outgoing?: Session['outgoing'];
+    timings?: FunctionInvocationMetrics['callbacks'];
+  } = {}) {
+    const { limits = defaultOntologyLimits, outgoing, timings } = options;
     const session: Session = { db, context, writer, outgoing, limits, calls: 0, objects: 0, edits: 0 };
     return this.server.open(async (operation, input) => {
       try {
@@ -102,7 +108,13 @@ export class FunctionCallbacks {
         if (!run) throw new InvalidInput(`Unknown Ontology operation ${operation}`);
         if (++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
         context.signal.throwIfAborted();
-        const result = await run(session, input);
+        const start = performance.now();
+        const result = await run(session, input).finally(() => {
+          if (!timings) return;
+          const timing = timings[operation] ??= { count: 0, durationMs: 0 };
+          timing.count++;
+          timing.durationMs += performance.now() - start;
+        });
         session.objects += counted(result);
         if (session.objects > limits.objects) throw new LimitReached(`A call may read at most ${limits.objects} objects`);
         return { result: result ?? null };

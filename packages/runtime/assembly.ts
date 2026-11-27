@@ -6,6 +6,7 @@ import { configuredComponentSources } from './component-source-egress.js';
 import type { Database } from './database.js';
 import { Effects } from './effects.js';
 import type { RuntimeExtensions } from './extensions.js';
+import { FunctionInvocations } from './function-invocations.js';
 import { Functions, type FunctionHandler } from './functions.js';
 import { ProviderBudgets } from './provider-budgets.js';
 import { Sources, type SourceProjection } from './sources.js';
@@ -20,7 +21,8 @@ export function assembleRuntime(
     if (registered.has(name)) throw new Error('Source projection is already registered: ' + name);
     registered.set(name, projection);
   }
-  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources()), new ProviderBudgets(db));
+  const components = new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources());
+  const functions = new Functions(handlers, definitions, extensions.functions, components, new ProviderBudgets(db), new FunctionInvocations(db));
   const sources = new Sources(db, functions, registered);
   const effects = new Effects(db, extensions.effects ?? new Map());
   const actions = new Actions(db, functions, effects, committedEffects);

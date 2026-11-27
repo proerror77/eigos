@@ -204,7 +204,7 @@ OAuth client credentials 由运行时交换和缓存。授权码凭据刷新及 
 
 ## F4：测试与观测
 
-**状态：** 离线测试包和两个模板的示例已实现。测试用本机协议 2 宿主运行真实组件，通过 loopback 提供测试主体、对象和查询 stub，并回读暂存编辑。调用记录、30 天保留和工作台视图待实现。 [离线测试包](../../../packages/function-test/README.md)
+**状态：** 离线测试包和两个模板的示例已实现。测试用本机协议 2 宿主运行真实组件，通过 loopback 提供测试主体、对象和查询 stub，并回读暂存编辑。Workbench 可按函数读取调用者自己的记录，过期记录由 Indexer 清理。 [离线测试包](../../../packages/function-test/README.md)
 
 - **测试框架：**
   - 包名 `@eigos/function-test`。它在本机用同一个函数宿主（测试模式）运行组件，Ontology 宿主接口由测试 stub 提供：对象、查询结果和主体。

@@ -37,6 +37,7 @@ import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
 import { Conflict, PermissionDenied, requireScope } from '../core/identity.js';
 import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology/schema.js';
+import { MachineryExecution, machineryNextActionsInput } from './machinery-execution.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
@@ -660,6 +661,9 @@ export function ontologyServices(
     readNotificationSchema,true,async(a,input)=>notifications.read(a,input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()), { mcpOperatorRead: true });
+  register('machinery_next_actions','Read the published Action transitions available to this process object.',
+    machineryNextActionsInput,false,async(a,input)=>
+      new MachineryExecution(db, actions).nextActions(await active(),a,input), { mcpOperatorRead: true });
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
     machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input), { mcpOperatorRead: true });
   register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',
