@@ -84,11 +84,19 @@ fn script(input: &str) -> Option<Result<String, Failure>> {
     Some(Ok(value.get("return").cloned().unwrap_or(serde_json::Value::Null).to_string()))
 }
 
+/// Recognizes the semantic search fixture's text without changing the ordinary echo contract.
+fn embedding(input: &str) -> Option<&'static str> {
+    let value: serde_json::Value = serde_json::from_str(input).ok()?;
+    let text = value.get("text")?.as_str()?.strip_prefix("f5-vector: ")?;
+    Some(if text.contains("north") { "[1,0]" } else { "[0,1]" })
+}
+
 impl Guest for Function {
     fn invoke(input: String) -> Result<String, Failure> {
         if let Some(result) = script(&input) { return result; }
         if let Some(result) = ontology(&input) { return result; }
         if let Some(value) = answer(&input) { return Ok(value.to_string()); }
+        if let Some(vector) = embedding(&input) { return Ok(vector.to_string()); }
         if let Some(n) = number(&input, "spin") {
             let mut x: u64 = 0;
             for i in 0..n { x = x.wrapping_add(std::hint::black_box(i % 7)); }
