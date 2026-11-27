@@ -340,6 +340,52 @@ UPDATE。恢复数据库时应保留对应的 Source 加密密钥。
 的密钥名写入加密包，再按更新的 Source 连接重新准备发布。网络中断导致
 无法确认旧令牌是否已被轮换时也走这条恢复路径。 [OAuth 2.0 刷新规范](https://www.rfc-editor.org/rfc/rfc6749.html#section-6) · [刷新令牌轮换](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14)
 
+### Action 提交后的 webhook
+
+在 Source 连接中列出获准写入的路径、方法和数据分级。接收端应当按照
+`Idempotency-Key` 合并重复的相同请求。配置示例中的路径与连接限定的
+基础路径相同。
+
+```json
+{
+  "baseUrl": "https://inventory.example.com/v1/",
+  "methods": ["GET", "POST"],
+  "bearerSecret": "inventory_token",
+  "webhooks": [
+    {
+      "method": "POST",
+      "path": "/v1/notifications",
+      "clearance": { "sensitivity": "INTERNAL" }
+    }
+  ]
+}
+```
+
+Action 的 `effects` 可声明以下副作用。可选的 `function` 引用已发布的只读
+Wasm 格式化函数。它读取映射后的参数并返回 JSON 对象，执行时没有 Ontology
+回调会话。省略该字段时，参数映射直接作为请求体。
+
+```json
+{
+  "name": "NotifyInventory",
+  "webhook": {
+    "source": "Inventory",
+    "method": "POST",
+    "path": "/v1/notifications",
+    "function": "FormatInventoryNotice"
+  },
+  "payload": { "id": { "parameter": "objectId" } }
+}
+```
+
+首次正式提交把副作用与 Action 一起写入既有 outbox。调用者需要该 Action
+的执行权限和 Source 的 `dispatch_source` 授权。使用格式化函数时，还需要
+执行该函数的权限。任务通过 `action.webhook.authorize` 向原 PA 请求授权。
+PA 返回 `approved: true` 及请求中的摘要，Worker 继续同一个 Task 和 Action 请求。
+Scenario 执行只记录拟议编辑。Worker 执行副作用时重新检查授权、原发布的
+连接摘要和当前租约，随后把首次格式化的请求体保存到 outbox。失败后重试会
+使用同一个已保存请求体和幂等键。HTTP 2xx 表示接收端确认收取请求。 [Action webhook 副作用](https://www.palantir.com/docs/foundry/action-types/webhooks)
+
 读取外部源要求协议 3 宿主。旧组件继续使用原有导入。带外部源的组件与
 Scenario 离线求值保持隔离。需要外部写入的业务流使用经授权的 Action 和
 提交后的副作用。 [Foundry 函数的外部 API](https://www.palantir.com/docs/foundry/functions/api-calls/)
