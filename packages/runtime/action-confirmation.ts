@@ -1,6 +1,6 @@
 import { Conflict } from '../core/identity.js';
 import type { Access } from './access.js';
-import type { PlaceContinuation } from './clarification.js';
+import type { ActionContinuation } from './clarification.js';
 import type { Database, Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
@@ -21,11 +21,12 @@ const allowedFrom: Record<State, readonly State[]> = {
 /** The runtime owns this lifecycle row. Reading its published projection still requires an object grant. */
 export async function recordActionConfirmation(
   db: Database, model: PublishedOntology, access: Access, task: Task, client: Sql,
-  continuation: PlaceContinuation, state: State,
+  continuation: ActionContinuation, state: State,
 ) {
   if (access.principal.owner !== task.owner || model.release !== task.release || model.scenario) {
     throw new Conflict('Action confirmation belongs to a different task owner or publication');
   }
+  if (!model.objects.has('ActionConfirmation')) return;
   const ref = actionConfirmationRef(continuation.requestId);
   const graph = new Objects(db, model, access, client, {
     requestId: continuation.requestId, taskId: task.id,
@@ -55,7 +56,8 @@ export async function recordActionConfirmation(
   await recordObjectEdit(graph, ref, row.properties, next, { state });
 }
 
-export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: PlaceContinuation) {
+export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: ActionContinuation) {
+  if (!model.objects.has('ActionConfirmation')) return;
   const ref = actionConfirmationRef(continuation.requestId);
   const proof = await db.query(`SELECT 1 FROM ${db.schema}.objects
     WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties->>'taskId'=$5

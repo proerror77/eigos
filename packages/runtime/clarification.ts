@@ -54,48 +54,67 @@ export const placeChoicesSchema = z.object({
   origin: z.array(z.object({ ref: objectRefSchema })),
   destination: z.array(z.object({ ref: objectRefSchema })),
 });
-export const placeContinuationSchema = z.strictObject({
+export const actionInputPurpose = z.enum(['input', 'observation', 'authorization', 'execution-result']);
+export type ActionInputPurpose = z.infer<typeof actionInputPurpose>;
+export const actionWaitSchema = z.strictObject({
+  id: z.uuid(), capability: z.string().min(1).max(200), purpose: actionInputPurpose,
+});
+export const actionContinuationSchema = z.strictObject({
   requestId: z.string().min(1),
   action: z.string().min(1),
   input: z.record(z.string(), z.unknown()),
   read: actionResultReadSchema.optional(),
+  pending: actionWaitSchema.optional(),
+  // Legacy place clients still use these compatibility fields.
   waitingFor: z.enum(['city', 'origin', 'destination', 'pa-request', 'retry-source']).optional(),
   receipts: placeSelectionSchema.optional(),
   pickup: pickupCoordinateEvidence.optional(),
-}).refine(input => !input.waitingFor ? Boolean(input.receipts) :
+}).refine(input => !input.waitingFor ? Boolean(input.pending || input.receipts) :
   input.waitingFor === 'retry-source' || !input.receipts);
 export type PlaceSelection = z.infer<typeof placeSelectionSchema>;
-export type PlaceContinuation = z.infer<typeof placeContinuationSchema>;
+export type ActionContinuation = z.infer<typeof actionContinuationSchema>;
+export type LegacyActionWait = Pick<ActionContinuation, 'waitingFor' | 'receipts' | 'pickup'>;
 
 export class Clarification extends Error {
   constructor(
     message: string, readonly choices?: unknown, readonly permissions: Requirement[] = [],
-    readonly continuation?: PlaceContinuation,
+    readonly continuation?: ActionContinuation,
   ) { super(message); }
 }
 
+export class ActionInputRequired extends Clarification {
+  constructor(message: string, choices: unknown, permissions: Requirement[],
+    readonly wait: LegacyActionWait & { pending?: z.infer<typeof actionWaitSchema> }) { super(message, choices, permissions); }
+}
+
 /** Raised by an edit Function before staging a write when the sources do not establish a confirmed endpoint. */
-export class PlaceConfirmationRequired extends Clarification {
-  constructor(message: string, choices: unknown, readonly receipts: PlaceSelection,
-    readonly pickup?: z.infer<typeof pickupCoordinateEvidence>) { super(message, choices); }
+export class PlaceConfirmationRequired extends ActionInputRequired {
+  constructor(message: string, choices: unknown, receipts: PlaceSelection,
+    pickup?: z.infer<typeof pickupCoordinateEvidence>) { super(message, choices, [], { receipts, pickup }); }
 }
 
 /** The selected Action lacks a city, so no supplier lookup has been authorized yet. */
-export class CityConfirmationRequired extends Clarification {
-  constructor() { super('请提供这段行程所在的城市。', { kind: 'city' }); }
+export class CityConfirmationRequired extends ActionInputRequired {
+  constructor() { super('请提供这段行程所在的城市。', { kind: 'city' }, [], { waitingFor: 'city' }); }
 }
 
-export class RideEndpointRequired extends Clarification {
+export class RideEndpointRequired extends ActionInputRequired {
   constructor(readonly side: 'origin' | 'destination', message: string) {
-    super(message, { kind: side });
+    super(message, { kind: side }, [], { waitingFor: side });
   }
 }
 
 export class PARequestRequired extends Clarification {}
-export class ActionPARequestRequired extends PARequestRequired {}
+export class ActionPARequestRequired extends ActionInputRequired {
+  constructor(message: string, choices: unknown, permissions: Requirement[], purpose?: ActionInputPurpose) {
+    const request = z.object({ requestId: z.uuid(), capability: z.string(), purpose: actionInputPurpose.optional() }).parse(choices);
+    super(message, choices, permissions, { waitingFor: 'pa-request',
+      pending: { id: request.requestId, capability: request.capability, purpose: purpose ?? request.purpose ?? 'observation' } });
+  }
+}
 
-export class SourceRetryRequired extends Clarification {
+export class SourceRetryRequired extends ActionInputRequired {
   constructor(stage: 'places' | 'estimate', readonly receipts?: PlaceSelection) {
-    super('滴滴查询失败，可以重试原任务。', { kind: 'retry-source', source: 'DiDi', stage });
+    super('滴滴查询失败，可以重试原任务。', { kind: 'retry-source', source: 'DiDi', stage }, [], { waitingFor: 'retry-source', receipts });
   }
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Conflict } from '../core/identity.js';
 import { classificationSchema } from '../ontology/classification.js';
 import { actionCallSchema, actionResultReadSchema } from '../ontology/invocation.js';
-import { cityInputSchema, mapPlaceCorrectionsSchema, placeAmendmentsSchema, placeContinuationSchema, placeSelectionSchema, rideEndpointSchema } from './clarification.js';
+import { cityInputSchema, mapPlaceCorrectionsSchema, placeAmendmentsSchema, actionContinuationSchema, placeSelectionSchema, rideEndpointSchema } from './clarification.js';
 
 // Existing public request fields and persisted input remain readable across runtime releases.
 export const routeInputSchema = z.strictObject({ city: z.string().min(1).max(100), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(100).optional() });
@@ -24,7 +24,7 @@ export const storedInputSchema = submitSchema.extend({
   rideCity: cityInputSchema.optional(),
   rideOrigin: rideEndpointSchema.optional(),
   rideDestination: rideEndpointSchema.optional(),
-  placeContinuation: placeContinuationSchema.optional(),
+  placeContinuation: actionContinuationSchema.optional(),
 });
 
 export function parseSubmission(raw: unknown) {

@@ -1,3 +1,4 @@
+import { applyLegacyActionInput, legacyActionInput } from './legacy-action-input.js';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -8,7 +9,7 @@ import { Metadata, type PublishedOntology } from './metadata.js';
 import { Access, type Requirement } from './access.js';
 import type { ScheduledCall } from './scheduled-actions.js';
 import type { CognitiveContext } from './cognitive-workflow.js';
-import { Clarification, taskInputAnswerSchema, placeAmendmentSchema, placeChoicesSchema, placeContinuationSchema, placeSelectionSchema, type PlaceContinuation } from './clarification.js';
+import { Clarification, taskInputAnswerSchema, placeAmendmentSchema, actionContinuationSchema, placeSelectionSchema, type ActionContinuation } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 export { placeAmendmentSchema, placeSelectionSchema, taskInputAnswerSchema, taskPlaceAmendmentSchema } from './clarification.js';
 import { parseSubmission, storedInputSchema, taskActionSchema, taskOptions } from './task-input.js';
@@ -35,7 +36,15 @@ export const taskPrincipal = (task: Task): Principal =>
   ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess });
 export const currentTaskExecution = new AsyncLocalStorage<{ task: Task; tasks: Tasks }>();
 export type TaskResultProjection = (result: unknown) => unknown;
-export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
+export const publicTask = (task: Task, project: TaskResultProjection) => {
+  const wait = task.input.placeContinuation;
+  const pending = task.state === 'input-required' && task.result != null ? wait?.pending : undefined;
+  const legacy = pending && wait ? legacyActionInput(wait) : undefined;
+  return { id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}),
+    state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at,
+    ...(pending && wait ? { inputRequest: { requestId: pending.id, purpose: pending.purpose,
+      ...(legacy ? { responseSchema: legacy.responseSchema } : {}) } } : {}) };
+};
 export class Tasks {
   constructor(readonly db: Database, private readonly metadata: Metadata) {}
   async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, admit }: {
@@ -132,57 +141,35 @@ export class Tasks {
     return this.visible(principal, task);
   }
   selectPlaces(principal: Principal, id: string, input: unknown): Promise<Task> {
-    const places = placeSelectionSchema.parse(input);
-    return this.continueTaskInput(principal, id, task => {
-      const choices = this.placeChoices(task);
-      for (const side of ['origin', 'destination'] as const) {
-        if (!choices[side].some(({ ref }) => ref.type === places[side].type && ref.id === places[side].id)) {
-          throw new Conflict('Select places from the original task’s current candidates');
-        }
-      }
-      return { ...task.input, places };
-    });
+    return this.continueTaskInput(principal, id, { kind: 'select', places: placeSelectionSchema.parse(input) });
   }
   amendPlace(principal: Principal, id: string, input: unknown): Promise<Task> {
-    const { side, keep, ...amendment } = placeAmendmentSchema.parse(input);
-    return this.continueTaskInput(principal, id, task => {
-      const choices = this.placeChoices(task);
-      if (!task.input.placeContinuation?.receipts) throw new Conflict('There is no original Action waiting for place details');
-      const other = side === 'origin' ? 'destination' : 'origin';
-      const selected = keep
-        ? choices[other].find(({ ref }) => ref.type === keep.type && ref.id === keep.id)?.ref
-        : choices[other].length === 1 ? choices[other][0]!.ref : undefined;
-      if (!selected && (keep || choices[other].length)) {
-        throw new Conflict('Identify the unchanged endpoint from the original task’s current candidates');
-      }
-      return {
-        ...task.input,
-        places: selected ? { [other]: selected } : {},
-        placeAmendments: { ...task.input.placeAmendments, [side]: amendment },
-      };
-    });
+    return this.continueTaskInput(principal, id, { kind: 'amend', amendment: placeAmendmentSchema.parse(input) });
   }
   answerInput(principal: Principal, id: string, input: unknown): Promise<Task> {
-    const answer = taskInputAnswerSchema.parse(input);
-    return this.continueTaskInput(principal, id, task => {
-      const waiting = z.object({ kind: z.enum(['city', 'origin', 'destination', 'retry-source']) }).safeParse(task.result);
-      if (!waiting.success || waiting.data.kind !== answer.kind ||
-          task.input.placeContinuation?.waitingFor !== answer.kind) {
-        throw new Conflict('The original Action is not waiting for this input');
-      }
-      if (answer.kind === 'city') return { ...task.input, rideCity: answer.city };
-      if (answer.kind === 'origin') return { ...task.input, rideOrigin: answer.place };
-      if (answer.kind === 'destination') return { ...task.input, rideDestination: answer.place };
-      return task.input;
-    });
+    return this.continueTaskInput(principal, id, taskInputAnswerSchema.parse(input));
   }
-  private placeChoices(task: Task) {
-    const choices = placeChoicesSchema.safeParse(task.result);
-    if (!choices.success) throw new Conflict('The original task has no place candidates');
-    return choices.data;
+  async resumeInput(principal: Principal, task: Task, response: unknown, client: Sql) {
+    if (task.input.paClient && task.input.paClient !== principal.clientId)
+      throw new NotFound('The Action input belongs to the original client');
+    const access = await Access.load(this.db, principal, client);
+    if (!task.result_permissions || !await access.canReturn(task.result_permissions, client))
+      throw new Conflict('Task input permissions changed');
+    const nextInput = applyLegacyActionInput(task, response);
+    const continuation = task.input.placeContinuation;
+    if (continuation) {
+      const model = await this.metadata.get(task.release, client);
+      await recordActionConfirmation(this.db, model, access, task, client, continuation, 'confirmed');
+    }
+    const changed = await this.db.query<Task>(`UPDATE ${this.db.schema}.tasks SET input=$2::jsonb,
+      state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
+      available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
+      [task.id, JSON.stringify(nextInput)], client);
+    await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
+    return changed.rows[0]!;
   }
   private async continueTaskInput(
-    principal: Principal, id: string, update: (task: Task) => Task['input'],
+    principal: Principal, id: string, response: unknown,
   ): Promise<Task> {
     requireScope(principal, 'tasks:write'); z.uuid().parse(id);
     return this.db.transaction(async client => {
@@ -190,22 +177,11 @@ export class Tasks {
       const task = (await this.db.query<Task>(`SELECT * FROM ${table} WHERE owner=$1 AND id=$2 AND state='input-required' FOR UPDATE`,
         [principal.owner, id], client)).rows[0];
       if (!task) throw new Conflict('The task is not waiting for input');
-      const caller = await Access.load(this.db, principal, client);
-      if (!task.result_permissions || !await caller.canReturn(task.result_permissions, client)) {
-        throw new Conflict('Task input permissions changed');
-      }
-      const nextInput = update(task);
-      const continuation = task.input.placeContinuation;
-      if (continuation) {
-        const model = await this.metadata.get(task.release, client);
-        await recordActionConfirmation(this.db, model, caller, task, client, continuation, 'confirmed');
-      }
-      const result = await this.db.query<Task>(`UPDATE ${table} SET input=$2::jsonb,
-        state='submitted',error=NULL,result=NULL,result_permissions=NULL,execution_step=execution_step+1,
-        available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 RETURNING *`,
-        [task.id, JSON.stringify(nextInput)], client);
-      await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
-      return result.rows[0]!;
+      const resumed = await this.resumeInput(principal, task, response, client);
+      const pending = task.input.placeContinuation?.pending;
+      if (pending) await this.db.query(`UPDATE ${this.db.schema}.pa_requests SET response=$2,response_digest=$3
+        WHERE id=$1 AND response_digest IS NULL`, [pending.id, response, digest(response)], client);
+      return resumed;
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
@@ -258,9 +234,19 @@ export class Tasks {
     });
   }
   async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown,
-    error?: string, permissions: Requirement[] = [], pending?: PlaceContinuation) {
+    error?: string, permissions: Requirement[] = [], pending?: ActionContinuation) {
     await this.db.transaction(async client => {
       await this.current(task, client, true);
+      if (pending && !pending.pending) {
+        const legacy = legacyActionInput(pending);
+        if (legacy) {
+          const id = randomUUID();
+          const request = { ...legacy, actionRequestId: pending.requestId, legacy: true };
+          await this.db.query(`INSERT INTO ${this.db.schema}.pa_requests(id,task_id,owner,request_key,request)
+            VALUES($1,$2,$3,$4,$5)`, [id, task.id, task.owner, digest([pending.requestId, id]), request], client);
+          pending = { ...pending, pending: { id, capability: legacy.capability, purpose: legacy.purpose } };
+        }
+      }
       const continuation = pending ?? task.input.placeContinuation;
       const access = result !== null || continuation
         ? await Access.load(this.db, taskPrincipal(task), client) : undefined;
@@ -274,7 +260,7 @@ export class Tasks {
         input=CASE WHEN $6::jsonb IS NULL THEN input-'placeContinuation'
           ELSE jsonb_set(input,'{placeContinuation}',$6::jsonb) END WHERE id=$1`,
         [task.id, state, result ?? null, error ?? null, JSON.stringify(permissions),
-          pending ? JSON.stringify(placeContinuationSchema.parse(pending)) : null], client);
+          pending ? JSON.stringify(actionContinuationSchema.parse(pending)) : null], client);
       if (task.conversation_id && (state !== 'input-required' || pending?.waitingFor === 'retry-source')) {
         await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       }

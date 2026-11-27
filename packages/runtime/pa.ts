@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, requireScope, type Principal } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
-import { PARequestRequired } from './clarification.js';
+import { ActionPARequestRequired, PARequestRequired, type ActionInputPurpose } from './clarification.js';
 import { recordActionConfirmation } from './action-confirmation.js';
 import { Metadata } from './metadata.js';
 import { Tasks, type Task } from './tasks.js';
@@ -31,14 +31,28 @@ export class PARequests {
     for(const row of page)if(Array.isArray(row.result_permissions)&&await access.canReturn(row.result_permissions))items.push({taskId:row.task_id,sourceTaskId:row.source_task_id??null,scheduleId:row.schedule_id??null,request:row.result});
     return {items,cursor:rows.length>input.limit?page.at(-1)!.id:undefined};
   }
+  async requestActionInput(
+    task: Task, actionRequestId: string, round: string, capability: string, purpose: ActionInputPurpose,
+    input: Record<string, unknown>, responseSchema: Record<string, unknown>,
+  ) {
+    try {
+      return (await this.requestWithId(task, digest([actionRequestId, round]), capability, input, responseSchema,
+        undefined, undefined, { actionRequestId, purpose })).response;
+    } catch (error) {
+      if (error instanceof PARequestRequired)
+        throw new ActionPARequestRequired(error.message, error.choices, error.permissions, purpose);
+      throw error;
+    }
+  }
   async request(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>, dataScope?: Record<string, unknown>) {
     return (await this.requestWithId(task, operation, capability, input, responseSchema, dataScope)).response;
   }
   async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>,
-    dataScope?: Record<string, unknown>, beforeDispatch?: (client: Sql) => Promise<void>) {
+    dataScope?: Record<string, unknown>, beforeDispatch?: (client: Sql) => Promise<void>,
+    actionInput?: { actionRequestId: string; purpose: ActionInputPurpose }) {
     if (task.cognitive_context && capability !== 'calendar.freebusy')
       throw new Conflict('Workflow proposals may request PA calendar availability only');
-    const { db } = this.tasks, request = { capability, input, responseSchema };
+    const { db } = this.tasks, request = { capability, input, responseSchema, ...actionInput };
     // Data identity is independent of a model's wording or Action request ID.
     const key = digest(dataScope ? { capability, dataScope, responseSchema } : { operation, request });
     const row = await db.transaction(async client => {
@@ -73,6 +87,17 @@ export class PARequests {
         if (row.response_digest !== fingerprint) throw new Conflict('PA response was already supplied with different content');
         return;
       }
+      const wait = (task as Task).input.placeContinuation;
+      if (row.request.legacy === true) {
+        if (task.state !== 'input-required' || wait?.pending?.id !== input.requestId ||
+            wait.requestId !== row.request.actionRequestId || wait.pending.capability !== row.request.capability ||
+            wait.pending.purpose !== row.request.purpose)
+          throw new Conflict('The original Action is not waiting for this input');
+        await this.tasks.resumeInput(principal, task as Task, response, client);
+        await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`,
+          [input.requestId, response, fingerprint], client);
+        return;
+      }
       if (task.state !== 'input-required' || task.result?.kind !== 'pa-request' || task.result?.requestId !== input.requestId) throw new Conflict('The original task is not waiting for this PA response');
       const permissions = task.result_permissions as Requirement[] | null;
       const access = await Access.load(db, principal, client);
@@ -80,6 +105,11 @@ export class PARequests {
         throw new Conflict('The original PA request is no longer authorized');
       const continuation = (task as Task).input.placeContinuation;
       if (continuation?.waitingFor === 'pa-request') {
+        if (continuation.pending && (continuation.pending.id !== input.requestId ||
+            continuation.pending.capability !== row.request.capability) ||
+            row.request.actionRequestId !== undefined && (row.request.actionRequestId !== continuation.requestId ||
+              row.request.purpose !== continuation.pending?.purpose))
+          throw new Conflict('PA response does not match the original Action and purpose');
         const model = await new Metadata(db).get(task.release, client);
         await recordActionConfirmation(db, model, access, task as Task, client, continuation, 'confirmed');
       }

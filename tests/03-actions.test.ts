@@ -8,6 +8,8 @@ import { Functions } from '../packages/runtime/functions.js';
 import { assembleRuntime } from '../packages/runtime/assembly.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
+import { Clarification } from '../packages/runtime/clarification.js';
+import { PARequests } from '../packages/runtime/pa.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { once } from 'node:events';
 import { createApp } from '../apps/gateway/app.js';
@@ -63,13 +65,44 @@ test('a standalone Ontology can publish, query, apply and read back with neutral
         objectParameters: {}, submissionCriteria: [], function: 'RegisterShipment' }],
     });
     const capabilities = assembleRuntime(f.db, definition.document.functionTypes, new Map([
-      ['RegisterShipment', (_input, context) => context.edit!(ref, graph => graph.create(ref, { id: ref.id, name: 'Shipment' }))],
+      ['RegisterShipment', async (_input, context) => {
+        const execution = context.execution!;
+        const { name } = await new PARequests(execution.tasks).requestActionInput(execution.task,
+          context.operationId!, 'shipment-name', 'shipment.complete_details', 'input', {}, {
+            type: 'object', required: ['name'], properties: { name: { type: 'string' } }, additionalProperties: false,
+          }) as { name: string };
+        return context.edit!(ref, graph => graph.create(ref, { id: ref.id, name }));
+      }],
     ]));
     const model = await f.metadata.publish(definition.document, capabilities, f.publisher);
     await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
     assert.deepEqual((await graph.query({ type: ref.type })).items, []);
-    assert.deepEqual(await capabilities.actions.apply(access, model, 'RegisterShipment', {}, 'register-shipment'), ref);
+    const submitted = await f.tasks.submit(principal, { requestId: 'register-shipment', message: 'Register a shipment' });
+    const original = (await f.tasks.claim())!;
+    assert.equal(original.id, submitted.id);
+    const call = { action: 'RegisterShipment', input: {} };
+    const signal = AbortSignal.timeout(10000);
+    let seenRequestId = '';
+    try {
+      await capabilities.actions.complete(access, model, call, 'original-shipment-action', undefined,
+        { task: original, tasks: f.tasks }, signal, { allowPause: true });
+      assert.fail('The Action must wait for the missing shipment name');
+    } catch (error) {
+      assert(error instanceof Clarification && error.continuation);
+      seenRequestId = error.continuation.pending!.id;
+      assert.notEqual(seenRequestId, error.continuation.requestId);
+      await f.tasks.finish(original, 'input-required', error.choices, error.message, [], error.continuation);
+    }
+    const pa = new PARequests(f.tasks);
+    await assert.rejects(pa.respond(principal, submitted.id, { requestId: seenRequestId, response: { approved: true } }));
+    const answer = { requestId: seenRequestId, response: { name: 'Shipment' } };
+    await pa.respond(principal, submitted.id, answer);
+    await pa.respond(principal, submitted.id, answer);
+    const resumed = (await f.tasks.claim())!;
+    assert.equal(resumed.id, original.id);
+    assert.deepEqual(await capabilities.actions.resume(access, model, { task: resumed, tasks: f.tasks }, signal), ref);
+    await f.tasks.finish(resumed, 'completed', ref);
     assert.equal((await graph.read(ref)).properties.name, 'Shipment');
     assert.equal(f.provider.calls.length, 0);
   } finally { await f.close(); }
