@@ -3,7 +3,7 @@ import { personalPlaceType, savePersonalPlace } from './personal-places.js';
 import { localDeliveryProviders } from './local-delivery.js';
 import { deliveryTradeServices } from './local-delivery-trade.js';
 import { bookWithEndpoints, estimateWithEndpoints, immediateRideRouteLink } from './didi-ride-endpoints.js';
-import { bookImmediateRideAction, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { bookImmediateRideAction, immediateRideInterface, immediateRideType, reconcileImmediateRideAction } from './didi-immediate-ride.js';
 import { amapObservations } from './amap-observations.js';
 import type { OntologyDocument } from './schema.js';
 
@@ -76,9 +76,11 @@ export const businessAgentProfiles: AgentProfile[] = [
     terms: ['取消滴滴', '取消订单', '取消打车', '取消叫车', '滴滴订单', '滴滴司机', 'cancel ride', 'cancel taxi', 'didi order'],
     objects: ['DidiRideOrder', 'DidiRideWatch', 'EventTrip', immediateRideType],
     interfaces: ['RideOrder', 'CancelableRideOrder'],
-    actions: ['CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
-    functions: ['readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
+    actions: [reconcileImmediateRideAction, 'CancelDidiRideOrder', 'RefreshDidiRideOrder', 'StartDidiRideWatch', 'StopDidiRideWatch'],
+    functions: ['readDidiImmediateRide', 'readDidiRideOrder', 'readDidiRideWatch', 'readDidiDriverPosition'],
     instructions: [
+      { action: reconcileImmediateRideAction, function: 'readDidiImmediateRide',
+        text: 'For an immediate booking marked submitted or unknown, read the original ride and apply ReconcileDidiImmediateRide with that ride reference, then readDidiImmediateRide (resultParameter: ride). Report unknown if the original order cannot be identified.' },
       { function: 'readDidiRideWatch', text: 'For pickup and journey progress follow the original DidiRideOrder.watches link and read the matching watch. Report its observedAt and reason. Stopped or expired tracking does not establish ride completion or settlement.' },
       { action: 'CancelDidiRideOrder', function: 'readDidiRideOrder', text: 'Identify the exact linked original DiDi order. Cancellation is submitted directly by the authenticated PA through CancelableRideOrder.cancel with confirmCancellation=true after user approval. Read the original cancellation outcome before reporting success. An unresolved attempt permits readback only.' },
     ],

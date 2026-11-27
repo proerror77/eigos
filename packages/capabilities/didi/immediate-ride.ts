@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import {
   bookImmediateRideAction, immediateApprovalLink, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
-  immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType,
+  immediateRideApproval, immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType, reconcileImmediateRideFunction,
 } from '../../ontology/didi-immediate-ride.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, immediateRideRouteLink, resolvedRideEndpoints,
   type ResolvedRideEndpoints } from '../../ontology/didi-ride-endpoints.js';
@@ -29,9 +29,10 @@ const dispatchReceipt = z.strictObject({
   bindingId: z.string(), sourceAuthority: immediateRideRecord.shape.sourceAuthority.unwrap(),
   pickup: immediateRideTerms.shape.pickup, destination: immediateRideTerms.shape.destination,
   fare: immediateFare, order: rideOrderSchema, endpoints: resolvedRideEndpoints.optional(),
+  approvedQuote: immediateRideApproval.optional(),
 });
 type DispatchReceipt = z.infer<typeof dispatchReceipt>;
-type Fields = Pick<z.infer<typeof immediateRideRecord>, 'pickup' | 'destination' | 'state' | 'selectedFare' | 'updatedEstimateMinor' | 'sourceAuthority'>;
+type Fields = Pick<z.infer<typeof immediateRideRecord>, 'pickup' | 'destination' | 'state' | 'selectedFare' | 'updatedEstimateMinor' | 'sourceAuthority' | 'approvedQuote'>;
 type Reader = FunctionContext['objects'];
 const presentLocation = (row: ObjectData) => immediateRideTerms.shape.pickup.parse({
   name: row.properties.name, address: row.properties.address, city: row.properties.city,
@@ -54,10 +55,10 @@ async function readRide(objects: Reader, ride: ObjectRef) {
 }
 
 async function requestApproval(
-  context: FunctionContext, terms: z.infer<typeof immediateRideTerms>, quote: SourceResult, sourceAuthority: string,
+  context: FunctionContext, terms: z.infer<typeof immediateRideTerms>, quote: SourceResult, sourceAuthority: string, endpoints: ResolvedRideEndpoints,
 ) {
   const { task, tasks } = interactiveTask(context);
-  const quoteDigest = digest([task.id, terms, quote.receipt.inputDigest, quote.receipt.resultDigest, sourceAuthority]);
+  const quoteDigest = digest([task.id, context.operationId, terms, endpoints, quote.receipt.inputDigest, quote.receipt.resultDigest, sourceAuthority]);
   const raw = await new PARequests(tasks).requestActionInput(task, context.operationId!, quoteDigest,
     immediateRideApprovalCapability, 'authorization', {
       ...terms, quoteDigest, evidence: quote.evidence,
@@ -82,6 +83,7 @@ export function immediateDidiRideFunctions(
     return save(context, ride, {
       state: result.state, pickup: input.pickup, destination: input.destination, selectedFare: input.fare,
       updatedEstimateMinor: result.amount ?? null, sourceAuthority: result.bindingId,
+      approvedQuote: { quoteDigest: input.quoteDigest, expiresAt: input.expiresAt, requestId: context.operationId! },
     }, result.order, input.endpoints);
   };
   const resolveBooking = (actionName: string, linkedRoute: boolean) => prepareRideInquiry(
@@ -122,10 +124,11 @@ export function immediateDidiRideFunctions(
     if (Date.now() >= expiry) return record({ ...fields, state: 'quote_expired' });
     await orders?.assertAvailable();
     const terms = immediateRideTerms.parse({ pickup, destination: dropoff, expiresAt: new Date(expiry).toISOString(), fares });
-    const approved = await requestApproval(context, terms, quote, sourceAuthority);
+    const approved = await requestApproval(context, terms, quote, sourceAuthority, endpoints);
     if (!approved) return record({ ...fields, state: 'declined' });
     const { fare, quoteDigest } = approved;
-    if (Date.now() >= expiry) return record({ ...fields, selectedFare: fare, state: 'quote_expired' });
+    const approvedQuote = { quoteDigest, expiresAt: terms.expiresAt, requestId: context.operationId! };
+    if (Date.now() >= expiry) return record({ ...fields, approvedQuote, selectedFare: fare, state: 'quote_expired' });
     const guard = async (objects: Reader) => {
       await source.assertCurrent();
       assertFresh();
@@ -159,7 +162,7 @@ export function immediateDidiRideFunctions(
     if (!orders) throw new Conflict('DiDi immediate ordering is unavailable for this account');
     const fresh = await orders.quote(confirmedRoute, fare.category, context.signal);
     if (fresh.category !== fare.category || fresh.amountMinor !== fare.amountMinor || fresh.currency !== fare.currency)
-      return record({ ...fields, selectedFare: fare, updatedEstimateMinor: fresh.amountMinor, state: 'price_changed' });
+      return record({ ...fields, approvedQuote, selectedFare: fare, updatedEstimateMinor: fresh.amountMinor, state: 'price_changed' });
     const key = immediateOperation(task.id);
     try {
       const receipt = await operations.run<DispatchReceipt>(task.owner, key, ride, async client => {
@@ -174,12 +177,12 @@ export function immediateDidiRideFunctions(
         });
         assertOrderEvidence(source, original);
         if (original.state !== 'created' || original.independentRead) throw new Conflict('DiDi did not acknowledge the original order');
-        return dispatchReceipt.parse({ bindingId, sourceAuthority, pickup, destination: dropoff, fare, order: original, ...(route ? { endpoints: route } : {}) });
+        return dispatchReceipt.parse({ bindingId, sourceAuthority, pickup, destination: dropoff, fare, approvedQuote, order: original, ...(route ? { endpoints: route } : {}) });
       }, context.objects, { requestId: context.operationId, taskId: task.id });
       return recordOrder(context, ride, receipt, source);
     } catch (error) {
       if (!(error instanceof UnknownExternalOperation)) throw error;
-      return record({ ...fields, selectedFare: fare, state: 'unknown' });
+      return record({ ...fields, approvedQuote, selectedFare: fare, state: 'unknown' });
     }
   });
 
@@ -219,6 +222,44 @@ export function immediateDidiRideFunctions(
   return new Map<string, FunctionHandler>([
     ['bookDidiImmediateRide', book(bookImmediateRideAction, false)],
     [bookWithEndpointsFunction, book(bookWithEndpoints, true)],
+    [reconcileImmediateRideFunction, async (raw, context) => {
+      if (context.objects.model.scenario) throw new Conflict('Reconciliation requires the live Ontology');
+      const { ride } = immediateRideRef.parse(raw);
+      const booking = await readRide(context.objects, ride);
+      if (booking.state !== 'submitted' && booking.state !== 'unknown') return context.edit!(ride, async () => {});
+      const unchanged = () => context.edit!(ride, async () => {});
+      if (context.principal.memberAccess) return unchanged();
+      let recovered;
+      try {
+        recovered = await operations.recover<DispatchReceipt>(context.principal.owner,
+          immediateOperation(booking.sourceTaskId), ride, context.objects);
+      } catch (error) {
+        if (error instanceof UnknownExternalOperation) return unchanged();
+        throw error;
+      }
+      if (!recovered) return unchanged();
+      const receipt = dispatchReceipt.parse(recovered);
+      const source = await resolve(context.principal.owner,
+        { bindingId: receipt.bindingId, orderId: receipt.order.orderId, readOnly: true });
+      const checked = await readOriginalOrder(context, receipt, source);
+      if (!checked) return unchanged();
+      return context.edit!(ride, async graph => {
+        const row = await graph.read(ride), current = immediateRideRecord.parse(row.properties);
+        if (current.state !== 'submitted' && current.state !== 'unknown') return;
+        if (current.sourceTaskId !== booking.sourceTaskId ||
+            current.sourceAuthority && current.sourceAuthority !== receipt.sourceAuthority)
+          throw new Conflict('The original ride connection changed');
+        await source.assertCurrent();
+        const patch = { state: 'ordered', pickup: receipt.pickup, destination: receipt.destination,
+          selectedFare: receipt.fare, sourceAuthority: receipt.sourceAuthority,
+          ...(receipt.approvedQuote ? { approvedQuote: receipt.approvedQuote } : {}),
+          ...(receipt.endpoints && savedRideRevisions(receipt.endpoints) ? { locationClassification: privateLocation } : {}) };
+        if (receipt.endpoints && !(await graph.follow(ride, 'route')).length)
+          await storeRoute(graph, ride, receipt.endpoints, receipt.pickup, receipt.destination);
+        await storeOrder(graph, ride, { value: checked, bindingId: receipt.bindingId }, receipt.sourceAuthority);
+        await graph.edit(ride, row.revision, patch);
+      });
+    }],
     ['readDidiImmediateRide', async (raw, context) => {
       const { ride } = immediateRideRef.parse(raw);
       const { sourceAuthority: _authority, locationClassification: _location, ...record } = await readRide(context.objects, ride);
@@ -243,26 +284,49 @@ function assertOrderEvidence(source: DidiSource, order: RideOrder) {
     throw new Conflict('Original order evidence differs from the authorized environment');
 }
 
-async function recordOrder(context: FunctionContext, ride: ObjectRef, receipt: DispatchReceipt, source: DidiSource) {
+async function readOriginalOrder(context: FunctionContext, receipt: DispatchReceipt, source: DidiSource) {
   const orders = source.orders;
   if (!orders || source.bindingId !== receipt.bindingId || authority(source) !== receipt.sourceAuthority)
     throw new Conflict('Original order belongs to a different DiDi connection');
   const original = receipt.order;
-  let verified: RideOrder | undefined;
+  assertOrderEvidence(source, original);
   try {
     await source.assertCurrent();
     const check = rideOrderSchema.parse(await (orders.queryAfterCreate
       ? orders.queryAfterCreate(original, context.signal) : orders.query(original.orderId, context.signal)));
     await source.assertCurrent();
     assertOrderEvidence(source, check);
-    if (check.orderId === original.orderId && check.independentRead && check.state === 'reported') verified = check;
+    if (check.orderId === original.orderId && check.independentRead && check.state === 'reported') return check;
   } catch {
-    // Preserve the acknowledged order and expose the pending readback explicitly.
     context.signal.throwIfAborted();
   }
+}
+
+async function recordOrder(context: FunctionContext, ride: ObjectRef, receipt: DispatchReceipt, source: DidiSource) {
+  const verified = await readOriginalOrder(context, receipt, source);
   return save(context, ride, { state: verified ? 'ordered' : 'submitted', pickup: receipt.pickup,
     destination: receipt.destination, selectedFare: receipt.fare, updatedEstimateMinor: null,
-    sourceAuthority: receipt.sourceAuthority }, { value: verified ?? original, bindingId: receipt.bindingId }, receipt.endpoints);
+    sourceAuthority: receipt.sourceAuthority, ...(receipt.approvedQuote ? { approvedQuote: receipt.approvedQuote } : {}),
+  }, { value: verified ?? receipt.order, bindingId: receipt.bindingId }, receipt.endpoints);
+}
+
+async function storeRoute(graph: Objects, ride: ObjectRef, endpoints: ResolvedRideEndpoints,
+  pickup: DispatchReceipt['pickup'], destination: DispatchReceipt['destination']) {
+  const route = immediateRouteRef(ride), revisions = savedRideRevisions(endpoints);
+  await graph.create(route, { id: route.id, name: `${pickup.name} → ${destination.name}`,
+    ...(endpoints.pickup ? { pickup: endpoints.pickup } : {}),
+    ...(revisions ? { personalPlaceRevisions: revisions, locationClassification: privateLocation } : {}) });
+  await graph.linkBatch([...rideEndpointLinks(route, endpoints), { type: immediateRideRouteLink, from: ride, to: route }]);
+}
+
+async function storeOrder(graph: Objects, ride: ObjectRef, order: { value: RideOrder; bindingId: string }, sourceAuthority: Fields['sourceAuthority']) {
+  const ref = { type: 'DidiRideOrder', id: digest([order.bindingId, order.value.orderId]) };
+  const [original] = await graph.follow(ride, 'order');
+  if (original && original.ref.id !== ref.id) throw new Conflict('DiDi order differs from the original booking');
+  await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId,
+    ...(graph.model.object(ref.type).properties.sourceAuthority ? { sourceAuthority } : {}) } }],
+    'DidiRideOrders', order.value.observedAt);
+  if (!original) await graph.link({ type: immediateOrderLink, from: ride, to: ref });
 }
 
 function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
@@ -279,18 +343,7 @@ function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
     await graph.create(ride, { ...fields, ...classified, id: ride.id, name: '滴滴即时叫车', sourceTaskId: task.id });
     if (task.input.placeContinuation?.requestId === context.operationId && graph.model.links.has(immediateApprovalLink))
       await graph.link({ type: immediateApprovalLink, from: ride, to: actionConfirmationRef(context.operationId!) });
-    if (endpoints) {
-      const route = immediateRouteRef(ride);
-      await graph.create(route, { id: route.id, name: `${fields.pickup!.name} → ${fields.destination!.name}`,
-        ...(endpoints.pickup ? { pickup: endpoints.pickup } : {}),
-        ...(personalPlaceRevisions ? { personalPlaceRevisions, ...classified } : {}) });
-      await graph.linkBatch([...rideEndpointLinks(route, endpoints), { type: immediateRideRouteLink, from: ride, to: route }]);
-    }
-    if (!order) return;
-    const ref = { type: 'DidiRideOrder', id: digest([order.bindingId, order.value.orderId]) };
-    await graph.ingestBatch([{ ref, properties: { id: ref.id, name: 'Original ride order', ...order.value, bindingId: order.bindingId,
-      ...(graph.model.object(ref.type).properties.sourceAuthority ? { sourceAuthority: fields.sourceAuthority } : {}) } }],
-      'DidiRideOrders', order.value.observedAt);
-    await graph.link({ type: immediateOrderLink, from: ride, to: ref });
+    if (endpoints) await storeRoute(graph, ride, endpoints, fields.pickup!, fields.destination!);
+    if (order) await storeOrder(graph, ride, order, fields.sourceAuthority);
   });
 }

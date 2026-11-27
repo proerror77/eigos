@@ -33,11 +33,18 @@ export async function recordActionConfirmation(
     ...(state === 'awaiting-input' || state === 'completed' ? { action: continuation.action } : {}),
     executor: { kind: 'system', id: 'ontology-action-confirmation' },
   });
+  const pending = state === 'awaiting-input' ? continuation.pending : undefined;
+  const definition = model.object(ref.type).properties;
+  const fields = { state, ...(pending ? {
+    ...(definition.inputRequestId ? { inputRequestId: pending.id } : {}),
+    ...(definition.inputPurpose ? { inputPurpose: pending.purpose } : {}),
+    ...(definition.inputCapability ? { inputCapability: pending.capability } : {}),
+  } : {}) };
   const key = [model.projection, task.owner, ref.type, ref.id];
   await graph.lockWrites();
   if (!task.input.placeContinuation) {
     if (state !== 'awaiting-input') throw new Conflict('Action confirmation has not been requested');
-    const properties = model.parseObject(ref, { id: ref.id, name: continuation.action, taskId: task.id, state });
+    const properties = model.parseObject(ref, { id: ref.id, name: continuation.action, taskId: task.id, ...fields });
     await db.query(`INSERT INTO ${db.schema}.objects(projection,owner,type,id,properties) VALUES($1,$2,$3,$4,$5)`,
       [...key, properties], client);
     await recordObjectEdit(graph, ref, null, properties, properties, 'create');
@@ -50,10 +57,10 @@ export async function recordActionConfirmation(
         AND properties->>'state'=ANY($6::text[]) AND properties->>'name'=$7 FOR UPDATE`,
     [...key, task.id, allowedFrom[state], continuation.action], client)).rows[0];
   if (!row) throw new Conflict('Action confirmation state changed');
-  const next = model.parseObject(ref, { ...row.properties, state });
+  const next = model.parseObject(ref, { ...row.properties, ...fields });
   await db.query(`UPDATE ${db.schema}.objects SET properties=$5,revision=revision+1
     WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [...key, next], client);
-  await recordObjectEdit(graph, ref, row.properties, next, { state });
+  await recordObjectEdit(graph, ref, row.properties, next, fields);
 }
 
 export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: ActionContinuation) {
