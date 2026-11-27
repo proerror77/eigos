@@ -398,6 +398,7 @@ export class Actions {
       const effects=(await this.db.query(`SELECT id,state FROM ${this.db.schema}.action_effects WHERE owner=$1 AND request_id=$2 ORDER BY id FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows;
       if(effects.some(effect=>effect.state==='working'))throw new Conflict('An original Action effect is in flight');
       await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='canceled',token=NULL,lease_until=NULL,error=NULL WHERE owner=$1 AND request_id=$2 AND state='pending'`,[access.principal.owner,originalRequestId],client);
+      await new ResourceReservations(this.db).undo(access.principal.owner,originalRequestId,client);
       await compensate(graph,original.objects as ObjectChange[],original.links as LinkChange[]);
       const result={originalRequestId,requestId,result:original.result,externalEffectsReversed:false,pendingEffectsCanceled:effects.filter(effect=>effect.state==='pending').length};
       await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[access.principal.owner,requestId,digest({undo:originalRequestId,release:model.release}),original.action,model.release,original.result,executor.kind,executor.id],client);

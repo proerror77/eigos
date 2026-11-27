@@ -185,7 +185,7 @@ export const ontologySchema = z.strictObject({
     effects: z.array(actionEffectSchema).max(20).optional(),
     reservation: z.strictObject({
       holderParameter: name, allocationsParameter: name, state: z.enum(['held','committed','released']),
-      sharedSource: name.optional(),
+      sharedSource: name.optional(), confirmationEffect: name.optional(),
     }).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({

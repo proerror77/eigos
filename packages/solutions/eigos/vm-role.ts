@@ -19,7 +19,7 @@ export async function grantVmRuntime(db: Database, role: string, client: Sql) {
       .join(',');
   await db.query(
     `GRANT USAGE ON SCHEMA ${s} TO ${grantee};
-    GRANT INSERT,UPDATE ON ${s}.resource_reservations TO ${grantee};
+    GRANT INSERT,UPDATE ON ${s}.resource_reservation_changes,${s}.resource_reservations TO ${grantee};
     GRANT INSERT,DELETE ON ${s}.reservation_dispatches TO ${grantee};
     GRANT SELECT ON ALL TABLES IN SCHEMA ${s} TO ${grantee};
     GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${s} TO ${grantee};

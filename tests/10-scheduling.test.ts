@@ -163,7 +163,7 @@ test('the restricted database role completes PA handoff and merge without metada
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
     GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
       GRANT SELECT ON ${f.db.schema}.reservation_dispatches TO "${role}";
-      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns,${f.db.schema}.resource_reservations TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns,${f.db.schema}.resource_reservation_changes,${f.db.schema}.resource_reservations TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.link_history,${f.db.schema}.change_commits TO "${role}";

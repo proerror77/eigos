@@ -113,3 +113,5 @@ GiST 排他约束拒绝同一资源的重叠预留。若更新与其他持有人
 发布 Action 时可以声明 `reservation: { holderParameter: "holder", allocationsParameter: "allocations", state: "committed" }`。持有人参数必须声明对象类型。每项预留包含 `allocation`、可读的 `resource` 对象引用、`start` 与 `end`。普通 Action 与排程共享同一套 owner 和本体资源键。`sharedSource` 可指定已发布的数据源，调用者还需该源的派发权限；同一源下代表同一共享资源的引用使用跨 owner 的排他键。释放 Action 声明 `state: "released"` 并传入空列表。
 
 需要供应商写入的 Function 继续通过原 `assertDispatch` 和外部操作记录请求。在原派发事务内暂存新旧占用区间的并集。供应商结果未知时，账本保留两组区间并将变更绑定原请求。核对原回执后由原 Action 提交最终占用或释放。独立请求不能替尚未核对的供应商请求释放资源。Scenario 只在正式合并事务写入账本。
+
+若供应商确认来自提交后的外发副作用，发布者可在预留声明加 `confirmationEffect`，指向同一 Action 已声明的效果名称。在原 Action 和外发意图提交时保留新旧区间；只有该效果的成功确认事务会切换到最终占用。可确定没有执行的取消恢复旧占用，未知结果保留预留并沿用原幂等键重试。需要外部确认的操作经原正式 Action 提交及授权；普通 Scenario 的预留在合并时检查。普通 Action 撤销会在同一事务核对原预留日志并恢复可用区间。已经完成的供应商操作需通过授权的补偿 Action 处理。
