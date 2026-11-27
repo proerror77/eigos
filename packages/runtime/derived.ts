@@ -1,3 +1,4 @@
+import { timeSeriesSchema, timeSeriesWindows } from '../ontology/time-series.js';
 import { Conflict, digest } from '../core/identity.js';
 import { validator } from '../ontology/model.js';
 import type { DerivedExpression, ObjectData, ObjectRef } from '../ontology/schema.js';
@@ -31,7 +32,7 @@ export class DerivedProperties {
     const paths = new Map<string, { type: string; path: { link: string; as?: string }[] }>();
     const collect = (type: string, expression: DerivedExpression) => {
       if (expression.op === 'linked') paths.set(digest([type, expression.path]), { type, path: expression.path });
-      else if (expression.op !== 'literal' && expression.op !== 'property') { collect(type, expression.left); collect(type, expression.right); }
+      else if ('left' in expression) { collect(type, expression.left); collect(type, expression.right); }
     };
     for (const type of new Set(pending.map(object => object.ref.type)))
       for (const [, property] of derivedOf(type)) collect(type, property.derived!);
@@ -105,6 +106,11 @@ export class DerivedProperties {
     if (depth > 16) throw new Conflict('Derived arithmetic exceeds its depth limit');
     if (expression.op === 'literal') return expression.value;
     if (expression.op === 'property') return this.field(ref, expression.property, stack);
+    if (expression.op === 'timeseries') {
+      const input = await this.field(ref, expression.property, stack);
+      if (input === null || input === undefined) return null;
+      return timeSeriesWindows(timeSeriesSchema.parse(input), expression.window, expression.aggregate);
+    }
     if (expression.op === 'linked') {
       let current = new Map([[digest(ref), await this.base(ref)]]);
       for (const step of expression.path) {

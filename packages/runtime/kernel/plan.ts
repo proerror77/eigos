@@ -292,6 +292,7 @@ class Scope {
   private derivedExpression(type: string, expression: DerivedExpression): KernelDerived | undefined {
     if (expression.op === 'literal') return { op: 'literal', value: expression.value };
     if (expression.op === 'property') return this.derivedValue(type, expression.property, false);
+    if (expression.op === 'timeseries') return undefined;
     if (expression.op === 'linked') {
       let current = type, visible = true;
       const steps: KernelStep[] = [];

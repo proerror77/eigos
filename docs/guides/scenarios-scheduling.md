@@ -100,3 +100,20 @@ OAuth 的任务读写权限用于原任务及 PA 回传；直接 Scenario 操作
 ## 验证范围
 
 工程测试覆盖真实 PostgreSQL 事务、权限隔离、时效、原任务恢复、Scenario 冲突与并发合并。进程 E2E 使用独立 Gateway/Worker，MCP 提交、A2A 回传、MCP 检查及显式合并。模型决策和 PA Calendar 都是明确标注的合成夹具。真实用户 PA 的 Calendar 适配、生产部署和真实日历联调需要对应环境验收。
+
+## 时序模型模拟
+
+数值时间序列的属性 schema 使用 JSON 数组和 `format: "eigos-timeseries"`。
+标准定义可从 `packages/ontology/time-series.ts` 的
+`timeSeriesJsonSchema` 复用。每点包含 ISO 8601 时间 `t` 和数值 `v`。
+时间按毫秒严格递增，每个序列最多保存 1 万点。
+
+派生属性可声明 `{op:"timeseries",property:"demandHistory",aggregate:"avg",
+window:{size:2,step:1}}`。窗口大小和步长以点数计算，每个结果使用窗口
+最后一点的时间。读取沿用原属性的可见性。该表达式由参考查询求值。
+
+把预测契约声明为 `kind: "model"` 的 Function，再由已有的
+Function-backed Action 执行。先在 Scenario 中覆盖输入属性，再对该
+Scenario 提交模型 Action，预测字段留在该 Scenario。调用
+`compare_scenarios` 可对同一指标读取正式数据基线和多个方案修订。
+[Vertex Scenario](https://www.palantir.com/docs/foundry/vertex/scenarios-overview/) · [Functions on models](https://www.palantir.com/docs/foundry/functions/functions-on-models/)

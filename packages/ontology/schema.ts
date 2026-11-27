@@ -10,11 +10,14 @@ export type DerivedExpression =
   | { op: 'linked'; path: {link:string;as?:string}[]; aggregate: 'count'|'sum'|'min'|'max'|'avg'|'select'; property?:string }
   | { op: 'property'; property:string }
   | { op: 'literal'; value:number }
+  | { op: 'timeseries'; property: string; aggregate: 'sum' | 'avg' | 'min' | 'max'; window: { size: number; step: number } }
   | { op: 'add'|'subtract'|'multiply'|'divide'; left:DerivedExpression; right:DerivedExpression };
 export const derivedExpressionSchema: z.ZodType<DerivedExpression> = z.lazy(() => z.union([
   z.strictObject({op:z.literal('linked'),path:z.array(z.strictObject({link:name,as:name.optional()})).min(1).max(16),aggregate:z.enum(['count','sum','min','max','avg','select']),property:z.string().min(1).optional()}),
   z.strictObject({op:z.literal('property'),property:z.string().min(1)}),
   z.strictObject({op:z.literal('literal'),value:z.number()}),
+  z.strictObject({op:z.literal('timeseries'),property:z.string().min(1),aggregate:z.enum(['sum','avg','min','max']),
+    window:z.strictObject({size:z.number().int().min(1).max(10000),step:z.number().int().min(1).max(10000)})}),
   z.strictObject({op:z.enum(['add','subtract','multiply','divide']),left:derivedExpressionSchema,right:derivedExpressionSchema}),
 ]));
 export const valueTypeRefSchema = z.strictObject({name,version:z.string().min(1).max(100)});
@@ -138,6 +141,7 @@ export const ontologySchema = z.strictObject({
   functionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1), parameters: jsonSchema, returns: jsonSchema,
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
+    kind: z.literal('model').optional(),
     dependencies:functionDependenciesSchema.optional(), implementation: componentImplementationSchema.optional(),
   }).refine(fn => !fn.implementation || semanticVersion.test(fn.version ?? ''), 'A component Function needs a semantic version such as 1.0.0')
     .refine(fn => !fn.implementation || !fn.source, 'A component Function cannot read a source yet')),

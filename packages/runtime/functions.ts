@@ -44,7 +44,8 @@ export interface VersionedFunction {
   implementationId: string;
   handler: FunctionHandler;
 }
-const contract = ({ parameters, returns, source, edits, dependencies }: Definition) => digest({ parameters, returns, source, edits, ...(dependencies?{dependencies}:{}) });
+const contract = ({ parameters, returns, source, edits, dependencies, kind }: Definition) =>
+  digest({ parameters, returns, source, edits, ...(dependencies ? { dependencies } : {}), ...(kind ? { kind } : {}) });
 const key = (definition: Definition) => JSON.stringify([definition.apiName, definition.version ?? null]);
 /** The result an Action's component edit Function stages before it runs; its commit replaces it with the real one. */
 const pendingResult: ObjectRef = { type: 'PendingFunctionResult', id: 'pending' };
