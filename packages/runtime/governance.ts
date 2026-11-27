@@ -195,7 +195,7 @@ export class Governance {
       if(imports.size||row.body.imports||current.document.imports)body.imports=[...imports.values()];
       body.version=row.body.version;
       await this.validateChanges(access,row,current.document,body,client);await access.refresh(client);
-      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,base_release=$3,machinery_evidence=$4,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [row.id,body,current.release], client);
+      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,base_release=$3,machinery_evidence=$4,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [row.id,body,current.release,recordContributor(row.machinery_evidence,access.principal.owner)], client);
       return {id:row.id,revision:row.revision+1,state:'draft',baseRelease:current.release};
     });
   }
