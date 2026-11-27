@@ -37,9 +37,10 @@ import { initializeActionUndo } from '../packages/runtime/action-journal.js';
 import { Scenarios, initializeScenarioLifecycle } from '../packages/runtime/scenarios.js';
 import { decisionEvidenceSchema } from '../packages/runtime/decision-evidence.js';
 import { ExecutionTrace } from '../packages/runtime/execution-trace.js';
-import { Automation, initializeAutomation } from '../packages/runtime/automation.js';
+import { Automation, initializeAutomation, saveRuleSchema } from '../packages/runtime/automation.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
+import { ProcessNotifications } from '../packages/runtime/process-notifications.js';
 import { objectPolicySchema } from '../packages/runtime/security.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
@@ -713,6 +714,55 @@ test('a process container relates parallel processes of the same objects, aligns
     // The requests each route leads, by their own status, against the route's state.
     assert.deepEqual(result.alignment?.map(item => [item.link, item.process, item.property, table(item.states)]),
       [['requests', 'RideRequestStatusLog', 'status', { stalled: { requested: 1, quoted: 1 }, open: { quoted: 1 } }]]);
+  } finally { await f.close(); }
+});
+
+test('a notification rule notifies once per transition, after the dwell and only while the instance stays', async () => {
+  const f = await processSetup();
+  try {
+    const notifications = new ProcessNotifications(f.db, f.metadata);
+    const rows = async () => (await f.db.query<{ state: string; reason: string | null; message: string | null }>(
+      `SELECT state, reason, message FROM ${f.db.schema}.process_notifications ORDER BY (trigger->>'sequence')::bigint`)).rows;
+    // Each round finds every rule due, as after its scan interval.
+    const scan = async () => {
+      await f.db.query(`UPDATE ${f.db.schema}.object_rules SET last_scan=NULL`);
+      for (let i = 0; i < 4; i++) await f.automation.scanOne();
+    };
+    await f.change('open');
+    await f.automation.rule(f.access, f.model, { name: 'Stalled an hour', notify: { message: 'Route stalled for an hour' },
+      process: { type: 'RouteStateLog', to: 'stalled', dwellSeconds: 3600 }, enabled: true });
+    await f.automation.rule(f.access, f.model, { name: 'Route done', notify: {}, process: { type: 'RouteStateLog', to: 'done' }, enabled: true });
+    // A notification replaces the workflow or Action; it cannot come with one.
+    const both = { name: 'Both', notify: {}, workflow: f.workflow.id, process: { type: 'RouteStateLog', to: 'done' }, enabled: true };
+    await assert.rejects(f.automation.rule(f.access, f.model, both));
+    assert.match(JSON.stringify(saveRuleSchema.safeParse(both).error?.issues), /notification rule needs a process condition, without a workflow/);
+    // Two stalls: the first ends within the hour, the second lasts.
+    await f.change('stalled');
+    await f.change('open');
+    await f.change('stalled');
+    await scan();
+    await scan();
+    assert.deepEqual((await rows()).map(row => row.state), ['pending', 'pending'], 'one notification per transition, however often scanned');
+    assert.equal(await notifications.deliverOne(), false, 'nothing is due before the dwell passes');
+    await f.db.query(`UPDATE ${f.db.schema}.process_notifications SET available_at=available_at-interval '2 hours'`);
+    while (await notifications.deliverOne());
+    assert.deepEqual((await rows()).map(row => [row.state, row.reason]), [
+      ['dropped', 'The instance left the state before the dwell passed'], ['delivered', null]]);
+    let inbox = await notifications.list(f.access, {});
+    assert.deepEqual(inbox.items.map(item => [item.message, item.process.to, item.object.id]), [['Route stalled for an hour', 'stalled', f.source.id]]);
+    // A rule without a dwell notifies when the transition commits; the inbox shows the newest first.
+    await f.change('done');
+    await scan();
+    while (await notifications.deliverOne());
+    inbox = await notifications.list(f.access, {});
+    assert.deepEqual(inbox.items.map(item => item.process.to), ['done', 'stalled']);
+    await notifications.read(f.access, { id: inbox.items[0]!.id });
+    assert.deepEqual((await notifications.list(f.access, { unread: true })).items.map(item => item.process.to), ['stalled']);
+    const firstPage = await notifications.list(f.access, { limit: 1 });
+    assert.deepEqual((await notifications.list(f.access, { limit: 1, cursor: firstPage.cursor! })).items.map(item => item.process.to), ['stalled']);
+    await assert.rejects(notifications.read(await Access.load(f.db, { ...principal, owner: 'another-owner' }), { id: inbox.items[0]!.id }), /unavailable/);
+    // Notification rules start no workflow.
+    assert.equal((await f.runs()).length, 0);
   } finally { await f.close(); }
 });
 

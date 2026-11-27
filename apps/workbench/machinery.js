@@ -263,11 +263,12 @@ export async function renderMachinery(body, ui) {
           action.onchange = setDefaults;
           setDefaults();
           const editor = element('div');
-          const mode = select([...(actionNames.length ? [['action','Action']] : []),
-            ...(workflows.length ? [['workflow','Workflow']] : [])], actionNames.length ? 'action' : 'workflow');
-          if (!actionNames.length && !workflows.length) throw new Error('当前身份没有可绑定的操作或流程。');
+          const message = element('input', { placeholder: '可选，例如：路线停留超过一小时' });
+          const mode = select([['notify','通知我'], ...(actionNames.length ? [['action','Action']] : []),
+            ...(workflows.length ? [['workflow','Workflow']] : [])], 'notify');
           const showEffect = () => editor.replaceChildren(...(mode.value === 'action'
             ? [field('触发操作',action),field('参数绑定',parameters,'用 {"object":true} 引用当前实例，或用 {"property":"属性名"}、{"literal":值} 提供参数。')]
+            : mode.value === 'notify' ? [field('通知内容',message,'送到“我的流程通知”，你的 PA 也能读取。停留规则只在实例到期时仍处于该状态才通知。')]
             : [field('触发流程',workflow)]));
           mode.onchange=showEffect;
           showEffect();
@@ -277,7 +278,8 @@ export async function renderMachinery(body, ui) {
             field('执行方式', mode), editor, field('启用规则', enabled),
             button('保存规则', async () => {
               await service('save_rule', { name: name.value, enabled: enabled.checked,
-                ...(mode.value === 'action' ? {effect:{action:action.value,input:JSON.parse(parameters.value)}} : {workflow:workflow.value}),
+                ...(mode.value === 'action' ? {effect:{action:action.value,input:JSON.parse(parameters.value)}}
+                  : mode.value === 'notify' ? {notify:message.value ? {message:message.value} : {}} : {workflow:workflow.value}),
                 process: { type: input.type, to: trigger.value,
                   ...(dwellSeconds.value ? { dwellSeconds: Number(dwellSeconds.value) } : {}) } });
               document.querySelector('#editor').close();
@@ -398,7 +400,19 @@ export async function renderMachinery(body, ui) {
       if(!id)throw new Error('请输入原对象 ID。');
       await showObjectInterests(ui,process,{type:process.objectType,id});
     });
-    body.replaceChildren(element('h3',{},'我的后台跟进'), interests,
+    const inbox = element('div', { class: 'section' });
+    async function showNotifications(cursor) {
+      const page = await service('process_notifications', { ...(cursor ? { cursor } : {}) });
+      inbox.replaceChildren(page.items.length ? table(['时间', '对象', '进入状态', '内容', ''], page.items.map(item => [
+        localTime(item.deliveredAt), item.object.type + ' ' + item.object.id,
+        (item.process.from ? item.process.from + ' → ' : '') + item.process.to + (item.process.dwellSeconds ? '（停留 ' + duration(item.process.dwellSeconds * 1000) + '）' : ''),
+        item.message ?? '—',
+        item.readAt ? '已读' : button('标为已读', async () => { await service('read_process_notification', { id: item.id }); await showNotifications(cursor); }),
+      ])) : element('p', {}, '还没有流程通知。'),
+      page.cursor && button('更早的通知', () => showNotifications(page.cursor)));
+    }
+    await showNotifications();
+    body.replaceChildren(element('h3',{},'我的后台跟进'), interests, element('h3',{},'我的流程通知'), inbox,
       element('div',{class:'toolbar'},field('原对象流程',liveProcess),field('原对象 ID',originalId),inspectInterest),
       element('div', { class: 'toolbar' },
       field('流程', type), field('对象集', set), field('外部历史来源',externalSource), field('起始日期', from), field('结束日期', to),

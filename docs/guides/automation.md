@@ -76,6 +76,25 @@ Action 的对象写入和执行记录使用现有原子事务。Workflow 在 Act
 
 有停留时间的规则根据转换记录时间安排现有 Workflow 运行。首个 Action 提交前重新检查原规则、历史权限、当前状态和最新转换。离开再进入会生成新的一轮等待。工作流以业务条件控制正式 Action 的提交，过程条件只决定何时尝试启动。参考 [Palantir 对象集条件](https://www.palantir.com/docs/foundry/automate/condition-objects)。
 
+### 通知规则
+
+过程规则的反应可以是一条通知，而不是 Workflow 或 Action：
+
+```json
+{ "name": "Stalled an hour", "enabled": true, "notify": { "message": "Route stalled for an hour" },
+  "process": { "type": "RouteStateLog", "to": "stalled", "dwellSeconds": 3600 } }
+```
+
+- **排队：** 规则扫描到一个已提交的转换时，在同一事务里写入一条待送达的通知。去重键和 Workflow run 相同，即规则、修订和转换，所以一次转换只通知一次。
+- **到期：** 没有停留条件时，转换提交后即可送达。有停留条件时，在转换时间加上停留秒数之后才送达。
+- **送达：** Indexer 领取到期的通知，以规则所有者的身份重新检查，然后送达或作废：
+  - 所有者仍能读取实例时才送达；
+  - 有停留条件时，实例的最新转换必须仍是这一次，并且仍处于目标状态；否则作废，并记下原因（例如 `The instance left the state before the dwell passed`）。
+- **读取：** `process_notifications` 按送达时间从新到旧列出调用者已送达的通知，可只看未读，用游标分页。`read_process_notification` 标为已读。
+  - 两者都是普通的服务操作，所以工作台和用户自带的 PA 都通过它们读取。工作台的 Machinery 页面有“我的流程通知”。
+  - 也可以在流程图上直接配置这种规则：“配置状态规则”里的执行方式选“通知我”。
+- **限制：** 通知不调用 IM 或邮件等外部渠道；外发由用户的 PA 读取后自行完成，因此遵守 PA 侧的出口策略。
+
 ### 将转换交给关联对象的 Action
 
 过程规则的 `effect.related` 按已发布的 Link 名称，从发生转换的对象查询受影响对象。参数分别绑定原对象、正式 ProcessLog 和一个受影响对象。普通 `input` 中的属性绑定此时读取受影响对象；使用 `{ "property": "$revision" }` 可传递其当前修订。最多导航三步，每层最多 100 个不同对象。重复路径到达同一对象只创建一条运行。

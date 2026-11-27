@@ -1,4 +1,5 @@
 import { ObservationInterests } from '../../packages/runtime/observation-interests.js';
+import { ProcessNotifications } from '../../packages/runtime/process-notifications.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Database } from '../../packages/runtime/database.js';
 import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
@@ -20,6 +21,7 @@ const db = new Database(process.env.DATABASE_URL, process.env.EIGOS_PG_SCHEMA);
 await assertOwnerIsolation(db);
 const extensions = await loadExtensions(process.env.EIGOS_EXTENSION_MODULE);
 const metadata = new Metadata(db);
+const notifications = new ProcessNotifications(db, metadata);
 const capabilities = configuredCapabilities(db, connectionConfigSchema.parse(process.env), extensions);
 const indexing = new Indexing(db, metadata);
 const { effects } = capabilities;
@@ -40,6 +42,7 @@ async function deliverEffects() {
 const dispatch = () => dispatchAutomation({
   cleanup: () => scenarios.cleanup(),
   scans: [() => observations.scanOne(), () => automation.scanObjectRules(), () => automation.scanProcessRules(), () => subscriptions.scanOne(),
+    () => notifications.deliverOne(),
     () => scenarios.syncOne(metadata)],
   run: signal => automation.runOne(signal),
 }, controller.signal);
