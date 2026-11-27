@@ -6,23 +6,37 @@ import { z } from 'zod';
 import { InvalidInput, PermissionDenied, SourceReadFailure, digest } from '../core/identity.js';
 import { ontologyName } from '../ontology/schema.js';
 import { ComponentSourceSecrets } from './component-source-secrets.js';
+import { ComponentOAuthGrants, SourceOAuthReauthorization, SourceOAuthRejection } from './component-source-oauth.js';
+import type { Database } from './database.js';
 
 const method = z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const httpsUrl = z.url().transform(value => new URL(value)).refine(url =>
   url.protocol === 'https:' && !url.username && !url.password && !url.hash, 'An HTTPS URL without credentials or fragment is required');
 const secretName = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
+const oauthClient = {
+  tokenUrl: httpsUrl.refine(url => !url.search, 'The token URL must have no query'),
+  clientId: z.string().min(1).max(200),
+  clientSecret: secretName,
+};
+const oauthSchema = z.discriminatedUnion('grant', [
+  z.strictObject({ ...oauthClient, grant: z.literal('client_credentials'), scope: z.string().min(1).max(1000).optional() }),
+  z.strictObject({ ...oauthClient, grant: z.literal('refresh_token'), refreshTokenSecret: secretName }),
+]);
+type OAuth = z.infer<typeof oauthSchema>;
+const tokenResponse = z.object({
+  access_token: z.string().min(1).max(32768).regex(/^[^\r\n]+$/),
+  token_type: z.string().refine(value => value.toLowerCase() === 'bearer'),
+  expires_in: z.number().int().positive().max(86400).optional(),
+  refresh_token: z.string().min(1).max(64 * 1024).optional(),
+});
+const knownRejections = new Set(['invalid_request', 'invalid_client', 'unauthorized_client', 'unsupported_grant_type',
+  'invalid_scope', 'temporarily_unavailable', 'server_error']);
 const connectionSchema = z.strictObject({
   baseUrl: httpsUrl.refine(url => !url.search && url.pathname.endsWith('/'), 'The base must end with / and have no query'),
   methods: z.array(method).min(1).max(6),
   networks: z.array(z.string().min(3).max(90)).max(32).optional(),
   bearerSecret: secretName.optional(),
-  oauth: z.strictObject({
-    grant: z.literal('client_credentials'),
-    tokenUrl: httpsUrl.refine(url => !url.search, 'The token URL must have no query'),
-    clientId: z.string().min(1).max(200),
-    clientSecret: secretName,
-    scope: z.string().min(1).max(1000).optional(),
-  }).optional(),
+  oauth: oauthSchema.optional(),
 }).refine(value => !value.bearerSecret || !value.oauth, 'Configure one Source credential mechanism');
 export const componentHttpConnections = z.record(ontologyName, connectionSchema);
 type Method = z.infer<typeof method>;
@@ -76,11 +90,16 @@ function allowedAddress(address: string, family: number, networks?: BlockList) {
   return !restricted.check(address, type) && (family === 4 || globalV6.check(address, 'ipv6'));
 }
 
+class SourceRequestNotDispatched extends SourceReadFailure {
+  constructor() { super('Source connection could not be resolved'); }
+}
+
 async function httpsTransport(url: URL, options: RequestOptions): Promise<ReadResponse> {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const literal = isIP(hostname);
-  const addresses = literal ? [{ address: hostname, family: literal }] : await lookup(hostname, { all: true });
-  options.signal.throwIfAborted();
+  const addresses = literal ? [{ address: hostname, family: literal }]
+    : await lookup(hostname, { all: true }).catch(() => { throw new SourceRequestNotDispatched(); });
+  if (options.signal.aborted) throw new SourceRequestNotDispatched();
   const networks = options.networks && networkList(options.networks);
   if (!addresses.length || addresses.some(({ address, family }) => !allowedAddress(address, family, networks)))
     throw new PermissionDenied('Source resolved outside its egress network');
@@ -125,9 +144,14 @@ export class ComponentSourceEgress {
   private readonly tokens = new Map<string, Promise<TimedToken>>();
 
   constructor(configuration: unknown, private readonly transport: Transport = httpsTransport,
-    private readonly audit: (entry: EgressRecord) => void = entry => { console.info(JSON.stringify({ event: 'function_source_egress', ...entry })); }) {
+    private readonly audit: (entry: EgressRecord) => void = entry => { console.info(JSON.stringify({ event: 'function_source_egress', ...entry })); },
+    private readonly grants?: ComponentOAuthGrants) {
     this.connections = componentHttpConnections.parse(configuration);
-    for (const connection of Object.values(this.connections)) if (connection.networks) networkList(connection.networks);
+    for (const connection of Object.values(this.connections)) {
+      if (connection.networks) networkList(connection.networks);
+      if (connection.oauth?.grant === 'refresh_token' && !this.grants)
+        throw new Error('Configure encrypted Source OAuth grant storage');
+    }
   }
 
   binding(source: string) {
@@ -137,7 +161,7 @@ export class ComponentSourceEgress {
     return digest({ ...transport, baseUrl: connection.baseUrl.href, ...(oauth ? { oauth: { ...oauth, tokenUrl: oauth.tokenUrl.href } } : {}) });
   }
 
-  private async clientToken(source: string, oauth: NonNullable<Connection['oauth']>, context: OutboundContext,
+  private async clientToken(source: string, oauth: Extract<OAuth, { grant: 'client_credentials' }>, context: OutboundContext,
     networks: string[] | undefined): Promise<TimedToken> {
     const current = this.tokens.get(source);
     if (current) {
@@ -147,7 +171,7 @@ export class ComponentSourceEgress {
     // Deduplicate refreshes within a process. A canceled Function must not cancel another caller's pending token exchange.
     const replacement = this.tokens.get(source);
     if (replacement && replacement !== current) return replacement;
-    const refresh = this.exchangeClientToken(oauth, context, networks);
+    const refresh = context.secret(oauth.clientSecret).then(credential => this.exchangeToken(oauth, credential, networks));
     this.tokens.set(source, refresh);
     try {
       return await refresh;
@@ -157,22 +181,49 @@ export class ComponentSourceEgress {
     }
   }
 
-  private async exchangeClientToken(oauth: NonNullable<Connection['oauth']>, context: OutboundContext, networks?: string[]) {
-    const credential = await context.secret(oauth.clientSecret);
-    const body = new URLSearchParams({ grant_type: 'client_credentials' });
-    if (oauth.scope) body.set('scope', oauth.scope);
+  private async refreshToken(source: string, method: Method, oauth: Extract<OAuth, { grant: 'refresh_token' }>,
+    context: OutboundContext, networks: string[] | undefined, signal: AbortSignal) {
+    // Alias or egress policy changes may reuse the same provider grant. A new seed name creates a new grant.
+    const identity = digest({ endpoint: oauth.tokenUrl.href, client: oauth.clientId, secret: oauth.refreshTokenSecret });
+    return this.grants!.token(identity, () => context.secret(oauth.refreshTokenSecret), async refreshToken => {
+      let credential: string;
+      try {
+        await context.authorize(source, method);
+        signal.throwIfAborted();
+        credential = await context.secret(oauth.clientSecret);
+        signal.throwIfAborted();
+      } catch (error) { throw new SourceOAuthRejection(error); }
+      const result = await this.exchangeToken(oauth, credential, networks, refreshToken);
+      return { accessToken: result.value, validUntil: result.validUntil, refreshToken: result.refreshToken ?? refreshToken };
+    }, signal);
+  }
+
+  private async exchangeToken(oauth: OAuth, credential: string, networks?: string[], refreshToken?: string) {
+    const body = new URLSearchParams({ grant_type: oauth.grant });
+    if (oauth.grant === 'client_credentials' && oauth.scope) body.set('scope', oauth.scope);
+    if (refreshToken !== undefined) body.set('refresh_token', refreshToken);
     const encode = (value: string) => new URLSearchParams({ v: value }).toString().slice(2);
     const header = Buffer.from(encode(oauth.clientId) + ':' + encode(credential)).toString('base64');
     const reply = await this.transport(oauth.tokenUrl, {
       method: 'POST', body: body.toString(), networks, signal: AbortSignal.timeout(10000),
       headers: { authorization: 'Basic ' + header, accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    }).catch((error: unknown) => {
+      if (oauth.grant === 'refresh_token' && (error instanceof PermissionDenied || error instanceof SourceRequestNotDispatched))
+        throw new SourceOAuthRejection(error);
+      throw error;
     });
-    if (reply.status < 200 || reply.status >= 300) throw new SourceReadFailure('Source OAuth token exchange failed');
-    const parsed = z.object({ access_token: z.string().min(1).max(32768).regex(/^[^\r\n]+$/),
-      token_type: z.string().refine(value => value.toLowerCase() === 'bearer'),
-      expires_in: z.number().int().positive().max(86400).optional() }).safeParse(JSON.parse(reply.body));
+    let raw: unknown;
+    try { raw = JSON.parse(reply.body); } catch { throw new SourceReadFailure('Source OAuth token response is invalid'); }
+    if (reply.status < 200 || reply.status >= 300) {
+      const error = z.object({ error: z.string() }).safeParse(raw);
+      if (reply.status >= 400 && reply.status < 500 && error.success && knownRejections.has(error.data.error))
+        throw new SourceOAuthRejection();
+      throw new SourceReadFailure('Source OAuth token exchange failed');
+    }
+    const parsed = tokenResponse.safeParse(raw);
     if (!parsed.success) throw new SourceReadFailure('Source OAuth token is invalid');
-    return { value: parsed.data.access_token, validUntil: Date.now() + Math.max(0, (parsed.data.expires_in ?? 0) - 5) * 1000 };
+    return { value: parsed.data.access_token, validUntil: Date.now() + Math.max(0, (parsed.data.expires_in ?? 0) - 5) * 1000,
+      refreshToken: parsed.data.refresh_token };
   }
 
   async send(source: string, expectedBinding: string, raw: unknown, context: OutboundContext): Promise<ReadResponse> {
@@ -190,8 +241,14 @@ export class ComponentSourceEgress {
       const headers: Record<string, string> = { accept: 'application/json, text/plain' };
       if (body !== undefined) headers['content-type'] = contentType;
       const signal = AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]);
-      const credential = connection.oauth ? (await this.clientToken(source, connection.oauth, context, connection.networks)).value
-        : connection.bearerSecret ? await context.secret(connection.bearerSecret) : undefined;
+      const oauth = connection.oauth;
+      let credential: string | undefined;
+      if (oauth) {
+        credential = oauth.grant === 'refresh_token'
+          ? await this.refreshToken(source, method, oauth, context, connection.networks, signal)
+          : (await this.clientToken(source, oauth, context, connection.networks)).value;
+        await context.authorize(source, method);
+      } else if (connection.bearerSecret) credential = await context.secret(connection.bearerSecret);
       if ((connection.bearerSecret || connection.oauth) && (!credential || /[\r\n]/.test(credential)))
         throw new PermissionDenied('Source credential is unavailable');
       if (credential) headers.authorization = 'Bearer ' + credential;
@@ -206,7 +263,7 @@ export class ComponentSourceEgress {
       const denied = error instanceof PermissionDenied || error instanceof InvalidInput;
       this.audit({ source, outcome: denied ? 'denied' : 'failed' });
       if (context.signal.aborted) throw context.signal.reason;
-      if (denied) throw error;
+      if (denied || error instanceof SourceOAuthReauthorization) throw error;
       throw new SourceReadFailure('Source request failed');
     }
   }
@@ -217,13 +274,15 @@ export type ConfiguredComponentSources = {
   secrets?: Pick<ComponentSourceSecrets, 'get'>;
 };
 
-export function configuredComponentSources(env = process.env): ConfiguredComponentSources | undefined {
+export function configuredComponentSources(db: Database, env = process.env): ConfiguredComponentSources | undefined {
   const file = env.EIGOS_COMPONENT_SOURCES_FILE;
   if (!file) return undefined;
   const bundle = env.EIGOS_COMPONENT_SOURCE_SECRETS_FILE, key = env.EIGOS_COMPONENT_SOURCE_SECRETS_KEY_FILE;
   if (Boolean(bundle) !== Boolean(key)) throw new Error('Configure both component Source secrets files');
+  const secrets = bundle && key ? new ComponentSourceSecrets(bundle, key) : undefined;
   return {
-    egress: new ComponentSourceEgress(JSON.parse(readFileSync(file, 'utf8'))),
-    ...(bundle && key ? { secrets: new ComponentSourceSecrets(bundle, key) } : {}),
+    egress: new ComponentSourceEgress(JSON.parse(readFileSync(file, 'utf8')), undefined, undefined,
+      secrets && new ComponentOAuthGrants(db, secrets)),
+    ...(secrets ? { secrets } : {}),
   };
 }

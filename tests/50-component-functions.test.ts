@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { z } from 'zod';
 import { createApp } from '../apps/gateway/app.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
 import { Worker } from '../apps/worker/worker.js';
 import { readConfig } from '../packages/core/config.js';
 import { Conflict, FunctionFailed, PermissionDenied, ResourceExhausted, ServiceUnavailable } from '../packages/core/identity.js';
@@ -12,6 +15,9 @@ import { Access, businessGrants, setGrants } from '../packages/runtime/access.js
 import { OntologyAgent } from '../packages/runtime/agent.js';
 import { ComponentFunctions, type ComponentImplementation } from '../packages/runtime/component-functions.js';
 import { FunctionHostClient } from '../packages/runtime/function-host.js';
+import { ComponentSourceEgress } from '../packages/runtime/component-source-egress.js';
+import { ComponentOAuthGrants } from '../packages/runtime/component-source-oauth.js';
+import { ComponentSourceSecrets, sealSourceSecrets } from '../packages/runtime/component-source-secrets.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { FixtureAgent } from './agent-driver.js';
@@ -286,7 +292,6 @@ test('an Action runs a component edit Function: its reads see its edits, and the
 });
 
 test('a component reads through its declared Source with caller permission and receives no credential', { skip }, async () => {
-  const { ComponentSourceEgress } = await import('../packages/runtime/component-source-egress.js');
   const requests: { path: string; header?: string }[] = [];
   const secret = 'synthetic-inventory-token';
   const egress = new ComponentSourceEgress({
@@ -323,4 +328,36 @@ test('a component reads through its declared Source with caller permission and r
     assert.deepEqual(requests, [{ path: '/v1/items', header: 'Bearer ' + secret }]);
     assert(!JSON.stringify(result).includes(secret));
   } finally { await f.close(); }
+});
+
+test('a native component receives a stable error for a Source grant that must be renewed', { skip }, async () => {
+  const f = await fixture(), directory = await mkdtemp(join(tmpdir(), 'eigos-component-refresh-'));
+  try {
+    const key = join(directory, 'key'), bundle = join(directory, 'credentials'), encryptionKey = randomBytes(32);
+    await writeFile(key, encryptionKey, { mode: 0o600 });
+    await writeFile(bundle, JSON.stringify(sealSourceSecrets({ client: 'synthetic-client', seed: 'synthetic-refresh' }, encryptionKey)), { mode: 0o600 });
+    encryptionKey.fill(0);
+    const secrets = new ComponentSourceSecrets(bundle, key);
+    let exchanges = 0;
+    const egress = new ComponentSourceEgress({ Inventory: {
+      baseUrl: 'https://inventory.example.com/v1/', methods: ['GET'], oauth: { grant: 'refresh_token',
+        tokenUrl: 'https://tokens.example.com/token', clientId: 'fixture', clientSecret: 'client', refreshTokenSecret: 'seed' },
+    } }, async url => {
+      assert.equal(url.hostname, 'tokens.example.com');
+      exchanges++;
+      return { status: 400, contentType: 'application/json', body: '{"error":"invalid_grant","error_description":"synthetic-refresh"}' };
+    }, () => {}, new ComponentOAuthGrants(f.db, secrets));
+    const capabilities = createCapabilities(f.db, f.source, { componentSources: { egress, secrets } });
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const document = structuredClone(f.model.document);
+    const functionName = 'RefreshInventoryFixture';
+    document.functionTypes.push(echoFunction(sha256, { apiName: functionName, source: 'Inventory', returns: { type: 'object' } }));
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const call = async () => capabilities.functions.invoke(model, functionName, { ontology: { op: 'outgoing', args: [{ path: '/v1/items' }] } },
+      { principal, objects: new Objects(f.db, model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(15_000) });
+    for (let index = 0; index < 2; index++)
+      await assert.rejects(call(), failed('source-reauthorization-required', /^Source OAuth authorization must be renewed$/));
+    assert.equal(exchanges, 1);
+  } finally { try { await f.close(); } finally { await rm(directory, { recursive: true }); } }
 });

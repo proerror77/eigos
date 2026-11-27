@@ -20,7 +20,7 @@ export function assembleRuntime(
     if (registered.has(name)) throw new Error('Source projection is already registered: ' + name);
     registered.set(name, projection);
   }
-  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources()), new ProviderBudgets(db));
+  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources(db)), new ProviderBudgets(db));
   const sources = new Sources(db, functions, registered);
   const effects = new Effects(db, extensions.effects ?? new Map());
   const actions = new Actions(db, functions, effects, committedEffects);
