@@ -131,15 +131,16 @@ export class Actions {
   apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
     const run = (client?: Sql, prior?: PriorEdits) => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation, client, prior);
     return timeOperation('action_apply', async () => {
-      // Guarded tasks and evaluations keep their own transaction and cancellation boundaries.
+      // Staged evaluations, Functions, multi-object rules and effects keep their original transaction boundaries.
       const action = model.actions.get(actionName);
       const rule = action?.rules?.length === 1 ? action.rules[0] : undefined;
-      if (!action || rule?.op !== 'editObject' || model.scenario || model.evaluation || beforeCommit || execution ||
+      if (!action || rule?.op !== 'editObject' || model.scenario || model.evaluation ||
           scenarioEvaluation || capturingDecisionReads() || action.function || action.effects?.length || action.submissionCriteria.length) return run();
       const target = objectRefSchema.safeParse(evaluate(rule.object, raw));
       if (!target.success) return run();
       const ref = target.data, key = this.db.lockKey('object', model.projection, access.principal.owner, ref.type, ref.id);
-      const edit = { run, requestId, revision: Number(evaluate(rule.expectedRevision, raw)), fields: Object.keys(rule.properties) };
+      const verify = async (client: Sql) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); };
+      const edit = { run, verify, requestId, signal, revision: Number(evaluate(rule.expectedRevision, raw)), fields: Object.keys(rule.properties) };
       return this.hotEdits.submit(key, edit, items => this.db.objectScopedTransaction(async client => {
         const ids = [...new Set(items.map(item => item.requestId))].sort();
         const owner = access.principal.owner;
@@ -153,6 +154,7 @@ export class Actions {
         const prior: PriorEdits = new Map(saved.rows.map(row => [row.request_id,row]));
         const results = [];
         for (const item of items) results.push(await item.run(client,prior));
+        for (const item of items) await item.verify(client);
         return results;
       }, actionName));
     }, actionName);

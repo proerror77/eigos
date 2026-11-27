@@ -6,11 +6,13 @@ import type { Sql } from './database.js';
 export type PriorEdits = Map<string, { digest: string; result: ObjectRef }>;
 export type HotEdit = {
   requestId: string;
+  signal: AbortSignal;
   fields: string[];
   revision: number;
+  verify(client: Sql): Promise<void>;
   run(client?: Sql, prior?: PriorEdits): Promise<ObjectRef>;
 };
-type Pending = HotEdit & { resolve(value: ObjectRef): void; reject(error: unknown): void };
+type Pending = HotEdit & { resolve(value: ObjectRef): void; reject(error: unknown): void; begin(): void };
 type Batch = (items: readonly HotEdit[]) => Promise<ObjectRef[]>;
 
 /** One in-flight cold edit. Concurrent edits of its object queue up for one bounded commit. */
@@ -21,8 +23,18 @@ export class HotEdits {
     const current = this.lanes.get(key);
     if (current) {
       const context = AsyncLocalStorage.snapshot();
-      return new Promise((resolve, reject) => current.push({ ...edit, resolve, reject,
-        run: (client, prior) => context(edit.run, client, prior) }));
+      return new Promise((resolve, reject) => {
+        edit.signal.throwIfAborted();
+        const abort = () => {
+          const index = current.indexOf(item);
+          if (index >= 0) current.splice(index,1);
+          reject(edit.signal.reason);
+        };
+        const item: Pending = { ...edit, resolve, reject, verify: client => context(edit.verify, client), run: (client, prior) => context(edit.run, client, prior),
+          begin: () => edit.signal.removeEventListener('abort',abort) };
+        current.push(item);
+        edit.signal.addEventListener('abort',abort,{once:true});
+      });
     }
     const lane: Pending[] = [];
     this.lanes.set(key, lane);
@@ -38,6 +50,7 @@ export class HotEdits {
         group.push(lane.shift()!);
         for (const field of next.fields) fields.add(field);
       }
+      for (const item of group) item.begin();
       if (group.length > 1) {
         try {
           const results = await batch(group);
