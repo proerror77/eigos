@@ -498,7 +498,7 @@ test('a published component streams authorized model chunks to the PA before com
     const encoder=new TextEncoder();
     const part=(value:unknown)=>encoder.encode('data: '+JSON.stringify(value)+'\r\n\r\n');
     return new Response(new ReadableStream<Uint8Array>({async start(controller) {
-      controller.enqueue(part({choices:[{delta:{content:'first'}}]}));
+      controller.enqueue(part({choices:[{delta:{content:'first'}}],usage:{prompt_tokens:7,completion_tokens:1}}));
       await allowSecond;
       controller.enqueue(part({choices:[{delta:{content:'second'}}]}));
       controller.enqueue(part({choices:[],usage:{prompt_tokens:7,completion_tokens:2}}));
@@ -548,5 +548,22 @@ test('a published component streams authorized model chunks to the PA before com
     const otherInput={ontology:{op:'generate',args:['Undeclared',[{role:'user',content:'synthetic input'}]]}};
     await assert.rejects(client.evaluateStream('ModelWriter',otherInput).next());
     assert.equal(calls.length,2);
+    await setModelClearance(f.db,{owner:principal.owner,provider:'Synthetic',model:'fixture-v1',clearance:{sensitivity:'INTERNAL',compartments:[]}});
+    const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client');
+    const pa=new Client({name:'function-stream-test',version:'1'});
+    const received:string[]=[];
+    allowSecond = new Promise<void>(resolve=>{releaseSecond=resolve;});
+    try {
+      await pa.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`),
+        {requestInit:{headers:{Authorization:'Bearer '+token}}}));
+      const reply=await pa.callTool({name:'stream_ontology_function',arguments:{function:'ModelWriter',input}},
+        {signal:AbortSignal.timeout(20000),onprogress:({message})=>{
+          if (message) received.push(message);
+          if (message==='first') releaseSecond();
+        }});
+      assert(!reply.isError,JSON.stringify(reply.content));
+      assert.deepEqual(received,['first','second']);
+      assert.match(JSON.stringify(reply.content),/firstsecond/);
+    } finally {releaseSecond();await pa.close();}
   } finally {releaseSecond();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
 });

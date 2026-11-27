@@ -167,7 +167,9 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
     res.json(await service.invoke(principal(req),input));
   });
   const modelFor = async (p: Principal, taskId?: string, scenarioId?: string, access?: Access, ontology = ontologyId) => {
-    const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active(ontology));
+    const task = taskId ? await tasks.get(p, taskId) : undefined;
+    if (task && access) access.observeClassification(task.input.classification);
+    const model = task ? await metadata.get(task.release) : await metadata.active(ontology);
     return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
   };
   const confirmReadAccess = async (access: Access) => {
@@ -186,7 +188,7 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
     // Existing PA clients carry task scopes. These two reads still use the published Function,
     // source, object, and row permissions of the authenticated owner.
     if (!liveTravelReminder || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
-    const model = await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access = await Access.load(db, p);
+    const access = await Access.load(db, p), model = await modelFor(p, input.taskId, input.scenarioId,access,input.ontology);
     access.function(model,input.function);
     if (stream && !model.functions.get(input.function)?.implementation?.stream) throw new InvalidInput('This Function has no published stream');
     const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access),
@@ -341,7 +343,8 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
       return query || names ? discoverOntology(model, document, { query, names }) : ontologyIndex(model, document);
     };
     const serve = async () => {
-      const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      const streams = req.body?.method === 'tools/call' && req.body?.params?.name === 'stream_ontology_function';
+      const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: !streams });
       await server.connect(transport);
       res.on('close', () => { void server.close(); });
       await transport.handleRequest(req, res, req.body);

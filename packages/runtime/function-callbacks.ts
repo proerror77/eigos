@@ -128,7 +128,9 @@ export class FunctionCallbacks {
       try {
         const run = Object.hasOwn(operations, operation) ? operations[operation] : undefined;
         if (!run) throw new InvalidInput(`Unknown Ontology operation ${operation}`);
-        if (++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
+        const streamOperation = session.models && (operation === 'generate' || operation === 'modelNext' || operation === 'emit');
+        // Model transport is bounded by its stream byte limit and deadline; individual text segments are not Ontology reads.
+        if (!streamOperation && ++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
         context.signal.throwIfAborted();
         const start = performance.now();
         const result = await run(session, input).finally(() => {
@@ -137,7 +139,7 @@ export class FunctionCallbacks {
           timing.count++;
           timing.durationMs += performance.now() - start;
         });
-        session.objects += counted(result);
+        if (!streamOperation) session.objects += counted(result);
         if (session.objects > limits.objects) throw new LimitReached(`A call may read at most ${limits.objects} objects`);
         return { result: result ?? null };
       } catch (error) {

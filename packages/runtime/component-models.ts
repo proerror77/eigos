@@ -57,7 +57,7 @@ export class ComponentModels {
         signal.throwIfAborted();
         throw new ServiceUnavailable('The configured model endpoint could not be reached');
       });
-    let recorded=false;
+    let reported: z.output<typeof usage> | undefined;
     for await (const data of sseData(response,4<<20)) {
       if (data==='[DONE]') return;
       let raw: unknown;
@@ -65,13 +65,15 @@ export class ComponentModels {
       const parsed = event.safeParse(raw);
       if (!parsed.success) throw new ServiceUnavailable('The model returned an invalid event');
       const frame=parsed.data;
-      if (frame.usage && !recorded) {
-        recorded=true;
+      if (frame.usage) {
+        if (reported && (frame.usage.prompt_tokens < reported.prompt_tokens || frame.usage.completion_tokens < reported.completion_tokens))
+          throw new ServiceUnavailable('The model returned inconsistent usage');
         if (measurement) {
-          measurement.reportedCalls++;
-          measurement.inputTokens+=frame.usage.prompt_tokens;
-          measurement.outputTokens+=frame.usage.completion_tokens;
+          if (!reported) measurement.reportedCalls++;
+          measurement.inputTokens+=frame.usage.prompt_tokens-(reported?.prompt_tokens ?? 0);
+          measurement.outputTokens+=frame.usage.completion_tokens-(reported?.completion_tokens ?? 0);
         }
+        reported=frame.usage;
       }
       const chunk=frame.choices[0]?.delta?.content;
       if (chunk) { await authorize(); yield chunk; }

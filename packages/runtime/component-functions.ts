@@ -134,6 +134,7 @@ export class ComponentFunctions {
       },
       emit: async (text: string) => {
         if (!implementation.stream) throw new PermissionDenied('Streaming is not declared');
+        if (!text) return;
         emitted += Buffer.byteLength(text);
         if (emitted > (limits.outputBytes ?? 1 << 20)) throw new InvalidInput('Stream exceeded its output byte limit');
         bounded.throwIfAborted();
