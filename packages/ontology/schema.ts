@@ -122,8 +122,8 @@ export const scenarioReviewRule = z.strictObject({
   scenario: value,
   expectedRevision: value,
   review: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('submit'), reviewers: value }),
-    z.strictObject({ kind: z.literal('approve'), snapshot: value, decision: value.optional() }),
+    z.strictObject({ kind: z.literal('submit'), reviewers: value, authorizeMerge: value.optional() }),
+    z.strictObject({ kind: z.literal('approve'), snapshot: value, decision: value.optional(), applyAuthorizedMerge: z.literal(true).optional() }),
     z.strictObject({ kind: z.literal('reject'), snapshot: value }),
   ]),
 });

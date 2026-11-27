@@ -31,6 +31,7 @@ export const scenarioObjectType: OntologyDocument['objectTypes'][number] = {
 
 export const scenarioReviewActions = {
   submit: 'SubmitScenarioReview', approve: 'ApproveScenarioReview', reject: 'RejectScenarioReview',
+  submitForMerge: 'SubmitScenarioReviewForMerge', approveAndMerge: 'ApproveAndMergeScenarioReview',
 } as const;
 type ReviewKind = keyof typeof scenarioReviewActions;
 type ActionDefinition = OntologyDocument['actionTypes'][number];
@@ -59,8 +60,16 @@ export const scenarioReviewDefinitions = [
     ['snapshot'], { kind: 'approve', snapshot: input('snapshot'), decision: input('decision') }),
   action('reject', 'Reject the exact Scenario revision and reviewed snapshot', { snapshot },
     ['snapshot'], { kind: 'reject', snapshot: input('snapshot') }),
+  action('submitForMerge', 'Submit a Scenario and authorize one exact live merge Action after review', {
+    reviewers: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 200 }, minItems: 1, maxItems: 100 },
+    merge: { type: 'object', properties: { action: { type: 'string' }, input: { type: 'object' } },
+      required: ['action','input'], additionalProperties: false },
+  }, ['reviewers','merge'], { kind: 'submit', reviewers: input('reviewers'), authorizeMerge: input('merge') }),
+  action('approveAndMerge', 'Approve an inspected snapshot and commit its owner-authorized merge atomically', { snapshot, decision: approvalDecision },
+    ['snapshot'], { kind: 'approve', snapshot: input('snapshot'), decision: input('decision'), applyAuthorizedMerge: true }),
 ];
-const reviewContracts = new Map(scenarioReviewDefinitions.map(definition => [definition.apiName, digest(definition)]));
+const reviewContracts = new Map(scenarioReviewDefinitions.filter(definition =>
+  [scenarioReviewActions.submit,scenarioReviewActions.approve,scenarioReviewActions.reject].some(name=>name===definition.apiName)).map(definition => [definition.apiName, digest(definition)]));
 
 /** Legacy review authority applies only to these immutable platform actions and their dynamic Scenario checks. */
 export function isScenarioReviewAction(definition: ActionDefinition | undefined) {

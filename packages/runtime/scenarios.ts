@@ -87,6 +87,7 @@ export async function initializeScenarioLifecycle(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.scenario_sessions(
     id uuid PRIMARY KEY,owner text NOT NULL,expires_at timestamptz NOT NULL,closed_at timestamptz);
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'persisted';
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS review_merge_authorization jsonb;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT '';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS readers jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES ${db.schema}.scenario_sessions(id);
@@ -199,7 +200,7 @@ export class Scenarios {
       await lockEdits(this.db, model, owner, client);
       const view = await this.view(access, model, id, client);
       await checkScenario(this.db, view, owner, client, true);
-      const result = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET reviewers=$4,revision=revision+1
+      const result = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET reviewers=$4,review_merge_authorization=NULL,revision=revision+1
         WHERE id=$1 AND owner=$2 AND revision=$3 AND kind='persisted' AND workflow_run_id IS NULL RETURNING revision`, [id, owner, revision, JSON.stringify(allowed)], client);
       if (!result.rowCount) throw new Conflict('Scenario revision changed or proposal is temporary');
       await syncScenarioMetadata(this.db, model, id, client);

@@ -11,7 +11,7 @@ const reviewNames = Object.values(scenarioReviewActions) as string[];
 const reviewer = { ...principal, owner: 'synthetic-reviewer' };
 const stranger = { ...principal, owner: 'synthetic-uninvited' };
 
-test('published Scenario review Actions retain the legacy receipt and govern rejection, resubmission and merge', async () => {
+function reviewedRouteDefinition() {
   const definition = structuredClone(document);
   definition.actionTypes.push({
     apiName: 'MergeReviewedRoute', description: 'Apply the reviewed changes to Route objects',
@@ -22,6 +22,11 @@ test('published Scenario review Actions retain the legacy receipt and govern rej
     rules: [{ op: 'applyScenario', scenario: { parameter: 'id' }, expectedRevision: { parameter: 'revision' }, objectTypes: ['Route'], linkTypes: [] }],
     result: { type: 'Route', id: { parameter: 'route' } },
   });
+  return definition;
+}
+
+test('published Scenario review Actions retain the legacy receipt and govern rejection, resubmission and merge', async () => {
+  const definition = reviewedRouteDefinition();
   const f = await fixture(undefined, undefined, undefined, definition);
   try {
     const { db, model, capabilities } = f;
@@ -106,5 +111,47 @@ test('reciprocal reviewer approvals acquire owner locks consistently', async () 
       { id: review.id, revision: review.revision, snapshot: review.snapshot }, 'reciprocal-approve')));
     const { rows: [count] } = await db.query(`SELECT count(*)::int AS n FROM ${db.schema}.scenario_approvals WHERE decision='approved'`);
     assert.equal(count!.n, 2);
+  } finally { await f.close(); }
+});
+
+test('approval and the exact owner-authorized merge commit or roll back together', async () => {
+  const f = await fixture(undefined,undefined,undefined,reviewedRouteDefinition());
+  try {
+    const { db,model,capabilities } = f, actions = capabilities.actions;
+    const grants = businessGrants(model);
+    await setGrants(db,reviewer.owner,grants);
+    const owner = () => Access.load(db,principal), approver = () => Access.load(db,reviewer);
+    const scenarios = new Scenarios(db);
+    const draft = await scenarios.create(await owner(),model,{requestId:'atomic-approval',name:'Synthetic route'});
+    const ref = {type:'Route',id:'atomic-review-route'};
+    const staged = new Objects(db,await scenarios.view(await owner(),model,draft.id),await owner());
+    await staged.create(ref,{id:ref.id,name:'Reviewed route'});
+    const initial = (await scenarios.inspect(await owner(),model,draft.id)).revision;
+    await actions.apply(await owner(),model,scenarioReviewActions.submit,{id:draft.id,revision:initial,reviewers:[reviewer.owner]},'ordinary-invite');
+    const ordinary = await scenarios.inspectReview(await approver(),model,draft.id);
+    const review = (item: typeof ordinary) => ({id:draft.id,revision:item.revision,snapshot:item.snapshot});
+    await assert.rejects(actions.apply(await approver(),model,scenarioReviewActions.approveAndMerge,review(ordinary),'unbound-approval'),/No owner-authorized merge/);
+    const state = async () => (await scenarios.inspect(await owner(),model,draft.id)).state;
+    const merge = {action:'MergeReviewedRoute',input:{id:draft.id,revision:ordinary.revision+1,route:ref.id}};
+    const submit = {id:draft.id,revision:ordinary.revision,reviewers:[reviewer.owner],merge};
+    await assert.rejects(actions.apply(await owner(),model,scenarioReviewActions.submitForMerge,
+      {...submit,merge:{...merge,input:{...merge.input,revision:0}}},'wrong-authorization'),/revision|greater than/i);
+    await actions.apply(await owner(),model,scenarioReviewActions.submitForMerge,submit,'bound-invite');
+    const reviewed = review(await scenarios.inspectReview(await approver(),model,draft.id));
+    const live = new Objects(db,model,await owner());
+    const withoutMerge = grants.filter(g=>!(g.resource==='Eigos/action/MergeReviewedRoute' && g.permission==='apply_action'));
+    await setGrants(db,principal.owner,withoutMerge);
+    const approve = async () => actions.apply(await approver(),model,scenarioReviewActions.approveAndMerge,reviewed,'atomic-approved');
+    await assert.rejects(approve(),/Permission|unavailable/);
+    assert.equal(await state(),'open');
+    await assert.rejects(live.read(ref),/unavailable/);
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM ${db.schema}.scenario_approvals WHERE scenario_id=$1`,[draft.id])).rows[0]!.n,0);
+    await setGrants(db,principal.owner,grants);
+    assert.deepEqual(await approve(),{type:'OntologyScenario',id:draft.id});
+    assert.deepEqual(await approve(),{type:'OntologyScenario',id:draft.id});
+    assert.equal((await live.read(ref)).properties.name,'Reviewed route');
+    const { rows } = await db.query(`SELECT owner,action FROM ${db.schema}.actions WHERE action=ANY($1::text[]) ORDER BY action`,
+      [[scenarioReviewActions.approveAndMerge,'MergeReviewedRoute']]);
+    assert.deepEqual(rows,[{owner:reviewer.owner,action:scenarioReviewActions.approveAndMerge},{owner:principal.owner,action:'MergeReviewedRoute'}]);
   } finally { await f.close(); }
 });

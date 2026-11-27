@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import { requireMachineryTransition } from './machinery-execution.js';
-import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
+import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, requireScope, type ExecutionActor, type Principal } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
 import { validator } from '../ontology/model.js';
 import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
@@ -25,6 +26,7 @@ import { appendTrace } from './execution-trace.js';
 import { capturingDecisionReads } from './decision-evidence.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
+const mergeReceipt = (model: PublishedOntology, id: string, revision: number) => 'scenario-approval-merge:' + digest([model.release,id,revision]);
 const reviewTarget = (rule: ScenarioReviewRule, input: Record<string, unknown>) => ({
   id: String(evaluate(rule.scenario, input)), revision: Number(evaluate(rule.expectedRevision, input)),
 });
@@ -82,6 +84,41 @@ export class Actions {
     if ((await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`,
       [model.document.id], client)).rows[0]?.release !== model.release)
       throw new Conflict('Historical and prepared Actions are read-only');
+  }
+  /** Pin a single live merge to the owner, publication and exact submitted revision. */
+  private async authorizeReviewMerge(access: Access, model: PublishedOntology, id: string, revision: number, raw: unknown, client: Sql) {
+    requireScope(access.principal,'ontology:write');
+    const call = z.strictObject({ action: z.string(), input: z.record(z.string(),z.unknown()) }).parse(raw);
+    const action = model.action(call.action), rule = action.rules?.[0];
+    if (action.function || action.effects?.length || action.rules?.length !== 1 || rule?.op !== 'applyScenario')
+      throw new InvalidInput('Choose a published merge Action with one applyScenario rule and no external effects');
+    access.action(model,call.action);
+    const input = validator(action.parameters).parse(call.input) as Record<string,unknown>;
+    if (evaluate(rule.scenario,input) !== id || evaluate(rule.expectedRevision,input) !== revision)
+      throw new Conflict('The authorized merge must name the submitted Scenario and its new revision');
+    const grant = { action:call.action, input, revision, principal:access.principal };
+    const saved = await this.db.query(`UPDATE ${this.db.schema}.scenarios SET review_merge_authorization=$4
+      WHERE id=$1 AND owner=$2 AND revision=$3 AND release=$5 AND state='open' AND kind='persisted' AND workflow_run_id IS NULL`,
+      [id,access.principal.owner,revision,grant,model.release],client);
+    if (!saved.rowCount) throw new Conflict('Scenario changed before authorizing the merge');
+  }
+
+  private async applyAuthorizedReviewMerge(reviewer: Access, model: PublishedOntology, id: string, revision: number, client: Sql, signal: AbortSignal) {
+    const result = await this.db.query<{owner:string;review_merge_authorization:{ action:string;input:Record<string,unknown>;revision:number;principal:Principal } | null}>(
+      `SELECT owner,review_merge_authorization FROM ${this.db.schema}.scenarios WHERE id=$1 AND release=$2 AND revision=$3
+        AND state='open' AND kind='persisted' AND workflow_run_id IS NULL AND reviewers ? $4 FOR UPDATE`,
+      [id,model.release,revision,reviewer.principal.owner],client);
+    const row = result.rows[0], grant = row?.review_merge_authorization;
+    if (!row || !grant || grant.revision !== revision || grant.principal.owner !== row.owner)
+      throw new Conflict('No owner-authorized merge for this Scenario revision');
+    const requestId = mergeReceipt(model,id,revision);
+    await this.db.withOwner(row.owner, () => this.db.withTransactionOwner(client,row.owner,async () => {
+      const owner = await Access.load(this.db,grant.principal,client);
+      requireScope(owner.principal,'ontology:write');
+      await this.execute(owner,model,grant.action,grant.input,requestId,undefined,undefined,signal,
+        {kind:'client',id:reviewer.principal.clientId ?? reviewer.principal.owner},undefined,client);
+      await this.db.query(`UPDATE ${this.db.schema}.scenarios SET review_merge_authorization=NULL WHERE id=$1 AND owner=$2`,[id,row.owner],client);
+    }));
   }
   private lockRequest(client: Sql, model: PublishedOntology, owner: string, requestId: string) {
     return this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -206,7 +243,10 @@ export class Actions {
         const owners = new Set([principal.owner]);
         for (const rule of reviews) {
           const { id, revision } = reviewTarget(rule, input);
-          owners.add(await scenarios.reviewActionOwner(access, model, id, revision, rule.review.kind, client));
+          const owner = await scenarios.reviewActionOwner(access, model, id, revision, rule.review.kind, client);
+          owners.add(owner);
+          if (rule.review.kind === 'approve' && rule.review.applyAuthorizedMerge)
+            await this.lockRequest(client,model,owner,mergeReceipt(model,id,revision));
         }
         for (const owner of [...owners].sort()) await lockEdits(this.db, model, owner, client);
       }
@@ -237,13 +277,15 @@ export class Actions {
         else if (rule.op === 'reviewScenario') {
           const { id, revision } = reviewTarget(rule, input), review = rule.review;
           if (review.kind === 'submit') {
-            await scenarios.inviteReviewers(access, model, id, revision, evaluate(review.reviewers, input) as string[], client);
+            const submitted = await scenarios.inviteReviewers(access, model, id, revision, evaluate(review.reviewers, input) as string[], client);
+            if (review.authorizeMerge) await this.authorizeReviewMerge(access, model, id, submitted.revision, evaluate(review.authorizeMerge,input), client);
           } else {
             const snapshot = String(evaluate(review.snapshot, input));
             if (review.kind === 'approve') {
               const decision = review.decision && evaluate(review.decision, input);
               await scenarios.approveReview(access, model, id, revision, snapshot,
                 scenarioDecisionApprovalSchema.optional().parse(decision), client);
+              if (review.applyAuthorizedMerge) await this.applyAuthorizedReviewMerge(access,model,id,revision,client,signal);
             } else await scenarios.rejectReview(access, model, id, revision, snapshot, client);
           }
         }
