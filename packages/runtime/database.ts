@@ -16,6 +16,7 @@ import { initializeProviderBudgets } from './provider-budgets.js';
 import { initializeProcessNotifications } from './process-notifications.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
 import { initializeComponentOAuthGrants } from './component-source-oauth.js';
+import { flushFunctionInvocations, initializeFunctionInvocations } from './function-invocations.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
 import { initializeIndexing } from './indexing.js';
@@ -273,7 +274,11 @@ export class Database {
     }
     return (await this.readTransaction<T>(this.pool,text,values))!;
   }
-  async close() { await this.queryPool?.end(); await this.pool.end(); }
+  async close() {
+    await flushFunctionInvocations(this);
+    await this.queryPool?.end();
+    await this.pool.end();
+  }
   async initialize() {
     const s = this.schema;
     await this.query(`CREATE SCHEMA IF NOT EXISTS ${s};
@@ -380,6 +385,7 @@ export class Database {
     await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
     await initializeComponentOAuthGrants(this);
+    await initializeFunctionInvocations(this);
     await initializeExecutionTrace(this);
     await initializeIndexing(this);
     await initializeMaterializations(this);

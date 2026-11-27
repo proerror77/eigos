@@ -14,6 +14,8 @@ import type { OntologyDocument } from '../packages/ontology/schema.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
 import { ComponentFunctions, type ComponentImplementation } from '../packages/runtime/component-functions.js';
+import { FunctionInvocations, functionInvocationsQuery } from '../packages/runtime/function-invocations.js';
+import { setTimeout as delay } from 'node:timers/promises';
 import { FunctionHostClient } from '../packages/runtime/function-host.js';
 import { ComponentSourceEgress } from '../packages/runtime/component-source-egress.js';
 import { ComponentOAuthGrants } from '../packages/runtime/component-source-oauth.js';
@@ -281,6 +283,15 @@ test('an Action runs a component edit Function: its reads see its edits, and the
     await assert.rejects(f.capabilities.actions.apply(await access(), model, 'PlanRouteAction', failing, 'plan-failed'), failed('asked'));
     await assert.rejects(live.read({ type: 'Route', id: 'failed-route' }), /not found|unavailable/i);
     assert.deepEqual(await live.follow(other, 'route'), []);
+    const invocations = new FunctionInvocations(f.db), monitor = await access();
+    const listInput = functionInvocationsQuery.parse({ function: 'PlanRoute' });
+    const telemetryDeadline = Date.now() + 3000;
+    let history = await invocations.list(monitor, model, listInput);
+    while (!history.items.some(row => row.errorCode === 'asked') && Date.now() < telemetryDeadline) {
+      await delay(15);
+      history = await invocations.list(monitor, model, listInput);
+    }
+    assert(history.items.some(row => row.errorCode === 'asked' && row.callbacks.update?.count === 1));
     // Outside an Action an edit Function does not run, and a read-only Function cannot edit.
     const context = async () => ({ principal, objects: new Objects(f.db, model, await access()), signal: AbortSignal.timeout(60_000) });
     await assert.rejects(f.capabilities.functions.invoke(model, 'PlanRoute', plan('direct-route'), await context()), /must be invoked through an Action/);
@@ -289,6 +300,67 @@ test('an Action runs a component edit Function: its reads see its edits, and the
   } finally {
     await f.close();
   }
+});
+
+test('Function invocation history records host costs and errors by caller and expires after 30 days', { skip }, async () => {
+  const f = await fixture();
+  try {
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(echoFunction(sha256, { apiName: 'InvocationProbe', returns: { type: 'object' } }));
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = await Access.load(f.db, principal);
+    const graph = new Objects(f.db, model, access);
+    const route = { type: 'Route', id: 'private-telemetry-route' };
+    await graph.create(route, { id: route.id, name: 'Private fixture payload' });
+    const opts = { principal, objects: graph, signal: AbortSignal.timeout(15_000) };
+    const name = 'InvocationProbe';
+    await f.capabilities.functions.invoke(model, name, { ontology: { op: 'get', args: ['Route', route.id] } }, opts);
+    await assert.rejects(f.capabilities.functions.invoke(model, name, { fail: true }, opts), failed('asked'));
+    const reporter = new FunctionInvocations(f.db);
+    const input = functionInvocationsQuery.parse({ function: name, limit: 1 });
+    let page = await reporter.list(access, model, input);
+    const deadline = Date.now() + 3000;
+    while (!page.cursor && Date.now() < deadline) {
+      await delay(15);
+      page = await reporter.list(access, model, input);
+    }
+    assert(page.cursor);
+    const earlier = await reporter.list(access, model, { ...input, before: page.cursor });
+    const items = [...page.items, ...earlier.items];
+    assert.equal(items.length, 2);
+    const returned = items.find(item => item.status === 'returned');
+    const rejected = items.find(item => item.status === 'failed');
+    assert.equal(returned?.callbacks.get?.count, 1);
+    assert((returned?.callbacks.get?.durationMs ?? -1) >= 0);
+    assert((returned?.fuelUsed ?? 0) > 0);
+    assert((returned?.hostMs ?? -1) >= 0);
+    assert.equal(rejected?.errorCode, 'asked');
+    assert.equal(rejected?.version, '1.0.0');
+    assert(!JSON.stringify(items).includes(route.id));
+    const other = { ...principal, owner: 'invocation-other-owner' };
+    await setGrants(f.db, other.owner, businessGrants(model));
+    const otherAccess = await Access.load(f.db, other);
+    assert.deepEqual(await reporter.list(otherAccess, model, input), { items: [] });
+    const token = 'function-invocation-fixture-token'.repeat(2);
+    const gateway = createApp(readConfig({ DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token }),
+      f.db, f.source, async incoming => incoming === token ? principal : other);
+    const server = gateway.app.listen(0, '127.0.0.1');
+    try {
+      await new Promise<void>(resolve => server.once('listening', resolve));
+      const address = server.address();
+      assert(address && typeof address !== 'string');
+      const path = `http://127.0.0.1:${address.port}/ontology/function-invocations?function=${name}`;
+      const history = await fetch(path, { headers: { Authorization: 'Bearer ' + token } });
+      assert.equal(history.status, 200);
+      assert.equal((await history.json()).items.length, 2);
+      assert.equal((await fetch(path)).status, 401);
+    } finally { await new Promise(resolve => server.close(resolve)); }
+    await f.db.query(`UPDATE ${f.db.schema}.function_invocations SET started_at=now()-interval '31 days' WHERE function_name=$1`, [name]);
+    assert.deepEqual(await reporter.list(access, model, input), { items: [] });
+    assert.equal(await reporter.prune(), 2);
+  } finally { await f.close(); }
 });
 
 test('a component reads through its declared Source with caller permission and receives no credential', { skip }, async () => {
@@ -327,6 +399,17 @@ test('a component reads through its declared Source with caller permission and r
     assert.deepEqual(result, { result: { status: 200, contentType: 'application/json', body: '{"available":true}' } });
     assert.deepEqual(requests, [{ path: '/v1/items', header: 'Bearer ' + secret }]);
     assert(!JSON.stringify(result).includes(secret));
+    const access = await Access.load(f.db, principal);
+    const reporter = new FunctionInvocations(f.db);
+    const input = functionInvocationsQuery.parse({ function: 'InventoryLookup' });
+    let history = await reporter.list(access, model, input);
+    const deadline = Date.now() + 3000;
+    while (!history.items.some(item => item.status === 'returned') && Date.now() < deadline) {
+      await delay(15);
+      history = await reporter.list(access, model, input);
+    }
+    assert.equal(history.items.find(item => item.status === 'returned')?.callbacks.outgoing?.count, 1);
+    assert(!JSON.stringify(history.items).includes(secret));
   } finally { await f.close(); }
 });
 

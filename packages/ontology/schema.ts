@@ -88,6 +88,14 @@ export const machineryModelSchema = z.strictObject({
   })).min(1).max(200),
   transitions: z.array(machineryEdgeSchema.extend({
     action: name.optional(),
+    execution: z.strictObject({
+      subject: name,
+      parameters: z.record(name, name).optional(),
+      requires: z.array(z.strictObject({
+        process: name, link: name.optional(), states: z.array(machineryState).min(1).max(200),
+        match: z.enum(['all', 'any']).default('all'),
+      })).max(20).optional(),
+    }).optional(),
   })).max(500),
   subprocesses: z.array(z.strictObject({ link: name, process: name })).max(20).optional(),
   // Processes of other state properties of the same objects, which run alongside this one: one process container.

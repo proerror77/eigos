@@ -12,7 +12,7 @@ import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-const accountMcpTools = ['apply_ontology_action', 'complete_with_action', 'describe_ontology', 'execute_ontology', 'get_task', 'query_ontology', 'respond_to_task',
+const accountMcpTools = ['apply_ontology_action', 'claim_task_dispatch', 'complete_with_action', 'describe_ontology', 'execute_ontology', 'get_task', 'query_ontology', 'respond_to_task',
   'search_restaurants', 'select_task_places', 'submit_task', 'supply_task_input'];
 
 test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {

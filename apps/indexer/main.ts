@@ -1,5 +1,6 @@
 import { ObservationInterests } from '../../packages/runtime/observation-interests.js';
 import { ProcessNotifications } from '../../packages/runtime/process-notifications.js';
+import { FunctionInvocations } from '../../packages/runtime/function-invocations.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Database } from '../../packages/runtime/database.js';
 import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
@@ -53,7 +54,15 @@ async function reviewProcesses() {
     }
   }
 }
-const jobs = [indexing.run(controller.signal), dispatch(), deliverEffects(), reviewProcesses()];
+async function pruneFunctionInvocations() {
+  const invocations = new FunctionInvocations(db);
+  while (!controller.signal.aborted) {
+    try { await invocations.prune(); }
+    catch { console.error('Could not expire Function invocations'); }
+    await delay(3600_000, undefined, { signal: controller.signal }).catch(() => {});
+  }
+}
+const jobs = [indexing.run(controller.signal), dispatch(), deliverEffects(), reviewProcesses(), pruneFunctionInvocations()];
 try { await Promise.all(jobs); }
 catch (error) { if (!controller.signal.aborted) throw error; }
 finally { controller.abort(); await Promise.allSettled(jobs); await db.close(); }

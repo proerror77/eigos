@@ -19,6 +19,12 @@ const requestSchema = z.object({
 });
 type Request = z.infer<typeof requestSchema>;
 type Reply = z.infer<typeof didiPAOrderReply>;
+type DispatchReply = { response: Reply; dispatchToken?: string };
+const journalReply = z.union([
+  z.strictObject({ response: didiPAOrderReply, dispatchToken: z.uuid() }),
+  didiPAOrderReply.transform(response => ({ response })),
+]);
+const claimGrant = z.strictObject({ dispatchToken: z.uuid() });
 const missing = (error: unknown) => typeof error === 'object' && !!error && 'code' in error && error.code === 'ENOENT';
 const proof = ({ reference, quoteDigest, connectionRef }: Pick<DidiPAOrderInput, 'reference' | 'quoteDigest' | 'connectionRef'>) =>
   ({ reference, quoteDigest, connectionRef });
@@ -52,12 +58,14 @@ export class DidiPA {
 
   async answer(taskId: string, signal: AbortSignal, permitDispatch = false) {
     const request = await this.pending(z.uuid().parse(taskId), signal);
-    const response = await this.respond(request, signal, permitDispatch);
-    if (!response) return { state: 'authorization_required', taskId, requestId: request.requestId, authorizationUrl: didiMcpConsole };
-    return this.options.ontology.request(`tasks/${taskId}/pa-response`, { requestId: request.requestId, response }, signal);
+    const reply = request.capability === didiPAOrderCapability
+      ? await this.answerOrder(request, signal, permitDispatch)
+      : { response: await this.respond(request, signal) };
+    if (!reply?.response) return { state: 'authorization_required', taskId, requestId: request.requestId, authorizationUrl: didiMcpConsole };
+    return this.options.ontology.request(`tasks/${taskId}/pa-response`, { requestId: request.requestId, ...reply }, signal);
   }
 
-  private async respond(request: Request, signal: AbortSignal, permitDispatch: boolean) {
+  private async respond(request: Request, signal: AbortSignal) {
     const { connection } = this.options;
     if (request.capability === didiPAAuthorizeCapability) {
       if (!connection) return;
@@ -94,7 +102,7 @@ export class DidiPA {
       const receipt = join(this.options.privateDirectory, digest(['didi-order', input.originalTaskId]) + '.json');
       let local: Reply | undefined;
       try {
-        local = didiPAOrderReply.parse(JSON.parse(await readPrivateSourceFile(receipt)));
+        local = journalReply.parse(JSON.parse(await readPrivateSourceFile(receipt))).response;
       } catch (error) { if (!missing(error)) throw error; }
       if (local && digest(proof(local)) !== digest(identity))
         throw new Conflict('The DiDi PA journal contains a different order for this task');
@@ -109,15 +117,19 @@ export class DidiPA {
           !checked.independentRead || checked.evidence !== 'live') return original;
       return { ...original, readback: observation(checked) };
     }
-    if (request.capability !== didiPAOrderCapability || !permitDispatch)
-      throw new Conflict('Use the DiDi order runner only for a pending order the user already approved');
+    throw new Conflict('Unsupported DiDi PA request');
+  }
+
+  private async answerOrder(request: Request, signal: AbortSignal, permitDispatch: boolean) {
+    if (!permitDispatch) throw new Conflict('Use the DiDi order runner only for a pending order the user already approved');
+    const { connection } = this.options;
     const input = didiPAOrderInput.parse(request.input);
     if (!connection || connection.reference !== input.connectionRef) return;
     return this.submit(request, input, connection.orders, signal);
   }
 
   private async submit(request: Request, input: DidiPAOrderInput, orders: NonNullable<DidiPAOptions['connection']>['orders'],
-    signal: AbortSignal): Promise<Reply> {
+    signal: AbortSignal): Promise<DispatchReply> {
     const directory = this.options.privateDirectory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const stat = await lstat(directory);
@@ -126,39 +138,44 @@ export class DidiPA {
     const base = join(directory, digest(['didi-order', request.taskId]));
     const receipt = base + '.json', dispatch = base + '.dispatched';
     try {
-      const saved = didiPAOrderReply.parse(JSON.parse(await readPrivateSourceFile(receipt)));
-      if (digest(proof(saved)) !== digest(proof(input)))
+      const saved = journalReply.parse(JSON.parse(await readPrivateSourceFile(receipt)));
+      if (digest(proof(saved.response)) !== digest(proof(input)))
         throw new Conflict('The DiDi PA journal contains a different order for this task');
       return saved;
     } catch (error) { if (!missing(error)) throw error; }
+    if (await lstat(dispatch).catch(error => { if (!missing(error)) throw error; }))
+      throw new Conflict('This PA has started the original order; recover its receipt before replying');
+    if (!input.dispatchProtocol) throw new Conflict('Legacy DiDi requests can only recover a saved receipt');
     const data = proof(input);
-    const used = await lstat(dispatch).catch(error => { if (!missing(error)) throw error; });
-    if (used) return { ...data, status: 'unknown' };
     const expiry = Date.parse(input.expiresAt);
-    if (Date.now() >= expiry) return { ...data, status: 'expired' };
-    if (input.fare.category.includes(',')) return { ...data, status: 'unavailable' };
+    if (Date.now() >= expiry) return { response: { ...data, status: 'expired' } };
+    if (input.fare.category.includes(',')) return { response: { ...data, status: 'unavailable' } };
     const fresh = await orders.quote(input.arguments, input.fare.category, signal).catch(() => undefined);
     signal.throwIfAborted();
     if (!fresh || fresh.category !== input.fare.category || fresh.currency !== input.fare.currency)
-      return { ...data, status: 'unavailable' };
+      return { response: { ...data, status: 'unavailable' } };
     if (fresh.amountMinor !== input.fare.amountMinor)
-      return { ...data, status: 'price_changed', amountMinor: fresh.amountMinor };
-    let dispatchedAt: string | undefined;
+      return { response: { ...data, status: 'price_changed', amountMinor: fresh.amountMinor } };
+    let dispatchedAt: string | undefined, dispatchToken: string | undefined;
     const original = await orders.create(fresh, signal, async () => {
-      if (digest(await this.pending(request.taskId, signal)) !== digest(request) || Date.now() >= expiry)
-        throw new Conflict('The original order is no longer approved for dispatch');
+      if (dispatchToken || Date.now() >= expiry) throw new Conflict('The original order is no longer approved for dispatch');
       signal.throwIfAborted();
       const file = await open(dispatch, 'wx', 0o600);
       try { await file.sync(); }
       finally { await file.close(); }
+      const grant = await this.options.ontology.request(
+        `tasks/${request.taskId}/pa-dispatch-claim`, { requestId: request.requestId }, signal);
+      ({ dispatchToken } = claimGrant.parse(grant));
+      signal.throwIfAborted();
       if (Date.now() >= expiry) throw new Conflict('The approved DiDi estimate expired before dispatch');
       dispatchedAt = new Date().toISOString();
-    }).catch(() => undefined);
-    if (!original || !dispatchedAt || original.state !== 'created' || original.independentRead || original.evidence !== 'live')
-      return { ...data, status: 'unknown' };
-
-    const created = observation(original);
-    const save = async (value: Reply) => {
+    }).catch(error => {
+      // A losing executor must leave the request open for the claimant's reply.
+      if (!dispatchToken) throw error;
+    });
+    if (!dispatchToken) throw new Conflict('The original DiDi dispatch was not granted');
+    const save = async (response: Reply) => {
+      const value = { response, dispatchToken };
       const staged = base + '.' + randomUUID();
       const file = await open(staged, 'wx', 0o600);
       try { await file.writeFile(JSON.stringify(value)); await file.sync(); }
@@ -166,11 +183,13 @@ export class DidiPA {
       await rename(staged, receipt);
       return value;
     };
-    const acknowledged = { ...data, status: 'submitted' as const, created, dispatchedAt };
-    await save(acknowledged);
+    if (!original || !dispatchedAt || original.state !== 'created' || original.independentRead || original.evidence !== 'live')
+      return save({ ...data, status: 'unknown' });
+    const acknowledged = { ...data, status: 'submitted' as const, created: observation(original), dispatchedAt };
+    const saved = await save(acknowledged);
     const checked = await orders.query(original.orderId, signal).catch(() => undefined);
     if (checked?.orderId !== original.orderId || checked.state !== 'reported' || !checked.independentRead || checked.evidence !== 'live')
-      return acknowledged;
+      return saved;
     return save({ ...acknowledged, readback: observation(checked) });
   }
 }
