@@ -326,7 +326,7 @@ Object.assign(bookingInterface.actions, {
 });
 Object.assign(bookingObject.interfaces[immediateRideInterface]!.actions, {
   bookWithEndpoints: { action: bookWithEndpoints,
-    parameters: { ...bookingObject.interfaces[immediateRideInterface]!.actions.book.parameters, ...endpointMapping } },
+    parameters: { ...bookingObject.interfaces[immediateRideInterface]!.actions.book!.parameters, ...endpointMapping } },
 });
 Object.assign(bookingInterface.links, { route: { target: 'Route', cardinality: 'one', required: false } });
 Object.assign(bookingObject.interfaces[immediateRideInterface]!.links, { route: 'route' });
