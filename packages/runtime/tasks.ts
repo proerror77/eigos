@@ -37,7 +37,12 @@ export const currentTaskExecution = new AsyncLocalStorage<{ task: Task; tasks: T
 export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
-  constructor(readonly db: Database, private readonly metadata: Metadata) {}
+  /**
+   * `ownerSlots` is how many interactive tasks of one owner may run at once across all Workers (runtime budget 06.1), from
+   * EIGOS_TASK_OWNER_SLOTS, 2 by default.
+   */
+  constructor(readonly db: Database, private readonly metadata: Metadata,
+    private readonly ownerSlots = Math.max(1, Number(process.env.EIGOS_TASK_OWNER_SLOTS ?? 2) || 2)) {}
   async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, admit }: {
     assignConversation?: boolean; authorize?: (client: Sql) => Promise<void>; actionInvocation?: z.infer<typeof taskActionSchema>;
     expectedRelease?: string; admit?: (client: Sql, model: PublishedOntology) => Promise<void>;
@@ -209,17 +214,29 @@ export class Tasks {
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
-    const kind = lane === 'scheduled' ? " AND t.input ? 'scheduledAction'" :
-      lane === 'interactive' ? " AND NOT (t.input ? 'scheduledAction')" : '';
+    const scheduled = "t.input ? 'scheduledAction'";
+    const kind = lane === 'scheduled' ? ` AND ${scheduled}` : lane === 'interactive' ? ` AND NOT (${scheduled})` : '';
     const table = `${this.db.schema}.tasks`;
     const atHead = `(t.conversation_id IS NULL OR ${headOfConversation(table)})`;
+    const running = (owner: string) => `(SELECT count(*) FROM ${table} w WHERE w.owner=${owner} AND w.state='working'
+      AND w.lease_until>=clock_timestamp() AND NOT (w.input ? 'scheduledAction'))`;
+    const withinShare = lane === 'scheduled' ? '' : ` AND ((${scheduled}) OR ${running('t.owner')}<$1)`;
     return this.db.transaction(async client => {
-      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'>>(
-        `SELECT t.id,t.owner,t.conversation_id FROM ${table} t
+      // Owners take turns (06.2). Only interactive tasks are subject to the per-owner slot limit (06.1).
+      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'> & { scheduled: boolean }>(
+        `SELECT t.id,t.owner,t.conversation_id,(${scheduled}) AS scheduled
+        FROM ${table} t LEFT JOIN ${this.db.schema}.task_turns turn ON turn.owner=t.owner
         WHERE ((t.state='submitted' AND t.available_at<=now()) OR (t.state='working' AND t.lease_until<now()))
-          AND ${atHead}${kind}
-        ORDER BY t.available_at,t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 1`, [], client)).rows[0];
+          AND ${atHead}${kind}${withinShare}
+        ORDER BY coalesce(turn.served_at,'-infinity'::timestamptz),t.available_at,t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 1`,
+        lane === 'scheduled' ? [] : [this.ownerSlots], client)).rows[0];
       if (!candidate) return undefined;
+      if (!candidate.scheduled) {
+        // Serialize interactive claims for the same owner across Workers, then recheck its share.
+        await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-owner-claim', candidate.owner)], client);
+        const { rows: [busy] } = await this.db.query<{ n: string }>(`SELECT ${running('$1')}::text AS n`, [candidate.owner], client);
+        if (Number(busy!.n) >= this.ownerSlots) return undefined;
+      }
       if (candidate.conversation_id) {
         // A paused source retry can rejoin while another Worker is selecting a later batch.
         const key = this.db.lockKey('task-inbox-claim', candidate.owner, candidate.conversation_id);
@@ -231,6 +248,8 @@ export class Tasks {
       const result = await this.db.query<Task>(`UPDATE ${table} t SET state='working',token=$2,
         lease_until=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
         WHERE t.id=$1 AND ${atHead} RETURNING t.*`, [candidate.id, randomUUID()], client);
+      if (result.rows[0]) await this.db.query(`INSERT INTO ${this.db.schema}.task_turns(owner,served_at) VALUES($1,clock_timestamp())
+        ON CONFLICT (owner) DO UPDATE SET served_at=excluded.served_at`, [candidate.owner], client);
       return result.rows[0];
     });
   }
@@ -255,6 +274,18 @@ export class Tasks {
       await this.current(task,client,true);
       await this.db.query(`UPDATE ${this.db.schema}.tasks SET state='submitted',available_at=$2,execution_step=execution_step+1,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`,[task.id,until],client);
       await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET continue_at=NULL WHERE owner=$1 AND id=$2 AND task_id=$3`,[task.owner,task.input.scheduledAction!.scheduleId,task.id],client);
+    });
+  }
+  /**
+   * Puts a task back in the queue until `until`, as when its owner's budget for a provider is used up. It then runs again
+   * from the start, as a task whose lease expired does; its Actions are idempotent by request.
+   */
+  async postpone(task: Task, until: string) {
+    if (!Number.isFinite(Date.parse(until))) throw new Conflict('Invalid task retry time');
+    await this.db.transaction(async client => {
+      await this.current(task, client, true);
+      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state='submitted',available_at=$2,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`,
+        [task.id, until], client);
     });
   }
   async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown,
