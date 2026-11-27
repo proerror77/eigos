@@ -15,6 +15,7 @@ import { initializeLogArchives } from './log-retention.js';
 import { initializeProviderBudgets } from './provider-budgets.js';
 import { initializeProcessNotifications } from './process-notifications.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
+import { initializeComponentOAuthGrants } from './component-source-oauth.js';
 import { flushFunctionInvocations, initializeFunctionInvocations } from './function-invocations.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
@@ -405,6 +406,7 @@ export class Database {
     await initializeProviderBudgets(this);
     await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
+    await initializeComponentOAuthGrants(this);
     await initializeFunctionInvocations(this);
     await initializeExecutionTrace(this);
     await initializeIndexing(this);

@@ -117,6 +117,19 @@ export const agentProfileSchema = z.strictObject({
   }).refine(hint => hint.action || hint.function, 'An Agent instruction requires an Action or Function')).max(30).optional(),
 });
 
+export const webhookMethod = z.enum(['POST', 'PUT', 'PATCH', 'DELETE']);
+export const webhookPath = z.string().startsWith('/').max(2048);
+export const actionWebhookSchema = z.strictObject({
+  source: name, method: webhookMethod, path: webhookPath, function: name.optional(),
+});
+export const sourceWebhookEffectHandler = 'ComponentSourceWebhook';
+export const actionEffectSchema = z.union([
+  z.strictObject({ name, handler: name.refine(handler => handler !== sourceWebhookEffectHandler, 'The Source webhook handler name is reserved'), payload: z.record(name, value) }),
+  z.strictObject({ name, webhook: actionWebhookSchema, payload: z.record(name, value) }),
+]);
+export type ActionWebhook = z.infer<typeof actionWebhookSchema>;
+export type ActionEffectDefinition = z.infer<typeof actionEffectSchema>;
+
 export const ontologySchema = z.strictObject({
   id: name, version: z.string().min(1), classification: classificationSchema.optional(),
   sharedProperties:z.array(property.extend({apiName:name})).optional(),
@@ -148,7 +161,7 @@ export const ontologySchema = z.strictObject({
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
     dependencies:functionDependenciesSchema.optional(), implementation: componentImplementationSchema.optional(),
   }).refine(fn => !fn.implementation || semanticVersion.test(fn.version ?? ''), 'A component Function needs a semantic version such as 1.0.0')
-    .refine(fn => !fn.implementation || !fn.source, 'A component Function cannot read a source yet')),
+    .refine(fn => !fn.implementation || !fn.source || !fn.edits, 'A component edit Function uses Source writes through a committed Action effect')),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
     submissionCriteria: z.array(z.strictObject({
@@ -169,7 +182,7 @@ export const ontologySchema = z.strictObject({
       z.strictObject({ op: z.literal('applyScenario'), scenario:value, expectedRevision:value, objectTypes:z.array(name),linkTypes:z.array(name) }),
     ])).min(1).optional(),
     result: reference.optional(), function: name.optional(), functionVersion: z.string().regex(versionRange).optional(),
-    effects: z.array(z.strictObject({ name, handler: name, payload: z.record(name, value) })).max(20).optional(),
+    effects: z.array(actionEffectSchema).max(20).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({
     apiName: name, objectType: name, function: name, classification: classificationSchema.optional(),

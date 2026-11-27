@@ -1,6 +1,6 @@
 // Test component for the function host: it opens a network connection, so it imports wasi:sockets and the host
 // must refuse it.
-wit_bindgen::generate!({ world: "handler", path: "../../wit" });
+wit_bindgen::generate!({ world: "handler", path: "../../wit", generate_all });
 
 struct Function;
 

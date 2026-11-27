@@ -1,3 +1,4 @@
+import type { ConfiguredComponentSources } from './component-source-egress.js';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { VersionedFunction } from './functions.js';
@@ -8,6 +9,7 @@ export interface RuntimeExtensions {
   functions?: readonly VersionedFunction[];
   effects?: ReadonlyMap<string, EffectHandler>;
   sources?: ReadonlyMap<string, SourceProjection>;
+  componentSources?: ConfiguredComponentSources;
 }
 /** Operator-configured, trusted deployment code. Never accepts a request-supplied module path. */
 export async function loadExtensions(path?: string): Promise<RuntimeExtensions> {

@@ -144,6 +144,9 @@ export function remapResources(
     if (action.function) action.function = rename('function', action.function);
     for (const condition of action.submissionCriteria)
       condition.function = rename('function', condition.function);
+    for (const effect of action.effects ?? [])
+      if ('webhook' in effect && effect.webhook.function)
+        effect.webhook.function = rename('function', effect.webhook.function);
     if (action.result) action.result.type = rename('object', action.result.type);
     for (const rule of action.rules ?? []) {
       if (rule.op === 'createObject') rule.object.type = rename('object', rule.object.type);

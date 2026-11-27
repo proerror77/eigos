@@ -1,7 +1,8 @@
 import { FunctionCallbackServer, type CallbackFailure } from '../function-host/callback-server.js';
 import { z } from 'zod';
-import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied, SourceReadFailure } from '../core/identity.js';
 import { objectRefSchema, ontologyName } from '../ontology/schema.js';
+import { SourceOAuthReauthorization } from './component-source-oauth.js';
 import type { Database } from './database.js';
 import type { FunctionContext } from './functions.js';
 import type { FunctionInvocationMetrics } from './function-invocations.js';
@@ -19,7 +20,7 @@ export type OntologyLimits = { calls: number; objects: number; bytes: number; ed
 export const defaultOntologyLimits: OntologyLimits = { calls: 1000, objects: 100000, bytes: 4 << 20, edits: 10000 };
 
 /** `writer` is set for an edit Function inside its Action's commit: edits go through it, and reads see them. */
-type Session = { db: Database; context: FunctionContext; writer?: Objects; limits: OntologyLimits; calls: number; objects: number; edits: number };
+type Session = { db: Database; context: FunctionContext; writer?: Objects; outgoing?: (input: unknown) => Promise<unknown>; limits: OntologyLimits; calls: number; objects: number; edits: number };
 class LimitReached extends Error {}
 
 const counted = (result: unknown) => result === null ? 0
@@ -74,6 +75,10 @@ const operations: Record<string, (session: Session, input: Record<string, unknow
   },
   async link(session, input) { await writer(session).link(edge(input)); return null; },
   async unlink(session, input) { await writer(session).unlink(edge(input)); return null; },
+  async outgoing(session, input) {
+    if (!session.outgoing) throw new PermissionDenied('The Function has no declared HTTP Source');
+    return session.outgoing(input.request);
+  },
 };
 
 /** How an error reaches the Function: a stable code it can act on. Anything unexpected is the runtime's problem. */
@@ -83,6 +88,8 @@ function failureOf(error: unknown): CallbackFailure {
   if (error instanceof NotFound) return { code: 'not-found', message: error.message };
   if (error instanceof InvalidInput || error instanceof z.ZodError) return { code: 'invalid', message: error instanceof z.ZodError ? 'Invalid request' : error.message };
   if (error instanceof Conflict) return { code: 'conflict', message: error.message };
+  if (error instanceof SourceOAuthReauthorization) return { code: 'source-reauthorization-required', message: error.message };
+  if (error instanceof SourceReadFailure) return { code: 'unavailable', message: 'Source request failed' };
   console.error('Component Function callback failed', error);
   return { code: 'unavailable', message: 'The Ontology is temporarily unavailable' };
 }
@@ -91,8 +98,13 @@ export class FunctionCallbacks {
   private readonly server = new FunctionCallbackServer();
 
   /** Opens the session of one call; `close` ends it, after which its token is refused. */
-  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits, timings?: FunctionInvocationMetrics['callbacks']) {
-    const session: Session = { db, context, writer, limits, calls: 0, objects: 0, edits: 0 };
+  async open(db: Database, context: FunctionContext, writer?: Objects, options: {
+    limits?: OntologyLimits;
+    outgoing?: Session['outgoing'];
+    timings?: FunctionInvocationMetrics['callbacks'];
+  } = {}) {
+    const { limits = defaultOntologyLimits, outgoing, timings } = options;
+    const session: Session = { db, context, writer, outgoing, limits, calls: 0, objects: 0, edits: 0 };
     return this.server.open(async (operation, input) => {
       try {
         const run = Object.hasOwn(operations, operation) ? operations[operation] : undefined;
