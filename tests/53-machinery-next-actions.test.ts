@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { resolve } from 'node:path';
+import { loadInstallation } from '../packages/runtime/installation.js';
 import { addProcessLogs } from '../packages/ontology/process-definition.js';
 import type { OntologyDocument } from '../packages/ontology/schema.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
@@ -247,5 +249,32 @@ test('a revoked process read stops event delivery without terminating the Indexe
     assert.equal(await subscriptions.scanOne(),false);
     const { rows } = await f.db.query(`SELECT count(*)::int AS total FROM ${f.db.schema}.task_inbox_events WHERE request_id LIKE 'subscription:%'`);
     assert.equal(rows[0]!.total,0);
+  } finally { await f.close(); }
+});
+
+test('the same subject in two installed Ontologies wakes only the changed installation and its original PA', async () => {
+  const f = await fixture();
+  try {
+    const installation = await loadInstallation(resolve('tests/fixtures/installed-ontology/installation.json'));
+    const runtime = installation.assemble(f.db);
+    const document = modelOf(installation.model.document);
+    const ids = ['FirstFixture','SecondFixture'];
+    await setGrants(f.db,'fixture-publisher',ids.map(resource => ({resource,permission:'manage_definition'})));
+    const publisher = await Access.load(f.db,{owner:'fixture-publisher',scopes:[]});
+    const [first,second] = await Promise.all(ids.map(id=>f.metadata.publish({...document,id},runtime,publisher)));
+    const actor = {...principal,clientId:'fixture-pa'};
+    await setGrants(f.db,actor.owner,[...businessGrants(first!),...businessGrants(second!)]);
+    const access = await Access.load(f.db,actor);
+    const subscriptions = new ChangeSubscriptions(f.db,f.tasks,
+      new MachineryWatchPlanner(f.db,f.metadata,new MachineryExecution(f.db,runtime.actions)));
+    for (const model of [first!,second!]) {
+      await new Objects(f.db,model,access).create(journey,{id:journey.id,name:'fixture',state:'pending'});
+      await subscriptions.watchMachinery(access,model,{object:journey,requestId:model.document.id,conversationId:'shared-conversation'});
+    }
+    await new Objects(f.db,second!,access).edit(journey,1,{state:'done'});
+    await subscriptions.scanOne();
+    await subscriptions.scanOne();
+    const wakes = await f.db.query(`SELECT ontology,release,input->>'paClient' AS client FROM ${f.db.schema}.tasks WHERE owner=$1`,[actor.owner]);
+    assert.deepEqual(wakes.rows,[{ontology:'SecondFixture',release:second!.release,client:'fixture-pa'}]);
   } finally { await f.close(); }
 });

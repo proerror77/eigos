@@ -21,7 +21,7 @@ const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
 const headOfConversation = (table: string) => `NOT EXISTS (
-  SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.conversation_id=t.conversation_id
+  SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.ontology=t.ontology AND sibling.conversation_id=t.conversation_id
     AND sibling.id<>t.id AND sibling.state IN('submitted','working','input-required')
     AND ((sibling.state='working' AND (
       t.state='submitted' OR sibling.lease_until>=now() OR sibling.conversation_batch<t.conversation_batch
@@ -33,7 +33,7 @@ const headOfConversation = (table: string) => `NOT EXISTS (
     )))`;
 
 export const taskPrincipal = (task: Task): Principal =>
-  ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess });
+  ({ owner: task.owner, scopes: task.scopes, memberAccess: task.input.memberAccess, clientId: task.input.paClient });
 export const currentTaskExecution = new AsyncLocalStorage<{ task: Task; tasks: Tasks }>();
 export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => {
@@ -52,41 +52,42 @@ export class Tasks {
    */
   constructor(readonly db: Database, private readonly metadata: Metadata,
     private readonly ownerSlots = Math.max(1, Number(process.env.EIGOS_TASK_OWNER_SLOTS ?? 2) || 2)) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, admit, transaction }: {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, ontologyId = this.metadata.ontologyId, admit, transaction }: {
     assignConversation?: boolean; authorize?: (client: Sql) => Promise<void>; actionInvocation?: z.infer<typeof taskActionSchema>;
-    transaction?: Sql; expectedRelease?: string; admit?: (client: Sql, model: PublishedOntology) => Promise<void>;
+    transaction?: Sql; expectedRelease?: string; ontologyId?: string; admit?: (client: Sql, model: PublishedOntology) => Promise<void>;
   } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = parseSubmission(raw);
     const invocation = actionInvocation && taskActionSchema.parse(actionInvocation);
     const fingerprint = digest(invocation ? { ...input, actionInvocation: invocation } : input);
-    const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true, paClient: principal.clientId } : {}),
+    const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true } : {}), ...(principal.clientId ? { paClient: principal.clientId } : {}),
       ...(invocation ? { actionInvocation: invocation } : {}) };
     const persist = async (client: Sql) => {
       await authorize?.(client);
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
       const { owner } = principal;
       // The same delivery may arrive through any gateway, including from a different process.
-      await this.lockInboxKey(client, ['request', owner, input.requestId]);
+      await this.lockInboxKey(client, ['request', ontologyId, owner, input.requestId]);
       const existing = (await this.db.query(`SELECT t.*,e.input_digest AS event_digest FROM ${events} e
-        JOIN ${table} t ON t.id=e.task_id AND t.owner=e.owner WHERE e.owner=$1 AND e.request_id=$2`, [owner, input.requestId], client)).rows[0];
-      const prior = existing ?? (await this.db.query(`SELECT * FROM ${table} WHERE owner=$1 AND request_id=$2`, [owner, input.requestId], client)).rows[0];
+        JOIN ${table} t ON t.id=e.task_id AND t.owner=e.owner WHERE e.owner=$1 AND e.request_id=$2 AND e.ontology=$3`, [owner, input.requestId, ontologyId], client)).rows[0];
+      const prior = existing ?? (await this.db.query(`SELECT * FROM ${table} WHERE owner=$1 AND request_id=$2 AND ontology=$3`, [owner, input.requestId, ontologyId], client)).rows[0];
       if (prior) {
+        if (prior.input.paClient && prior.input.paClient !== principal.clientId) throw new Conflict('Request ID belongs to another PA');
         if ((prior.event_digest ?? prior.input_digest) !== fingerprint) throw new Conflict('Request ID already used with different input');
         return prior as Task;
       }
-      const model = await this.metadata.active('Eigos', client, true);
+      const model = await this.metadata.active(ontologyId, client, true);
       if (expectedRelease !== undefined && model.release !== expectedRelease)
-        throw new Conflict('The Eigos publication changed. Rediscover the Action before retrying.');
+        throw new Conflict('The publication changed. Rediscover the Action before retrying.');
       await admit?.(client, model);
       const id = randomUUID();
       const conversation = input.conversationId ?? (assignConversation ? id : null);
       const scopes = [...principal.scopes];
       let latest: InboxTask | undefined;
       if (conversation) {
-        await this.lockInboxKey(client, ['conversation', owner, conversation]);
+        await this.lockInboxKey(client, ['conversation', ontologyId, owner, conversation]);
         latest = (await this.db.query<InboxTask>(`SELECT *,state='submitted' AND available_at>clock_timestamp() AS collecting FROM ${table}
-          WHERE owner=$1 AND conversation_id=$2 ORDER BY conversation_batch DESC LIMIT 1`, [owner, conversation], client)).rows[0];
+          WHERE owner=$1 AND conversation_id=$2 AND ontology=$3 ORDER BY conversation_batch DESC LIMIT 1`, [owner, conversation, ontologyId], client)).rows[0];
       }
       let submitted: Task | undefined, position = 1;
       if (!invocation && !latest?.input.actionInvocation && latest?.collecting && latest.message_count < maxBatchMessages && latest.release === model.release
@@ -104,12 +105,12 @@ export class Tasks {
       if (!submitted) {
         const batch = conversation ? (BigInt(latest?.conversation_batch ?? '0') + 1n).toString() : null;
         submitted = (await this.db.query<Task>(`INSERT INTO ${table}(id,owner,request_id,input_digest,input,release,scopes,conversation_id,conversation_batch,available_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10::int*interval '1 ms') ON CONFLICT(owner,request_id) DO NOTHING RETURNING *`,
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10::int*interval '1 ms') ON CONFLICT(ontology,owner,request_id) DO NOTHING RETURNING *`,
           [id, owner, input.requestId, fingerprint, stored, model.release, JSON.stringify(scopes), conversation, batch, conversation ? batchWindowMs : 0], client)).rows[0];
         if (!submitted) throw new Conflict('Request ID already used with different input');
       }
-      if (conversation) await this.db.query(`INSERT INTO ${events}(owner,request_id,input_digest,message,task_id,position) VALUES($1,$2,$3,$4,$5,$6)`,
-        [owner, input.requestId, fingerprint, input.message, submitted.id, position], client);
+      if (conversation) await this.db.query(`INSERT INTO ${events}(owner,request_id,input_digest,message,task_id,position,ontology) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [owner, input.requestId, fingerprint, input.message, submitted.id, position, ontologyId], client);
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return submitted;
     };

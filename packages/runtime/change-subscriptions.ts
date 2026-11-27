@@ -44,7 +44,7 @@ export const subscribeSchema = subscriptionIdentity.extend({
 export type ChangeWake = { event: 'ontology_changes'; subscription: string; commits: { after: string; through: string }; types: string[]; links: string[] };
 
 const storedPrincipal = z.object({ owner: z.string(), scopes: z.array(z.string()), memberAccess: z.literal(true).optional(), memberAudience: z.literal(true).optional(), clientId: z.string().optional(), issuedAt: z.number().optional() });
-type Row = { id: string; owner: string; request_id: string; conversation_id: string; principal: unknown; footprint: SubscriptionFootprint; position: string; plan_digest: string | null };
+type Row = { ontology: string; id: string; owner: string; request_id: string; conversation_id: string; principal: unknown; footprint: SubscriptionFootprint; position: string; plan_digest: string | null };
 
 export class ChangeSubscriptions {
   constructor(private readonly db: Database, private readonly tasks: Tasks, private readonly planner?: MachineryWatchPlanner) {}
@@ -65,7 +65,7 @@ export class ChangeSubscriptions {
   async watchMachinery(access: Access, model: PublishedOntology, raw: unknown) {
     const input = watchMachinerySchema.parse(raw);
     requireScope(access.principal, 'tasks:write');
-    if (!this.planner || model.scenario || model.document.id !== 'Eigos')
+    if (!this.planner || model.scenario)
       throw new Conflict('Machinery watches require the live scheduled Ontology');
     return this.save(access, model, input, processFootprint(model,input.object));
   }
@@ -84,11 +84,11 @@ export class ChangeSubscriptions {
         ON CONFLICT(owner, request_id) DO NOTHING RETURNING id, position::text`,
         [randomUUID(), owner, input.requestId, model.document.id, input.conversationId, principal, footprint, position, signature ?? null], client)).rows[0];
       if (row) return { id: row.id, position: row.position, footprint };
-      const prior = (await this.db.query<{ id: string; position: string; footprint: ChangeFootprint; conversation_id: string }>(
-        `SELECT id, position::text, footprint, conversation_id FROM ${this.db.schema}.change_subscriptions WHERE owner=$1 AND request_id=$2`,
+      const prior = (await this.db.query<{ id: string; ontology: string; position: string; footprint: ChangeFootprint; conversation_id: string }>(
+        `SELECT id, ontology, position::text, footprint, conversation_id FROM ${this.db.schema}.change_subscriptions WHERE owner=$1 AND request_id=$2`,
         [owner, input.requestId], client)).rows[0]!;
       // jsonb reorders keys, so the footprints are compared canonically.
-      if (canonical(prior.footprint) !== canonical(footprint) || prior.conversation_id !== input.conversationId)
+      if (prior.ontology !== model.document.id || canonical(prior.footprint) !== canonical(footprint) || prior.conversation_id !== input.conversationId)
         throw new Conflict('Request ID already used with a different subscription');
       return { id: prior.id, position: prior.position, footprint: prior.footprint };
     }));
@@ -121,14 +121,14 @@ export class ChangeSubscriptions {
         [row.id, row.owner, row.position], client);
       if (!locked.rowCount) return;
       const through = await latestCommit(this.db, row.owner, client);
-      const change = await this.planner!.inspect(principal, watch, row.position, through, client);
+      const change = await this.planner!.inspect(row.ontology, principal, watch, row.position, through, client);
       if (!change) return;
       if ('stopped' in change) {
         await this.db.query(`UPDATE ${s}.change_subscriptions SET cancelled_at=now() WHERE id=$1`, [row.id], client);
         return;
       }
       if (change.signature) {
-        await this.planner!.replanSchedules(row.owner, watch, client);
+        await this.planner!.replanSchedules(row.ontology, row.owner, watch, client);
         // The original observation planner owns schedule changes and rechecks its stored authority.
         await this.db.query(`UPDATE ${s}.observation_interests SET next_scan=least(next_scan,now())
           WHERE owner=$1 AND release=$2 AND state='watching' AND ((plan->'object')::text=($3::jsonb)::text OR attached=$3::jsonb)`,
@@ -137,7 +137,7 @@ export class ChangeSubscriptions {
           const message = JSON.stringify({ event: 'machinery_replanned', subscription: row.id, object: watch.object,
             release: watch.release, commits: { after: row.position, through: change.end } });
           await this.tasks.submit(principal, { requestId: `subscription:${row.id}:${row.position}`, conversationId: row.conversation_id,
-            message }, { expectedRelease: watch.release, transaction: client });
+            message }, { ontologyId: row.ontology, expectedRelease: watch.release, transaction: client });
         }
       }
       await this.db.query(`UPDATE ${s}.change_subscriptions SET position=$2,plan_digest=coalesce($3,plan_digest) WHERE id=$1`,
@@ -153,7 +153,7 @@ export class ChangeSubscriptions {
   async scanOne(): Promise<boolean> {
     const s = this.db.schema;
     const claimed = await this.db.transaction(async client => {
-      const row = (await this.db.query<Row>(`SELECT id, owner, request_id, conversation_id, principal, footprint, position::text, plan_digest
+      const row = (await this.db.query<Row>(`SELECT id, ontology, owner, request_id, conversation_id, principal, footprint, position::text, plan_digest
         FROM ${s}.change_subscriptions WHERE cancelled_at IS NULL AND ($1 OR NOT (footprint ? 'machinery')) AND (last_scan IS NULL OR last_scan<=now()-interval '1 second')
         ORDER BY last_scan NULLS FIRST, id FOR UPDATE SKIP LOCKED LIMIT 1`, [Boolean(this.planner)], client)).rows[0];
       if (row) await this.db.query(`UPDATE ${s}.change_subscriptions SET last_scan=now() WHERE id=$1`, [row.id], client);
@@ -172,7 +172,7 @@ export class ChangeSubscriptions {
       }
       const changes = await this.db.transaction(async client => {
         const through = await latestCommit(this.db, owner, client);
-        return BigInt(through) > BigInt(after) ? footprintChanges(this.db, owner, claimed.footprint, client, after, through) : undefined;
+        return BigInt(through) > BigInt(after) ? footprintChanges(this.db, owner, claimed.footprint, client, after, through, claimed.ontology) : undefined;
       });
       if (!changes) return;
       const advance = async (client: Sql) => {
@@ -189,7 +189,7 @@ export class ChangeSubscriptions {
       try {
         // The request ID names the window's start, so a retried or concurrent dispatch of the same window is the same task.
         await this.tasks.submit(principal, { requestId: `subscription:${claimed.id}:${after}`, message: JSON.stringify(wake), conversationId: claimed.conversation_id },
-          { admit: client => advance(client) });
+          { ontologyId: claimed.ontology, admit: client => advance(client) });
       } catch (error) { if (!(error instanceof Conflict)) throw error; }
     });
     return true;

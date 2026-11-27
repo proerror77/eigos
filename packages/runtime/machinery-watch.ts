@@ -47,8 +47,8 @@ async function affected(db: Database, client: Sql, owner: string, model: Publish
 export class MachineryWatchPlanner {
   constructor(private readonly db: Database, private readonly metadata: Metadata, private readonly execution: MachineryExecution) {}
 
-  async replanSchedules(owner: string, watch: Watch, client: Sql) {
-    const model = await this.metadata.active('Eigos', client, true);
+  async replanSchedules(ontology: string, owner: string, watch: Watch, client: Sql) {
+    const model = await this.metadata.active(ontology, client, true);
     if (model.release !== watch.release) throw new Conflict('The watched process publication changed');
     await new ScheduledActions(this.db,this.metadata).replanSubject(model,owner,watch.object,client);
   }
@@ -59,8 +59,8 @@ export class MachineryWatchPlanner {
     return digest(plan);
   }
 
-  async inspect(principal: Principal, watch: Watch, after: string, through: string, client: Sql) {
-    const model = await this.metadata.active('Eigos',client);
+  async inspect(ontology: string, principal: Principal, watch: Watch, after: string, through: string, client: Sql) {
+    const model = await this.metadata.active(ontology,client);
     if (model.release !== watch.release) return { stopped: true } as const;
     if (after === through) return;
     const change = await affected(this.db,client,principal.owner,model,watch,after,through);
