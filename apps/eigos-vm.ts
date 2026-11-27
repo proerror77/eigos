@@ -148,7 +148,7 @@ try {
         client,
       );
     });
-    if (command === 'upgrade') await upgradePublicationStorage(db);
+    if (command === 'upgrade') { await upgradePublicationStorage(db); await installation.upgradeData?.(db,installation.model); }
     else await db.initialize();
     const publisher = { owner: process.env.EIGOS_PUBLISHER_SUBJECT ?? 'deployment', scopes: [] };
     await db.query(

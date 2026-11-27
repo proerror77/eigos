@@ -1,3 +1,4 @@
+import { ResourceReservations } from './resource-reservations.js';
 import { requireMachineryTransition } from './machinery-execution.js';
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
@@ -207,6 +208,7 @@ export class Actions {
         await assertActionConfirmed(this.db, model, execution.task, approvedWebhook.data, client);
       }
       await this.checkInput(objects, actionName, input, signal, scenarioEvaluation);
+      if (action.reservation) await new ResourceReservations(this.db).forAction(objects,actionName,input,requestId,'commit');
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
       for (const rule of action.rules ?? []) {
         if (rule.op === 'addLink') await objects.link({ type: rule.link, from: ref(rule.from), to: ref(rule.to) });
@@ -279,6 +281,7 @@ export class Actions {
         await objects.lockWrites();
         await access.refresh(client);
         await this.checkInput(objects, actionName, input, signal);
+        if (action.reservation) await new ResourceReservations(this.db).forAction(objects,actionName,input,requestId,'dispatch');
       },
       deferEffect: effect => {
         if (model.scenario) throw new Conflict('External effects require a formal Action');

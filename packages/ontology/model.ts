@@ -148,6 +148,12 @@ export class Ontology {
         if (!fn.implementation || fn.source || fn.edits)
           throw new Error('A webhook formatter requires a component Function without Source access or edits');
       }
+      if (action.reservation) {
+        const { holderParameter, allocationsParameter, sharedSource } = action.reservation;
+        if (!action.objectParameters[holderParameter] || !Object.hasOwn(action.parameters.properties ?? {}, allocationsParameter))
+          throw new Error('A reservation requires a typed holder and an allocations parameter');
+        if (sharedSource) required(this.sources, sharedSource);
+      }
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) acceptedVersion(action.apiName, required(this.functions, criterion.function), criterion.functionVersion);

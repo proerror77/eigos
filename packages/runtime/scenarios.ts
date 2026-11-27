@@ -1,3 +1,4 @@
+import { ResourceReservations } from './resource-reservations.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, type Principal } from '../core/identity.js';
@@ -1149,6 +1150,10 @@ export class Scenarios {
       }
     }
     for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
+    for (const step of actions) if (model.action(step.action).reservation) {
+      if (!step.input) throw new Conflict('A reserved Scenario Action needs its original input');
+      await new ResourceReservations(this.db).forAction(graph,step.action,step.input,step.request_id,'commit');
+    }
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);
     if (row.workflow_run_id && !(await this.db.query(
       `UPDATE ${this.db.schema}.workflow_runs SET state='completed',step=step+1,updated_at=now() WHERE id=$1 AND proposal_deadline>clock_timestamp()`,
