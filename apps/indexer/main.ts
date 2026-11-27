@@ -1,3 +1,5 @@
+import { MachineryExecution } from '../../packages/runtime/machinery-execution.js';
+import { MachineryWatchPlanner } from '../../packages/runtime/machinery-watch.js';
 import { ObservationInterests } from '../../packages/runtime/observation-interests.js';
 import { ProcessNotifications } from '../../packages/runtime/process-notifications.js';
 import { FunctionInvocations } from '../../packages/runtime/function-invocations.js';
@@ -29,7 +31,8 @@ const { effects } = capabilities;
 const automation = new Automation(db, metadata, capabilities.actions);
 const scenarios = new Scenarios(db);
 const observations = new ObservationInterests(db,metadata);
-const subscriptions = new ChangeSubscriptions(db, new Tasks(db, metadata));
+const subscriptions = new ChangeSubscriptions(db, new Tasks(db, metadata),
+  new MachineryWatchPlanner(db,metadata,new MachineryExecution(db,capabilities.actions)));
 const machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, capabilities.actions, capabilities.functions));
 const controller = new AbortController();
 process.on('SIGTERM', () => controller.abort());

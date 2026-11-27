@@ -1,7 +1,10 @@
+import { compileMachineryExecution } from '../ontology/process-definition.js';
+import type { ObjectRef } from '../ontology/schema.js';
+import { requireMachineryTransition } from './machinery-execution.js';
 import { withoutExternalDispatch } from './external-operations.js';
 import { ObservationInterests } from './observation-interests.js';
 import { randomUUID } from 'node:crypto';
-import { Conflict, digest, type Principal } from '../core/identity.js';
+import { Conflict, digest, NotFound, PermissionDenied, type Principal } from '../core/identity.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import { validator } from '../ontology/model.js';
 import { Database, type Sql } from './database.js';
@@ -110,6 +113,54 @@ export class ScheduledActions {
     );
     await this.db.query("SELECT pg_notify('eigos_tasks','scheduled')", [], graph.client);
   }
+  /** Retain the booked time and deadline. Only already authorized schedules bound to this subject can move off hold. */
+  async replanSubject(model: PublishedOntology, owner: string, object: ObjectRef, client: Sql) {
+    const edges = compileMachineryExecution(model).byType.get(object.type) ?? [];
+    const patterns = edges.map(edge => JSON.stringify({ action:edge.action, arguments:{ [edge.execution.subject]:object },
+      plannedRelease:model.release }));
+    const jobs = await this.db.query(`SELECT id,body,scopes FROM ${this.db.schema}.scheduled_actions
+      WHERE owner=$1 AND state='scheduled' AND deadline>now() AND body @> ANY($2::jsonb[]) ORDER BY id FOR UPDATE`,
+      [owner,patterns],client);
+    for (const job of jobs.rows) {
+      const principal = { owner,scopes:job.scopes,memberAccess:job.body.memberAccess === true } as Principal;
+      await this.refreshTransition(model,principal,job.id,job.body,client);
+    }
+  }
+
+  /** A job may become due before the Indexer consumes its first dependency change. */
+  private async hasProcessWatch(model: PublishedOntology, owner: string,
+    call: { action: string; arguments: Record<string, unknown> }, client: Sql) {
+    const subjects: string[] = [];
+    for (const edge of compileMachineryExecution(model).byAction.get(call.action) ?? []) {
+      const ref = objectRefSchema.safeParse(call.arguments[edge.execution.subject]);
+      if (ref.success && ref.data.type === edge.process.objectType) subjects.push(JSON.stringify(ref.data));
+    }
+    if (!subjects.length) return false;
+    return this.db.withTransactionOwner(client, owner, async () => {
+      const result = await this.db.query(`SELECT 1 FROM ${this.db.schema}.change_subscriptions
+        WHERE owner=$1 AND cancelled_at IS NULL AND footprint->'machinery'->>'release'=$2
+          AND footprint->'machinery'->'object'=ANY($3::jsonb[]) LIMIT 1`, [owner, model.release, subjects], client);
+      return Boolean(result.rowCount);
+    });
+  }
+
+  private async refreshTransition(model: PublishedOntology, principal: Principal, id: string,
+    call: { action:string; arguments:Record<string,unknown> }, client: Sql) {
+    let ready = true;
+    try {
+      const access = await Access.load(this.db,principal,client);
+      access.action(model,call.action);
+      await requireMachineryTransition(new Objects(this.db,model,access,client),call.action,call.arguments);
+    } catch (error) {
+      if (!(error instanceof Conflict || error instanceof PermissionDenied || error instanceof NotFound)) throw error;
+      ready = false;
+    }
+    await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET machinery_retry_at=
+      CASE WHEN $3 THEN now() ELSE least(deadline,now()+interval '30 seconds') END
+      WHERE owner=$1 AND id=$2 AND state='scheduled'`,[principal.owner,id,ready],client);
+    return ready;
+  }
+
   async promoteOne(): Promise<boolean> {
     return this.db.transaction(async (client) => {
       const model = await this.metadata.active('Eigos', client, true);
@@ -149,7 +200,8 @@ export class ScheduledActions {
       for (const { job, state } of terminalJobs.sort((a, b) => a.job.owner.localeCompare(b.job.owner))) await notify(job, state);
       const row = (
         await this.db.query(
-          `SELECT * FROM ${this.db.schema}.scheduled_actions WHERE state='scheduled' AND run_at<=now() ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+          `SELECT * FROM ${this.db.schema}.scheduled_actions WHERE state='scheduled' AND run_at<=now()
+            AND (machinery_retry_at IS NULL OR machinery_retry_at<=now()) ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT 1`,
           [],
           client,
         )
@@ -173,6 +225,11 @@ export class ScheduledActions {
           return fail('Published action contract changed; review and authorize a new plan');
       } catch {
         return fail('Current action or permissions are unavailable');
+      }
+      if (row.machinery_retry_at || await this.hasProcessWatch(model, row.owner, row.body, client)) {
+        const ready = await this.db.withTransactionOwner(client, row.owner,
+          () => this.refreshTransition(model, principal, row.id, row.body, client));
+        if (!ready) return true;
       }
       const taskId = randomUUID(),
         requestId = `schedule:${row.id}`;

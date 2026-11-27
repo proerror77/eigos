@@ -113,7 +113,7 @@ export class MachineryExecution {
     return result;
   }
 
-  private async evaluate(model: PublishedOntology, access: Access, input: z.infer<typeof machineryNextActionsInput>, client: Sql) {
+  async evaluate(model: PublishedOntology, access: Access, input: z.infer<typeof machineryNextActionsInput>, client: Sql) {
     const edges = compileMachineryExecution(model).byType.get(input.object.type) ?? [];
     const graph = new Objects(this.db, model, access, client);
     const subject = await graph.read(input.object);

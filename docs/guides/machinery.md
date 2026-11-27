@@ -152,3 +152,11 @@ EIGOS 用两种方式组织容器：
 提交仍使用发布的 Action。Action 会在提交检查中重新求值当前状态和
 依赖，直接调用也做同样的检查。为守卫验证完整性时，关系使用相同的
 PostgreSQL 事务快照。 [Machinery 状态与转换](https://www.palantir.com/docs/foundry/machinery/core-concepts/) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria/)
+
+### 已提交变化触发的局部重规划
+
+调用 `watch_machinery_process`，传入流程对象 `object`、幂等键 `requestId` 和接收通知的 `conversationId`。订阅从当前提交位置开始，固定在创建时的发布版本。调用者需要读取依赖对象和关系、写入 Ontology 及提交任务的权限。用返回的订阅 ID 调用 `cancel_machinery_watch` 可结束订阅。
+
+Indexer 按 owner 读取 05.4 的提交窗口。原对象被编辑、守卫依赖的关联对象被编辑，或原对象的守卫关系被建立或解除时，Indexer 按订阅人的当前权限重算候选 Action。可见结果发生变化时，原对话收到 `machinery_replanned`，可用 `machinery_next_actions` 读取详情。通知和游标在同一事务提交。原对象不可读、被删除或发布已切换时，订阅结束。
+
+已授权、绑定到该对象的待执行 Action 按排程原身份复查守卫。条件阻塞时延后检查，恢复时继续遵守原开始时间和截止时间。原对象关联的观察计划也会提前复查，沿用既有排程规划器。整个过程保留原 Action、参数和授权。
