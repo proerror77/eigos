@@ -25,7 +25,7 @@ function summarize(report: Report, proposed: MachineryModel) {
     affectedEdges: affected };
 }
 export type ProposalEvidence = {
-  release: string; process: string; modelDigest: string; owner: string; query: Query;
+  release: string; process: string; modelDigest: string; owner: string; contributors: string[]; query: Query;
   visibility: string; requirements: Requirement[]; summary: ReturnType<typeof summarize>;
 };
 
@@ -36,7 +36,7 @@ export async function analyzeProposal(db: Database, access: Access, model: Publi
   const report = await analyzeMachinery(db,access,model,{ ...query, candidate: proposed });
   const requirements = await access.finalDataRequirements();
   if (!await access.canReturn(requirements)) throw new PermissionDenied('Machinery evidence permissions changed');
-  return { release: model.release, process:type, owner:access.principal.owner, modelDigest:digest(proposed),
+  return { release: model.release, process:type, owner:access.principal.owner, contributors:[access.principal.owner], modelDigest:digest(proposed),
     query:{ ...query, from:report.from, to:report.to }, visibility:access.visibilityDigest,
     requirements,summary:summarize(report,proposed) };
 }

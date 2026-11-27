@@ -34,6 +34,9 @@ interface Branch {
   id: string; ontology: string; project: string | null; name: string; author: string; base_release: string;
   machinery_evidence: ProposalEvidence | null; body: OntologyDocument; revision: number; state: string; candidate: string | null; reviewer: string | null; reviewed_digest: string | null;
 }
+function recordContributor(evidence: ProposalEvidence | null, owner: string) {
+  return evidence && { ...evidence, contributors: [...new Set([...(evidence.contributors ?? [evidence.owner]),owner])] };
+}
 const resources = (document: OntologyDocument) => {
   const expanded=new Ontology(document).resourceDocument;
   const entries=Object.entries(resourceGroups).flatMap(([kind,field])=>(expanded[field]??[]).map(entry=>[resource(document.id,kind,entry.apiName+(kind==='valueType'&&'version'in entry?'@'+entry.version:'')),digest(entry)] as const));
@@ -130,7 +133,7 @@ export class Governance {
       if (row.state === 'merged' || row.revision !== input.revision) throw new Conflict('Branch is merged or its revision changed');
       const base = await this.metadata.get(row.base_release,client);
       await this.validateChanges(access,row,base.document,input.body,client); await access.refresh(client);
-      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [input.id,input.body], client);
+      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,machinery_evidence=$3,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [input.id,input.body,recordContributor(row.machinery_evidence,access.principal.owner)], client);
       return { id:input.id, revision:input.revision+1, state:'draft' };
     });
   }
@@ -192,7 +195,7 @@ export class Governance {
       if(imports.size||row.body.imports||current.document.imports)body.imports=[...imports.values()];
       body.version=row.body.version;
       await this.validateChanges(access,row,current.document,body,client);await access.refresh(client);
-      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,base_release=$3,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [row.id,body,current.release], client);
+      await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET body=$2,base_release=$3,machinery_evidence=$4,revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now() WHERE id=$1`, [row.id,body,current.release], client);
       return {id:row.id,revision:row.revision+1,state:'draft',baseRelease:current.release};
     });
   }
@@ -204,7 +207,8 @@ export class Governance {
     const proposed = row.body.objectTypes.find(object=>object.apiName===type)?.machinery;
     if (!type || !proposed || row.revision !== revision || row.state==='merged') throw new Conflict('Select the current Machinery proposal');
     const base = await this.metadata.get(row.base_release);
-    const evidence = await analyzeProposal(this.db,access,base,query,type,proposed);
+    const measured = await analyzeProposal(this.db,access,base,query,type,proposed);
+    const evidence = { ...measured, contributors: recordContributor(row.machinery_evidence,access.principal.owner)!.contributors };
     return this.db.transaction(async client => {
       await access.refresh(client);
       this.authorize(access,row,'edit_definition');
@@ -228,7 +232,7 @@ export class Governance {
       if(row.machinery_evidence && (row.base_release!==row.machinery_evidence.release ||
         digest(row.body.objectTypes.find(object=>object.apiName===row.machinery_evidence!.process)?.machinery ?? null)!==row.machinery_evidence.modelDigest))
         throw new Conflict('Refresh the Machinery evidence for this revision before review');
-      if(row.machinery_evidence && [row.author,row.machinery_evidence.owner].includes(access.principal.owner))
+      if(row.machinery_evidence && [row.author,row.machinery_evidence.owner,...(row.machinery_evidence.contributors ?? [])].includes(access.principal.owner))
         throw new Conflict('Machinery proposals require independent review');
       if(row.state!=='submitted'||row.revision!==input.revision||row.candidate!==input.release)throw new Conflict('Review requires the exact submitted candidate');
       const candidate=await this.metadata.get(input.release,client);

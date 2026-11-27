@@ -2013,9 +2013,16 @@ test('a Machinery proposal binds observed deviations and dwell to an independent
     assert.equal(reviewedView.proposalEvidence.scope,'reviewer');
     assert.equal(reviewedView.proposalEvidence.summary.deviationCases,0);
     assert(!('machinery_evidence' in reviewedView));
+    await setGrants(f.db,principal.owner,[{resource:'Eigos',permission:'manage_definition'}]);
+    const redacted = await services.get('get_branch')!.invoke(principal,{id:branch.id}) as typeof branch;
+    assert.equal(redacted.proposalEvidence.scope,'restricted');
+    assert(!('summary' in redacted.proposalEvidence));
+    await setGrants(f.db,principal.owner,grants);
+    const editor = {...principal,owner:'candidate-editor'};
+    await setGrants(f.db,editor.owner,grants);
     const edited = structuredClone(model.document);
     edited.objectTypes.find(o=>o.apiName===type)!.machinery = {...proposed,states:proposed.states.map(s=>s.name==='open'?{...s,dwellSeconds:600}:s)};
-    const updated = await services.get('update_branch')!.invoke(principal,{id:branch.id,revision:branch.revision,body:edited}) as {id:string;revision:number};
+    const updated = await services.get('update_branch')!.invoke(editor,{id:branch.id,revision:branch.revision,body:edited}) as {id:string;revision:number};
     const stale = await services.get('get_branch')!.invoke(principal,{id:branch.id}) as typeof branch;
     assert.equal(stale.proposalEvidence.scope,'earlier_revision');
     const staleCandidate = await services.get('prepare_branch')!.invoke(principal,{id:updated.id,revision:updated.revision}) as {id:string;revision:number;release:string};
@@ -2025,6 +2032,7 @@ test('a Machinery proposal binds observed deviations and dwell to an independent
     assert.equal((await f.metadata.active()).release,model.release);
     const review = { id:prepared.id,revision:prepared.revision,release:prepared.release };
     await assert.rejects(services.get('review_branch')!.invoke(principal,review),/independent review/);
+    await assert.rejects(services.get('review_branch')!.invoke(editor,review),/independent review/);
     const approved = await services.get('review_branch')!.invoke(reviewer,review) as typeof prepared;
     await services.get('merge_branch')!.invoke(reviewer,{id:approved.id,revision:approved.revision,release:approved.release});
     assert.equal((await f.metadata.active()).release,prepared.release);
