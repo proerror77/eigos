@@ -199,8 +199,9 @@ test('a component Function reads the Ontology as its caller would, within its li
   try {
     const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
     const document = structuredClone(f.model.document);
+    // Reach the callback-count limit even when 1,001 sequential PostgreSQL reads take more than the default deadline.
     document.functionTypes.push(echoFunction(sha256, { apiName: 'ReadOntology', description: 'Read the Ontology through the function host',
-      returns: { type: 'object' } }));
+      returns: { type: 'object' }, implementation: implementation(sha256, { deadlineMs: 30_000 }) }));
     const model = await f.metadata.publish(document, f.capabilities, f.publisher);
     await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), live = new Objects(f.db, model, access), sets = new ObjectSets(f.db);

@@ -20,6 +20,7 @@ type InboxTask = Task & { conversation_batch: string; message_count: number; col
 const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
+const claimContended = Symbol('claim contended');
 const headOfConversation = (table: string) => `NOT EXISTS (
   SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.conversation_id=t.conversation_id
     AND sibling.id<>t.id AND sibling.state IN('submitted','working','input-required')
@@ -190,6 +191,14 @@ export class Tasks {
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const task = await this.claimOnce(lane);
+      if (task !== claimContended) return task;
+      // Start a fresh transaction so the rejected task and its owner no longer hold locks.
+    }
+    return undefined;
+  }
+  private async claimOnce(lane?: 'scheduled' | 'interactive'): Promise<Task | typeof claimContended | undefined> {
     const scheduled = "t.input ? 'scheduledAction'";
     const kind = lane === 'scheduled' ? ` AND ${scheduled}` : lane === 'interactive' ? ` AND NOT (${scheduled})` : '';
     const table = `${this.db.schema}.tasks`;
@@ -211,7 +220,8 @@ export class Tasks {
         // Serialize interactive claims for the same owner across Workers, then recheck its share.
         await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-owner-claim', candidate.owner)], client);
         const { rows: [busy] } = await this.db.query<{ n: string }>(`SELECT ${running('$1')}::text AS n`, [candidate.owner], client);
-        if (Number(busy!.n) >= this.ownerSlots) return undefined;
+        // A competing claimant took the last slot after our candidate query. Other owners may still have work.
+        if (Number(busy!.n) >= this.ownerSlots) return claimContended;
       }
       if (candidate.conversation_id) {
         // A paused source retry can rejoin while another Worker is selecting a later batch.
