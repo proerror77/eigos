@@ -220,7 +220,7 @@
   - 函数的返回值可以声明为流；
   - 调用方逐段读取，Agent 和 Gateway 用 SSE 转发；
   - 取决于 WASI 0.3 对流的支持，在此之前用分段回调实现。
-- **向量生成：** 实现嵌入接口（`packages/ontology/embedding-definition.ts`）的组件函数可以作为语义索引的嵌入函数。向量仍按 [C5c 的决定](../query-kernel.md#向量检索的去留c5c-决定2026-11-26) 存放在 pgvector。
+- **向量生成：** 语义索引和查询调用已发布的只读组件 Function。组件遵守版本化嵌入契约（`packages/ontology/embedding-definition.ts`）。在 PostgreSQL 启用 pgvector 后，组件产生的向量可用于相似度排序。参见 [C5c 的决定](../query-kernel.md#向量检索的去留c5c-决定2026-11-26)。
 - **验收：**
   - 模型调用受出口策略约束；
   - 流式结果可以逐段消费；

@@ -14,6 +14,8 @@ import { ComponentFunctions, type ComponentImplementation } from '../packages/ru
 import { FunctionHostClient } from '../packages/runtime/function-host.js';
 import { ObjectSets } from '../packages/runtime/object-sets.js';
 import { Objects } from '../packages/runtime/objects.js';
+import { SemanticSearch } from '../packages/runtime/semantic.js';
+import { enablePgvector } from '../packages/runtime/semantic-pgvector.js';
 import { FixtureAgent } from './agent-driver.js';
 import { fixture, principal } from './fixture.js';
 
@@ -282,4 +284,36 @@ test('an Action runs a component edit Function: its reads see its edits, and the
   } finally {
     await f.close();
   }
+});
+
+test('a published component embedding Function indexes and ranks the caller’s objects', { skip }, async () => {
+  const f = await fixture();
+  try {
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const embeddingFunction = 'EmbedComponentFixture';
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(echoFunction(sha256, {
+      apiName: embeddingFunction,
+      description: 'Embed synthetic test text in the local component host',
+      parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+      returns: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+    }));
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+    const semantic = new SemanticSearch(f.db, f.capabilities.functions);
+    const name = 'ComponentVectors';
+    const north = { type: 'Route', id: 'test-north' }, south = { type: 'Route', id: 'test-south' };
+    await graph.create(north, { id: north.id, name: 'f5-vector: north avenue' });
+    await graph.create(south, { id: south.id, name: 'f5-vector: south avenue' });
+    await semantic.configure(f.publisher, model, { name, type: 'Route', property: 'name', embeddingFunction, dimensions: 2 });
+    if (process.env.EIGOS_TEST_PGVECTOR === 'true') await enablePgvector(f.db);
+    const indexed = await semantic.index(access, model, { name, objects: [south, north] });
+    assert.equal(indexed.indexed, 2);
+    assert.equal(indexed.binding, model.bindings.functions[embeddingFunction]);
+    const result = await semantic.search(access, model, { name, text: 'f5-vector: north', limit: 2 });
+    assert.equal(result.backend, process.env.EIGOS_TEST_PGVECTOR === 'true' ? 'pgvector' : 'jsonb');
+    assert.deepEqual(result.items.map(hit => hit.object.ref), [north, south]);
+    assert(result.items[0]!.score > result.items[1]!.score);
+  } finally { await f.close(); }
 });
