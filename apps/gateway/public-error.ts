@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, FunctionFailed, InvalidInput, NotFound, PermissionDenied, ResourceExhausted, ServiceUnavailable, SourceReadFailure } from '../../packages/core/identity.js';
 import { Clarification } from '../../packages/runtime/clarification.js';
+import { ProviderBudgetExceeded } from '../../packages/runtime/provider-budgets.js';
 
 export function publicError(error: unknown) {
   if (error instanceof PermissionDenied) return { status: 403, message: error.message };
@@ -9,6 +10,7 @@ export function publicError(error: unknown) {
   if (error instanceof Conflict || error instanceof Clarification) return { status: 409, message: error.message };
   if (error instanceof InvalidInput) return { status: 400, message: error.message };
   if (error instanceof ServiceUnavailable) return { status: 503, message: error.message };
+  if (error instanceof ProviderBudgetExceeded) return { status: 429, message: error.message };
   // A component Function's own failure or limit: the request reached the Function, which could not complete it.
   if (error instanceof ResourceExhausted || error instanceof FunctionFailed) return { status: 422, message: error.message };
   if (error instanceof SourceReadFailure) return error.unavailable

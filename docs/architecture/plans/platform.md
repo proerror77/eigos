@@ -66,18 +66,20 @@
 
 ## 06.1–06.3：运行时预算
 
+06.1 和 06.2 已实现 Worker 槽数、每个 owner 的交互槽上限和按 owner 轮转。06.3 已实现按进程配置主连接池，以及声明 `source` 的 Function 调用速率预算。配置见 [README](../../../README.md)。
+
 1. **工作槽（06.1）：**
    - Worker 进程同时处理多个任务，每个进程有 N 个槽，默认 4；
-   - 每个 owner 同时最多占 M 个槽，默认 2；
-   - `claim` 在领取时检查这两个上限，用 `FOR UPDATE SKIP LOCKED` 加上按 owner 统计的运行中任务数。
+   - 每个 owner 同时最多占 M 个交互槽，默认 2，排程有独立槽；
+   - Worker 控制进程槽数，`claim` 领取交互任务时用 `FOR UPDATE SKIP LOCKED` 和 owner 锁复查运行中交互任务数。
 2. **队列与公平（06.2）：**
    - 两条通道各有优先级，交互通道优先；
    - 同一通道内，按 owner 轮转领取，避免一个 owner 的大批任务挡住其他 owner；
    - 定时任务在到期时间之前不可领取，沿用 `available_at`。
 3. **连接、配额与速率（06.3）：**
-   - 数据库连接按用途分池：请求、Worker、Indexer、内核读取，各自有上限；
-   - 每个 owner 对每个供应商有配额和速率上限，用令牌桶，状态存在 PostgreSQL；
-   - 超过上限时，任务延后（`defer`），不算失败。
+   - Gateway、Worker 和 Indexer 可各自设置 `EIGOS_DB_POOL_MAX`。独立的只读连接池及 Rust 内核连接配置沿用现有机制；
+   - `EIGOS_PROVIDER_RATES` 为已发布的 Function `source` 设置每分钟速率和突发额度，按 owner 和 source 在 PostgreSQL 保存共享令牌桶；
+   - 超过预算时，Worker 用 `Tasks.postpone` 释放槽位并延后任务，直接调用返回 429。累计用量配额和独立 Action 外部写入预算仍待实现。
 4. **验收：** 压测下各预算按约定生效。一个 owner 提交 1000 个任务时，另一个 owner 的交互任务等待时间不超过一个任务的执行时间。
 
 ## 04.3 / 04.4：热点对象与资源预留

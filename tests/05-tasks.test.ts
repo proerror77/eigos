@@ -7,6 +7,12 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
+import { Tasks } from '../packages/runtime/tasks.js';
+import { ProviderBudgetExceeded, ProviderBudgets } from '../packages/runtime/provider-budgets.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
+import { Worker } from '../apps/worker/worker.js';
+import { OntologyAgent } from '../packages/runtime/agent.js';
+import { harnessProvider } from '../packages/runtime/model-egress.js';
 
 test('concurrent submissions retain one task and cancellation fences late results', async () => {
   const f = await fixture();
@@ -48,4 +54,84 @@ test('the existing PostgreSQL data upgrades in place with old definitions and ta
     assert.deepEqual(task.result, { kept: true }); assert(task.result_permissions.length > 0);
     assert.equal((await db.query(`SELECT count(*)::int n FROM ${s}.objects`)).rows[0]!.n, 1);
   } finally { await db.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`); await db.close(); }
+});
+
+test('owners take turns at the task queue, and each runs at most its share of slots', async () => {
+  const f = await fixture();
+  try {
+    const tasks = new Tasks(f.db, f.metadata, 2);
+    const other = { ...principal, owner: 'queue-other-owner' };
+    await setGrants(f.db, other.owner, businessGrants(f.model));
+    const submit = (as: typeof principal, requestId: string) => tasks.submit(as, { requestId, message: '只询价', route });
+    for (let index = 0; index < 4; index++) await submit(principal, 'backlog-' + index);
+    await submit(other, 'other-owner-task');
+    const next = async () => (await tasks.claim())?.request_id;
+    // The other owner's task came last but goes second: owners take turns.
+    assert.deepEqual([await next(), await next(), await next()], ['backlog-0', 'other-owner-task', 'backlog-1']);
+    // The first owner now runs two tasks, its share, so its backlog waits even with slots free.
+    assert.equal(await next(), undefined);
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET state='completed' WHERE request_id='backlog-0'`);
+    assert.equal(await next(), 'backlog-2');
+    // A lease that expired frees its slot as well.
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET lease_until=now()-interval '1 second' WHERE request_id='backlog-1'`);
+    assert.deepEqual([await next(), await next()], ['backlog-1', undefined]);
+  } finally { await f.close(); }
+});
+
+test('a provider call over its owner budget waits: the call is deferred and the Worker resumes the task later', async () => {
+  const f = await fixture();
+  try {
+    const budgets = new ProviderBudgets(f.db, { Didi: { perMinute: 60, burst: 2 } });
+    await budgets.take('budget-owner', 'Didi');
+    await budgets.take('budget-owner', 'Didi');
+    const exceeded = await budgets.take('budget-owner', 'Didi').then(() => undefined, (error: unknown) => error);
+    assert(exceeded instanceof ProviderBudgetExceeded);
+    assert(Date.parse(exceeded.until) > Date.now() && Date.parse(exceeded.until) <= Date.now() + 1500, exceeded.until);
+    // Budgets are per owner and per provider; providers without a rate are not limited.
+    await budgets.take('another-owner', 'Didi');
+    for (let index = 0; index < 5; index++) await budgets.take('budget-owner', 'Amap');
+    await f.db.query(`UPDATE ${f.db.schema}.provider_budgets SET refilled_at=refilled_at-interval '2 seconds' WHERE owner='budget-owner'`);
+    await budgets.take('budget-owner', 'Didi');
+
+    // A source Function takes a token from its caller's budget before it reads the provider.
+    const document = structuredClone(f.model.document);
+    const ping = { apiName: 'PingDidi', description: 'Read nothing from Didi, as a budget probe', version: '1', source: 'Didi',
+      parameters: { type: 'object' }, returns: { type: 'boolean' } };
+    document.functionTypes.push(ping);
+    const configured = process.env.EIGOS_PROVIDER_RATES;
+    process.env.EIGOS_PROVIDER_RATES = JSON.stringify({ Didi: { perMinute: 1, burst: 2 } });
+    let capabilities;
+    try {
+      capabilities = createCapabilities(f.db, f.source, { functions: [{ definition: ping, implementationId: 'ping-didi-1', handler: async () => true }] });
+    } finally {
+      if (configured === undefined) delete process.env.EIGOS_PROVIDER_RATES; else process.env.EIGOS_PROVIDER_RATES = configured;
+    }
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const call = async () => capabilities.functions.invoke(model, 'PingDidi', {},
+      { principal, objects: new Objects(f.db, model, await Access.load(f.db, principal)), signal: AbortSignal.timeout(30_000) });
+    assert.equal(await call(), true);
+    assert.equal(await call(), true);
+    await assert.rejects(call(), ProviderBudgetExceeded);
+
+    // A model tool may catch its sanitized error. The original budget error still defers the task in the Worker.
+    const agent = new OntologyAgent(f.db, f.metadata, f.tasks, capabilities, {
+      provider: harnessProvider,
+      model: 'synthetic-budget-probe',
+      async run(_prompt, tools) {
+        await tools.get('complete_with_function')!.invoke({ function: 'PingDidi', input: {} }).catch(() => {});
+      },
+    });
+    const task = await f.tasks.submit(principal, { requestId: 'over-budget', message: 'PingDidi' });
+    const worker = new Worker(f.tasks, agent);
+    assert.equal(await worker.runOne(), true);
+    const row = (await f.db.query<{ state: string; available_at: Date }>(`SELECT state,available_at FROM ${f.db.schema}.tasks WHERE id=$1`, [task.id])).rows[0]!;
+    assert.equal(row.state, 'submitted');
+    assert(row.available_at.getTime() > Date.now());
+    assert.equal(await worker.runOne(), false);
+    await f.db.query(`UPDATE ${f.db.schema}.provider_budgets SET refilled_at=refilled_at-interval '2 minutes' WHERE owner=$1`, [principal.owner]);
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET available_at=now() WHERE id=$1`, [task.id]);
+    assert.equal(await worker.runOne(), true);
+    assert.equal((await f.tasks.get(principal, task.id)).state, 'completed');
+  } finally { await f.close(); }
 });
