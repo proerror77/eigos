@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/engine"
+  },
+  "include": [
+    "apps/engine.ts",
+    "apps/gateway/code-mode-worker.ts",
+    "scripts/generate-ontology-sdk.ts"
+  ]
+}

@@ -191,7 +191,7 @@ export class ObservationInterests {
     requireScope(access.principal, 'ontology:write');
     requireScope(access.principal, 'ontology:read');
     const plan = startInterestSchema.parse(raw);
-    if (model.scenario || model.document.id !== 'Eigos')
+    if (model.scenario)
       throw new Conflict('Observation requires the live scheduled Ontology');
     if (JSON.stringify(plan).length > 32000) throw new Conflict('Observation phase parameters exceed their size limit');
     return this.db.withOwner(access.principal.owner, () =>
@@ -208,7 +208,7 @@ export class ObservationInterests {
           )
         ).rows[0];
         if (prior) {
-          if (prior.digest !== digest(plan)) throw new Conflict('Observation request ID belongs to another plan');
+          if (prior.ontology !== model.document.id || prior.digest !== digest(plan)) throw new Conflict('Observation request ID belongs to another plan');
           return this.readRow(graph, prior);
         }
         const remaining = Date.parse(plan.deadline) - Date.now();

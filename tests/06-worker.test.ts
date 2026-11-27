@@ -55,10 +55,8 @@ test('colloquial Chinese requests preload their published Agent profile', () => 
 test('runtime modules stay provider-neutral outside listed compatibility contracts', () => {
   const provider = /\.\.\/capabilities\/[\w-]+|hotel\w*|amap\w*|didi\w*|fliggy|meituan|dianping|rollinggo|\bluma\b|luckin|stripe|taobao|shopify|xiaohongshu|variflight|flightradar|fr24|mapPlace\w*/gi;
   // Existing clients and persisted tasks still send these public request and clarification fields.
-  // The organization catalogue service registers through the shared Ontology services.
   const compatibility: Record<string, string[]> = {
     'clarification.ts': ['Amap', 'amapPlaceAmendmentSchema', 'DiDi', 'MapPlace', 'mapPlaceCorrectionSchema', 'mapPlaceCorrectionsSchema'],
-    'services.ts': ['../capabilities/public-places'],
     'task-input.ts': ['HotelWorkflow', 'mapPlaceCorrections', 'mapPlaceCorrectionsSchema'],
   };
   const directory = new URL('../packages/runtime/', import.meta.url);

@@ -35,7 +35,6 @@ export type CognitiveContext = z.output<typeof cognitiveContextSchema>;
 export function authorizeCognitive(access: Access, model: PublishedOntology, step: CognitiveStep) {
   requireScope(access.principal, 'tasks:write');
   requireScope(access.principal, 'tasks:read');
-  if (model.document.id !== 'Eigos') throw new Conflict('Cognitive workflow steps require the Eigos task runtime');
   if (step.reviewers.includes(access.principal.owner)) throw new Conflict('Proposal reviewers must be separate identities');
   access.action(model, step.mergeAction);
   if (['scenarioId', 'revision'].includes(step.mergeObjectParameter) || !model.action(step.mergeAction).objectParameters[step.mergeObjectParameter])

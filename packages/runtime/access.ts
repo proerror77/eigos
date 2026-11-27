@@ -13,7 +13,7 @@ import { ModelEgressDenied } from './model-egress.js';
 import { Database, type Sql } from './database.js';
 import { markingsOf, permits, policySql, type ObjectPolicy, type SecurityContext } from './security.js';
 
-export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'manage_definition', 'view_objects', 'view_property', 'apply_action', 'execute_function', 'read_source', 'ingest_source', 'migrate_objects']);
+export const permissionSchema = z.enum(['view_definition', 'edit_definition', 'manage_definition', 'view_objects', 'view_property', 'apply_action', 'execute_function', 'read_source', 'ingest_source', 'dispatch_source', 'migrate_objects']);
 export type Permission = z.infer<typeof permissionSchema>;
 export const grantSchema = z.strictObject({ resource: z.string().min(1).max(300), permission: permissionSchema });
 export type Grant = z.infer<typeof grantSchema>;
@@ -449,6 +449,8 @@ export class Access {
     this.require(model.document.id, 'execute_function', resource(model.document.id, 'function', name));
   }
   source(model: Ontology, name: string) { this.require(model.document.id, 'read_source', resource(model.document.id, 'source', name), true); }
+  dispatchSource(model: Ontology, name: string) { this.require(model.document.id, 'dispatch_source', resource(model.document.id, 'source', name), true); }
+  exportedClassification() { return combineClassification(internalClassification, this.observedClassification); }
   recordScenarioRead(model: Ontology, id: string, release: string) {
     const ontology = model.document.id;
     this.require(ontology, 'view_definition', ontology);
@@ -550,7 +552,14 @@ export class Access {
     document.linkTypes = document.linkTypes.filter(link => include('link', link.apiName) && this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type) && modelVisible(link));
     document.functionTypes = document.functionTypes.filter(fn => include('function', fn.apiName) && visibleInCatalogue('function', fn.apiName) && this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
     const functions = new Set(document.functionTypes.map(fn => fn.apiName));
-    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || !this.principal.memberAccess && isScenarioReviewAction(action) || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
+    const webhookVisible = (action: typeof document.actionTypes[number]) => (action.effects ?? []).every(effect => {
+      if (!('webhook' in effect)) return true;
+      const { source, function: formatter } = effect.webhook;
+      return (!formatter || functions.has(formatter)) && (!executable || ('scenario' in model && Boolean(model.scenario)) || this.allows({
+        ontology: model.document.id, permission: 'dispatch_source', resource: resource(model.document.id, 'source', source),
+      }));
+    });
+    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || !this.principal.memberAccess && isScenarioReviewAction(action) || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && webhookVisible(action) && modelVisible(action));
     const actions = new Set(document.actionTypes.map(action => action.apiName));
     document.dataSources = document.dataSources.filter(source => include('datasource', source.apiName) && this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
     if (limited) {

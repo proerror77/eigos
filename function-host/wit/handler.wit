@@ -37,6 +37,7 @@ interface ontology {
 world handler {
   use types.{failure};
   import ontology;
+  import eigos:http/outgoing@0.1.0;
 
   /// Runs the Function on its JSON input and returns its JSON output.
   export invoke: func(input: string) -> result<string, failure>;
