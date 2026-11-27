@@ -1,7 +1,10 @@
+import {materialize} from './materialize-foundry.mjs';
 import { rmSync, mkdirSync, copyFileSync, writeFileSync, cpSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+materialize(undefined,{native:true});
 rmSync('dist', { recursive: true, force: true });
 execFileSync('node_modules/.bin/tsc', [], { stdio: 'inherit' });
+materialize('dist');
 mkdirSync('dist/packages/ontology/definitions', { recursive: true });
 for (const name of ['ride', 'scheduling']) copyFileSync(`packages/ontology/definitions/${name}.json`, `dist/packages/ontology/definitions/${name}.json`);
 cpSync('apps/workbench','dist/apps/workbench',{recursive:true});

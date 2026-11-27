@@ -1,0 +1,16 @@
+import { OntologyClient, TypedOntologyClient, PersonalAgentClient } from '@mdn-foundry/sdk';
+import { publication, type Bindings } from '@mdn-foundry/eigos';
+
+export function connect(baseUrl:string, token:string) {
+  const options = {baseUrl,token,ontology:publication.id};
+  return { pa:new PersonalAgentClient<Bindings>(options), typed:new TypedOntologyClient<Bindings>(new OntologyClient(options)) };
+}
+export function saveHome(pa:PersonalAgentClient<Bindings>, address:string) {
+  return pa.submitAction('save-home','SavePersonalPlace',{role:'home',city:'上海',address,confirmed:true,expectedRevision:0},'original-chat');
+}
+function checkTypeErrors(pa:PersonalAgentClient<Bindings>) {
+  // @ts-expect-error A generated action name is required.
+  void pa.submitAction('test','UnknownAction', {});
+  // @ts-expect-error The published action requires an explicitly confirmed address.
+  void pa.submitAction('test','SavePersonalPlace',{role:'home'});
+}

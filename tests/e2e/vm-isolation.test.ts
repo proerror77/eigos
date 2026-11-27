@@ -81,6 +81,15 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
     await run(process.execPath, [join(bundle, 'install.mjs'), dir]);
     await run('npm', ['ci', '--omit=dev', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: dir });
   };
+  const consumer = join(root,'outside-pa');
+  await mkdir(consumer);
+  await writeFile(join(consumer,'package.json'), JSON.stringify({private:true,type:'module'}));
+  const {stdout: packed} = await run(process.execPath,['scripts/package-sdk.mjs',consumer]);
+  const {client: clientFile,bindings} = JSON.parse(packed.trim());
+  await run('npm',['install','--ignore-scripts','--prefer-offline','--no-audit','--no-fund','./'+clientFile,'./'+bindings],{cwd:consumer});
+  await writeFile(join(consumer,'main.ts'),await readFile('tests/sdk-consumer/main.ts.example'));
+  await run(resolve('node_modules/.bin/tsc'),['--ignoreConfig','--strict','--skipLibCheck','--module','NodeNext','--target','ES2023','main.ts'],{cwd:consumer});
+  const external = await import(join(consumer,'main.js'));
   async function environment(label: string) {
     const name = 'vm_' + randomUUID().replaceAll('-', ''),
       role = name + '_app',
@@ -249,6 +258,7 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
       accounts,
       cli,
       runtimeURL,
+      pa: external.connect(base,token).pa,
       rpc,
       tool,
       send,
@@ -280,17 +290,9 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
   const blocked = new pg.Client({ connectionString: wrong.href });
   await assert.rejects(blocked.connect(), /permission denied/);
   await blocked.end();
-  const home = (label: string) =>
-    message('save-home', 'SavePersonalPlace', {
-      role: 'home',
-      city: '上海',
-      address: label,
-      confirmed: true,
-      expectedRevision: 0,
-    });
   await assert.rejects(a.cli('install', b.runtimeURL.href), /Database does not match/);
-  const hA = await a.send(home('甲环境合成住宅')),
-    hB = await b.send(home('乙环境合成住宅'));
+  const hA = await external.saveHome(a.pa,'甲环境合成住宅'),
+    hB = await external.saveHome(b.pa,'乙环境合成住宅');
   assert.notEqual(hA.id, hB.id);
   assert.equal(hA.contextId, hB.contextId);
   a.startWorker();
@@ -299,7 +301,7 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
   b.startWorker();
   await b.poll(hB.id, 'completed');
   const homes = async (x: typeof a) =>
-    (await x.tool('query_ontology', { query: { type: 'PersonalPlaceVersion' } })).items;
+    (await x.pa.query('PersonalPlaceVersion')).items;
   const rowsA = await homes(a),
     rowsB = await homes(b);
   assert.equal(rowsA.length, 1);
@@ -369,7 +371,7 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
     connected = { status: 'connected', connectionRef: reference };
   assert((await b.rpc('SendMessage', b.answer(qb.id, aa.requestId, connected))).body.error);
   assert((await a.rpc('SendMessage', a.answer(qa.id, ab.requestId, connected))).body.error);
-  await b.send(b.answer(qb.id, ab.requestId, connected));
+  await b.pa.respond(qb,randomUUID(),ab.requestId,connected);
   assert.equal((await a.poll(qa.id, 'input-required', 'didi.authorize')).result.requestId, aa.requestId);
   await a.send(a.answer(qa.id, aa.requestId, { status: 'declined' }));
   await a.poll(qa.id, 'failed');
@@ -377,6 +379,7 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
   assert.equal(authorizedRead.result.input.connectionRef, reference);
   await observe(b, qb.id, authorizedRead.result);
   const completed = await b.poll(qb.id, 'completed');
+  assert.equal((await b.pa.get(qb.id)).id,qb.id);
   assert.equal(completed.result.accepted, false);
   assert.equal(completed.result.estimates.length, 2);
   assert.deepEqual(completed.result.evidence, ['pa_reported']);
