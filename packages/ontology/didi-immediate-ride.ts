@@ -6,6 +6,8 @@ import { didiOrderEvidence } from './travel.js';
 
 export const immediateRideType = 'DidiImmediateRide';
 export const immediateRideInterface = 'ImmediateRideBooking';
+export const reconcileImmediateRideAction = 'ReconcileDidiImmediateRide';
+export const reconcileImmediateRideFunction = 'reconcileDidiImmediateRide';
 export const bookImmediateRideAction = 'BookDidiImmediateRide';
 export const immediateRideApprovalCapability = 'ride.confirm_immediate_order';
 export const immediateApprovalLink = 'ImmediateDidiApproval';
@@ -37,20 +39,26 @@ const order = z.strictObject({
   ref: objectRefSchema, orderId: z.string().min(1).max(500), status: z.string(), independentRead: z.boolean(),
   evidence: didiOrderEvidence,
 });
+export const immediateRideApproval = z.strictObject({
+  quoteDigest: digest, expiresAt: time, requestId: z.string().min(1),
+});
 export const immediateRideRecord = z.strictObject({
   id: digest, name: z.string(), sourceTaskId: z.uuid(), state: immediateRideState,
   pickup: location.nullable(), destination: location.nullable(), selectedFare: immediateFare.nullable(),
   updatedEstimateMinor: amount.nullable(), sourceAuthority: digest.nullable(),
   locationClassification: classificationSchema.optional(),
+  approvedQuote: immediateRideApproval.optional(),
 });
 export const immediateRideResult = immediateRideRecord.omit({ sourceAuthority: true, locationClassification: true }).extend({ order: order.nullable() });
 
-export function didiImmediateRideDefinition(parameters: Record<string, unknown>) {
+export function didiImmediateRideDefinition(parameters: Record<string, unknown>):
+  Pick<OntologyDocument, 'objectTypes' | 'interfaceTypes' | 'linkTypes' | 'functionTypes' | 'actionTypes'> {
   const properties = Object.fromEntries(Object.entries(immediateRideRecord.shape).map(([name, shape]) =>
     [name, { description: name, required: !shape.isOptional(), schema: json(shape) }]));
   const scope = { objectTypes: [immediateRideType, 'DidiRideOrder'], linkTypes: [immediateOrderLink] };
   const functionName = 'bookDidiImmediateRide';
   const description = 'Resolve pickup and destination, then book a DiDi ride now only after the authenticated PA confirms an exact available vehicle and fare estimate on this task.';
+  const reconcileDescription = 'Verify the original DiDi dispatch and update the existing ride from the original receipt and readback.';
   return {
     objectTypes: [{
       apiName: immediateRideType, displayName: '滴滴即时叫车', description, primaryKey: 'id', titleProperty: 'name', classificationProperty: 'locationClassification', properties,
@@ -76,8 +84,19 @@ export function didiImmediateRideDefinition(parameters: Record<string, unknown>)
     }, {
       apiName: 'readDidiImmediateRide', description: 'Read the immediate ride booking outcome and original order evidence.',
       parameters: json(immediateRideRef), returns: json(immediateRideResult), dependencies: scope,
+    }, {
+      apiName: reconcileImmediateRideFunction, description: reconcileDescription, source: 'Didi', edits: true,
+      parameters: json(immediateRideRef), returns: json(objectRefSchema), dependencies: {
+        ...scope, objectTypes: [...scope.objectTypes, 'Route', 'Place', 'PersonalPlaceVersion'],
+        linkTypes: [...scope.linkTypes, 'ImmediateRideRoute', 'RouteOrigin', 'RouteDestination',
+          'RouteOriginPersonalPlace', 'RouteDestinationPersonalPlace'],
+      },
     }],
     actionTypes: [{ apiName: bookImmediateRideAction, description, parameters,
-      objectParameters: {}, submissionCriteria: [], function: functionName }],
-  } satisfies Pick<OntologyDocument,'objectTypes'|'interfaceTypes'|'linkTypes'|'functionTypes'|'actionTypes'>;
+      objectParameters: {}, submissionCriteria: [], function: functionName }, {
+      apiName: reconcileImmediateRideAction, description: reconcileDescription,
+      parameters: json(immediateRideRef), objectParameters: { ride: immediateRideType }, submissionCriteria: [],
+      typeClasses: [{ kind: 'observation', name: 'readback' }], function: reconcileImmediateRideFunction,
+    }],
+  };
 }

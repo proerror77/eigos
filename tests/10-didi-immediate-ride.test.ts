@@ -6,7 +6,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/identity.js';
-import { bookImmediateRideAction, immediateRideApprovalCapability, immediateRideResult } from '../packages/ontology/didi-immediate-ride.js';
+import { bookImmediateRideAction, immediateRideApprovalCapability, immediateRideResult, reconcileImmediateRideAction } from '../packages/ontology/didi-immediate-ride.js';
 import { bookWithEndpoints } from '../packages/ontology/didi-ride-endpoints.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { setModelClearance } from '../packages/runtime/model-egress.js';
@@ -213,11 +213,50 @@ test('an unknown dispatch remains on the original task and is never automaticall
     assert.equal(await f.worker.runOne('interactive'), false);
     const attempts = (await f.db.query('SELECT state,task_id FROM ' + f.db.schema + '.external_operations')).rows;
     assert.deepEqual(attempts, [{ state: 'unknown', task_id: task.id }]);
+    const ride = { type: 'DidiImmediateRide', id: result.id };
+    await f.capabilities.actions.apply(f.access, f.model, reconcileImmediateRideAction, { ride }, 'reconcile-unknown');
+    assert.equal((await new Objects(f.db, f.model, f.access).read(ride)).properties.state, 'unknown');
+    assert.equal(f.provider.flags.orderCreates, 1);
+    assert.equal(f.provider.flags.orderQueries, 0);
   } finally {
     await f.close();
   }
 });
 
+
+test('reconciliation recovers the saved acknowledgement and reads the exact original order', async () => {
+  const f = await setup();
+  try {
+    const task = await f.submit();
+    const offer = await f.paused(task.id);
+    const source = f.provider.source.orders!, query = source.query.bind(source);
+    let calls = 0, available = false;
+    source.query = async (orderId, signal) => {
+      assert.equal(orderId, 'synthetic-original-order');
+      calls++;
+      if (!available) throw new Error('Synthetic readback unavailable');
+      return query(orderId, signal);
+    };
+    await f.reply(task.id, offer);
+    const result = f.versionedResult((await f.next(task.id)).result as Record<string, unknown>);
+    assert.equal(result.state, 'submitted');
+    assert.equal(result.approvedQuote?.quoteDigest, offer.input.quoteDigest);
+    assert.equal(result.order?.independentRead, false);
+    const ride = { type: 'DidiImmediateRide', id: result.id };
+    const graph = new Objects(f.db, f.model, f.access);
+    available = true;
+    await f.capabilities.actions.apply(f.access, f.model, reconcileImmediateRideAction, { ride }, 'verify-original-order');
+    assert.equal((await graph.read(ride)).properties.state, 'ordered');
+    const [verified] = await graph.follow(ride, 'order');
+    assert.deepEqual(verified?.ref, result.order?.ref);
+    assert.equal(verified?.properties.independentRead, true);
+    assert.equal(f.provider.flags.orderCreates, 1);
+    await f.capabilities.actions.apply(f.access, f.model, reconcileImmediateRideAction, { ride }, 'already-verified');
+    assert.equal(calls, 2);
+  } finally {
+    await f.close();
+  }
+});
 
 test('moving a saved endpoint after a fare is reviewed prevents dispatch of that original booking', async () => {
   const f = await setup(true);

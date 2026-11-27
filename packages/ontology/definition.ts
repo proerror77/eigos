@@ -32,7 +32,7 @@ import type { OntologyDocument } from './schema.js';
 import { fliggyServicesDefinition as fliggy, marketplaceDefinition as marketplace, servicesDefinition as services } from './services.js';
 import { fliggyFlightBookingDefinition } from './fliggy-flight-booking.js';
 import { fliggyHotelDefinition } from './fliggy-hotel.js';
-import { didiImmediateRideDefinition, immediateApprovalLink, immediateRideState, immediateRideInterface, immediateRideType } from './didi-immediate-ride.js';
+import { didiImmediateRideDefinition, immediateApprovalLink, immediateRideState, immediateRideInterface, immediateRideType, reconcileImmediateRideAction } from './didi-immediate-ride.js';
 import { amapObservationDefinition } from './amap-observations.js';
 import { didiReadDefinitions } from './didi-reads.js';
 import { didiOrderDefinitions, travelDefinition as travel } from './travel.js';
@@ -326,7 +326,7 @@ Object.assign(bookingInterface.actions, {
 });
 Object.assign(bookingObject.interfaces[immediateRideInterface]!.actions, {
   bookWithEndpoints: { action: bookWithEndpoints,
-    parameters: { ...bookingObject.interfaces[immediateRideInterface]!.actions.book.parameters, ...endpointMapping } },
+    parameters: { ...bookingObject.interfaces[immediateRideInterface]!.actions.book!.parameters, ...endpointMapping } },
 });
 Object.assign(bookingInterface.links, { route: { target: 'Route', cardinality: 'one', required: false } });
 Object.assign(bookingObject.interfaces[immediateRideInterface]!.links, { route: 'route' });
@@ -344,7 +344,12 @@ businessDefinition.objectTypes.push({
     id: { description: 'Original Action request ID', schema: { type: 'string' }, required: true },
     name: { description: 'Action awaiting human input', schema: { type: 'string' }, required: true },
     taskId: { description: 'Original EIGOS task', schema: { type: 'string', format: 'uuid' }, required: true },
-    state: { description: 'Confirmation process state', schema: {
+    inputRequestId: { description: 'ID of the latest input request', schema: { type: 'string', format: 'uuid' }, required: false },
+    inputPurpose: { description: 'Purpose of the latest input request', schema: {
+      type: 'string', enum: ['input', 'observation', 'authorization', 'execution-result'],
+    }, required: false },
+    inputCapability: { description: 'Capability of the latest input request', schema: { type: 'string' }, required: false },
+    state: { description: 'Input processing state; confirmed records accepted input', schema: {
       type: 'string', enum: ['awaiting-input', 'confirmed', 'completed', 'canceled', 'failed'],
     }, required: true },
   },
@@ -414,8 +419,10 @@ businessDefinition.objectTypes.find(type => type.apiName === 'ActionConfirmation
     ...['completed', 'failed', 'canceled'].map(to => ({ from: 'confirmed', to }))],
 };
 businessDefinition.objectTypes.find(type => type.apiName === 'DidiImmediateRideStateLog')!.machinery = {
-  states: immediateRideState.options.map(name => ({ name, terminal: true })),
-  transitions: immediateRideState.options.map(to => ({ from: null, to })),
+  states: immediateRideState.options.map(name => ({ name, terminal: name !== 'unknown' && name !== 'submitted' })),
+  transitions: [...immediateRideState.options.map(to => ({ from: null, to })),
+    { from: 'unknown', to: 'submitted', action: reconcileImmediateRideAction },
+    ...['submitted', 'unknown'].map(from => ({ from, to: 'ordered', action: reconcileImmediateRideAction }))],
   subprocesses: [{ link: 'approval', process: 'ActionConfirmationStateLog' }, { link: 'order', process: 'DidiRideOrderStateLog' }],
 };
 businessDefinition.objectTypes.find(type => type.apiName === 'DidiRideOrderStateLog')!.machinery = {
