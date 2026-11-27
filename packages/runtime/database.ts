@@ -12,6 +12,7 @@ import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeChangeSubscriptions } from './change-subscriptions.js';
 import { initializeLogArchives } from './log-retention.js';
+import { initializeProcessNotifications } from './process-notifications.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
@@ -366,6 +367,7 @@ export class Database {
     await initializeEditHistory(this);
     await initializeChangeSubscriptions(this);
     await initializeLogArchives(this);
+    await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
     await initializeExecutionTrace(this);
     await initializeIndexing(this);

@@ -16,6 +16,7 @@ import { matchingTransition, processRelatedPath, relatedProcessObjects, processR
 import { processLogTarget } from '../ontology/process-definition.js';
 import { withoutExternalDispatch } from './external-operations.js';
 import { processStart, readCommittedTransitions, readProcessTransitions, type ProcessPosition } from './process-logs.js';
+import { notifySchema, queueNotification } from './process-notifications.js';
 import { changedObjects, footprintChanged, latestCommit, queryFootprint } from './change-feed.js';
 import { authorizeCognitive, cognitiveContextSchema, cognitiveResultSchema, cognitiveStepSchema, workflowMerge, type CognitiveStep } from './cognitive-workflow.js';
 import { lockEdits } from './scenario-store.js';
@@ -94,14 +95,18 @@ const objectRule = baseRule.extend({ query: ruleQuerySchema, onModified: onModif
 const processRule = z.union([
   baseRule.extend({ process: processRuleSchema }),
   baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, effect:singleAction, replayFrom: z.string().regex(/^\d{1,19}$/).optional() }),
+  // A notification to the rule's owner, instead of a workflow or an Action.
+  baseRule.omit({ workflow:true }).extend({ process:processRuleSchema, notify:notifySchema }),
 ]);
 const ruleSchema = z.union([objectRule, processRule]);
 export const saveRuleSchema = baseRule.extend({
-  workflow: z.uuid().optional(), effect: singleAction.optional(),
+  workflow: z.uuid().optional(), effect: singleAction.optional(), notify: notifySchema.optional(),
   query: ruleQuerySchema.optional(), onModified: onModified.optional(), replayFrom: z.string().regex(/^\d{1,19}$/).optional(),
   process: processRuleSchema.optional(),
 }).refine(rule => Boolean(rule.query) !== Boolean(rule.process), 'Select one object query or process transition condition')
-  .refine(rule => Boolean(rule.workflow) !== Boolean(rule.effect) && (!rule.effect || !!rule.process),
+  .refine(rule => !rule.notify || !rule.workflow && !rule.effect && !!rule.process,
+    'A notification rule needs a process condition, without a workflow or an Action')
+  .refine(rule => !!rule.notify || Boolean(rule.workflow) !== Boolean(rule.effect) && (!rule.effect || !!rule.process),
     'Select a saved workflow or a single Action for a process trigger')
   .refine(rule => rule.replayFrom === undefined || !!rule.effect?.related, 'Replay requires a related-object Action')
   .refine(rule => rule.onModified === undefined || !!rule.query, 'Field changes require an object-set rule');
@@ -279,6 +284,8 @@ export class Automation {
     return transaction ? save(transaction) : this.db.transaction(save);
   }
   private async ruleDefinition(rule: z.output<typeof ruleSchema>, owner: string, ontology: string, client: Sql, lock = false) {
+    // A notification runs no steps; its scan queues the message instead of a workflow run.
+    if ('notify' in rule) return { definition: { name: rule.name, description: '', revision: 0, steps: [] } as z.output<typeof workflowSchema>, revision: null };
     if ('effect' in rule) {
       const definition = workflowSchema.parse({ name:rule.name, steps:[{ name:'Action', action:rule.effect.action, input:rule.effect.input }] });
       return { definition, revision:null };
@@ -449,7 +456,7 @@ export class Automation {
         const visibleRun = trigger && await this.visibleProcessRun(graph, objectRefSchema.parse(row.object_ref), trigger);
         items.push({id:String(row.id),revision:Number(row.revision),name:String(row.name),process:rule.process,
           enabled:Boolean(row.enabled),error:row.error,lastScan:row.last_scan,
-          effect:'effect' in rule ? {action:rule.effect.action} : {workflow:rule.workflow},
+          effect:'effect' in rule ? {action:rule.effect.action} : 'notify' in rule ? {notify:true} : {workflow:rule.workflow},
           latestRun:visibleRun ? {id:String(row.run_id),state:String(row.state),updatedAt:row.updated_at} : null});
       }
       await access.refresh(client);
@@ -1021,6 +1028,11 @@ export class Automation {
       const availableAt = new Date(item.recordedAt.getTime() + (input.process.dwellSeconds ?? 0) * 1000);
       for (const object of targets) {
         const fingerprint = digest(related ? [trigger, object] : trigger);
+        if ('notify' in input) {
+          await queueNotification(this.db, client, { owner, ontology: model.document.id, ruleId, requestId: 'process-rule:' + fingerprint,
+            object, trigger, scopes: access.principal.scopes, message: input.notify.message, availableAt });
+          continue;
+        }
         const bound = related ? {
           ...body, steps: [{
             ...body.steps[0]!, input: {

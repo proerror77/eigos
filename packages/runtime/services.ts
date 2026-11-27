@@ -1,4 +1,5 @@
 import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
+import { ProcessNotifications, notificationsSchema, readNotificationSchema } from './process-notifications.js';
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
@@ -82,6 +83,7 @@ export function ontologyServices(
   const applications = new Applications(db),
     automation = new Automation(db, metadata, actions),
     machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, actions, functions)),
+    notifications = new ProcessNotifications(db, metadata),
     semantic = new SemanticSearch(db, functions),
     packages = new OntologyPackages(db, metadata, bindings);
   const sets = new ObjectSets(db),
@@ -652,6 +654,10 @@ export function ontologyServices(
     listInterestsSchema,false,async(a,input)=>interests.list(a,await active(),input));
   register('cancel_observation_interest','Withdraw an owned observation interest and stop its outstanding checks.',
     cancelInterestSchema,true,async(a,input)=>interests.cancel(a,await active(),input));
+  register('process_notifications','Read the delivered notifications of your process rules, newest first; unread only on request.',
+    notificationsSchema,false,async(a,input)=>notifications.list(a,input));
+  register('read_process_notification','Mark one of your process rule notifications as read.',
+    readNotificationSchema,true,async(a,input)=>notifications.read(a,input));
   register('machinery_processes', 'Discover authorized Ontology processes and their published reference models.',
     z.strictObject({}), false, async a => listMachineryProcesses(a, await active()), { mcpOperatorRead: true });
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
