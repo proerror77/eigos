@@ -145,3 +145,35 @@ test('components built from the templates run in the function host', { skip: ski
     assert.ok(invalid?.kind === 'failure' && invalid.code === 'invalid-input', `${template}: ${JSON.stringify(invalid)}`);
   }
 }));
+
+test('the offline Function harness supplies a principal and reads its staged edits without a database', { skip }, async () => {
+  const { runFunction } = await import('../packages/function-test/index.js');
+  const ref = { type: 'Route', id: 'fixture-route' };
+  const options = {
+    binary: binary!,
+    component: await readFile(join(fixtures!, 'echo_rust.wasm')),
+    principal: { owner: 'fixture-owner', scopes: ['objects:read'] },
+    objects: [{ ref, revision: 1, properties: { name: 'Before' } }],
+    allowEdits: true,
+    stubs: {
+      query(_input: unknown, context: { principal: { owner: string }; get(object: typeof ref): { properties: unknown } | null }) {
+        assert.equal(context.principal.owner, 'fixture-owner');
+        return { items: [context.get(ref)] };
+      },
+    },
+    input: { script: [
+      { op: 'update', args: [{ ...ref, revision: 1 }, { name: 'After' }] },
+      { op: 'get', args: ['Route', ref.id], expect: { pointer: '/properties/name', equals: 'After' } },
+      { op: 'query', args: [{ type: 'Route' }], expect: { pointer: '/items/0/properties/name', equals: 'After' } },
+    ], return: ref },
+  };
+  const outcome = await runFunction(options);
+  assert.equal(outcome.error, undefined);
+  assert.deepEqual(outcome.value, ref);
+  assert.deepEqual(outcome.stagedEdits, [{ op: 'update', ref, revision: 1, properties: { name: 'After' } }]);
+  assert.deepEqual(options.objects[0]?.properties, { name: 'Before' });
+  const readOnly = await runFunction({ ...options, allowEdits: false });
+  assert.equal(readOnly.error?.kind, 'failure');
+  assert.equal(readOnly.error?.kind === 'failure' && readOnly.error.code, 'conflict');
+  assert.deepEqual(readOnly.stagedEdits, []);
+});

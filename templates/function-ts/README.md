@@ -46,3 +46,13 @@ npm run build
   - 调用一次约 2.4 ms。在执行函数代码之前，就要先用掉约 1000 万 fuel。
   - 至少需要 16 MB 内存，模板建议 64 MB。
 - **性能：** StarlingMonkey 以解释方式执行 JavaScript，计算密集的代码约比 Rust 慢 40 倍。这类函数建议用 [Rust 模板](../function-rust/README.md)。
+
+## 离线测试
+
+先构建组件，然后从 EIGOS 仓库打包并安装本地测试工具。见
+[@eigos/function-test](../../packages/function-test/README.md)。
+在模板目录运行以下测试。
+
+```bash
+EIGOS_FUNCTION_HOST_BIN=/path/to/eigos-function-host EIGOS_COMPONENT=function.wasm node --test tests/offline.test.mjs
+```
