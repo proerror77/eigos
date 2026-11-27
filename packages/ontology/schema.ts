@@ -174,7 +174,7 @@ export const ontologySchema = z.strictObject({
     })),
     rules: z.array(z.discriminatedUnion('op', [
       z.strictObject({ op: z.literal('createObject'), object: reference, properties: z.record(name, value) }),
-      z.strictObject({ op: z.literal('editObject'), object: parameter, expectedRevision: value, properties: z.record(name, value) }),
+      z.strictObject({ op: z.literal('editObject'), object: parameter, expectedRevision: value, properties: z.record(name, value), expectedProperties: z.record(name, value).optional() }),
       z.strictObject({ op: z.literal('addLink'), link: name, from: reference, to: reference }),
       z.strictObject({ op: z.literal('removeLink'), link: name, from: reference, to: reference }),
       z.strictObject({ op: z.literal('deleteObject'), object: parameter, expectedRevision: value }),

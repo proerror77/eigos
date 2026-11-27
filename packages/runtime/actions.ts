@@ -1,3 +1,4 @@
+import { HotEdits, type PriorEdits } from './hot-edits.js';
 import { requireMachineryTransition } from './machinery-execution.js';
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
@@ -27,6 +28,7 @@ type TaskExecution = NonNullable<FunctionContext['execution']>;
 
 export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
 export class Actions {
+  private readonly hotEdits = new HotEdits();
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
     private readonly committedEffects?: CommittedEffects) {}
   /**
@@ -127,13 +129,40 @@ export class Actions {
     return { release: model.release, items };
   }
   apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
-    return timeOperation('action_apply',
-      () => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation), actionName);
+    const run = (client?: Sql, prior?: PriorEdits) => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation, client, prior);
+    return timeOperation('action_apply', async () => {
+      // Staged evaluations, Functions, multi-object rules and effects keep their original transaction boundaries.
+      const action = model.actions.get(actionName);
+      const rule = action?.rules?.length === 1 ? action.rules[0] : undefined;
+      if (!action || rule?.op !== 'editObject' || model.scenario || model.evaluation ||
+          scenarioEvaluation || capturingDecisionReads() || action.function || action.effects?.length || action.submissionCriteria.length) return run();
+      const target = objectRefSchema.safeParse(evaluate(rule.object, raw));
+      if (!target.success) return run();
+      const ref = target.data, key = this.db.lockKey('object', model.projection, access.principal.owner, ref.type, ref.id);
+      const verify = async (client: Sql) => { signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client); };
+      const edit = { run, verify, requestId, signal, revision: Number(evaluate(rule.expectedRevision, raw)), fields: Object.keys(rule.properties) };
+      return this.hotEdits.submit(key, edit, items => this.db.objectScopedTransaction(async client => {
+        const ids = [...new Set(items.map(item => item.requestId))].sort();
+        const owner = access.principal.owner;
+        const keys = ids.map(id => this.db.lockKey('action',owner,'main',id));
+        await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)', [keys], client);
+        await new Objects(this.db, model, access, client).lockWrites();
+        await this.db.lockObjects(client, [key], 'exclusive');
+        await this.requireActive(model,client);
+        const saved = await this.db.query<{request_id:string;digest:string;result:ObjectRef}>(`SELECT request_id,digest,result
+          FROM ${this.db.schema}.actions WHERE owner=$1 AND request_id=ANY($2::text[])`,[owner,ids],client);
+        const prior: PriorEdits = new Map(saved.rows.map(row => [row.request_id,row]));
+        const results = [];
+        for (const item of items) results.push(await item.run(client,prior));
+        for (const item of items) await item.verify(client);
+        return results;
+      }, actionName));
+    }, actionName);
   }
   private async execute(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>,
     requestId: string, beforeCommit: ((client: Sql) => Promise<void>) | undefined, execution: FunctionContext['execution'],
     signal: AbortSignal, executor: ExecutionActor | undefined, scenarioEvaluation: ScenarioEvaluation | undefined,
-    batchClient?: Sql) {
+    batchClient?: Sql, hotPrior?: PriorEdits) {
     const principal = access.principal;
     const actor: ExecutionActor = executor ?? execution?.executor ?? (execution
       ? { kind: 'agent', id: 'eigos-ontology-agent' }
@@ -146,7 +175,7 @@ export class Actions {
       if (model.runtimeId !== this.db.runtimeId) throw new Conflict('Historical Actions are read-only');
       if (!model.scenario || scenarioEvaluation?.client !== model.evaluation.client)
         throw new Conflict('Prepared Actions require a temporary Scenario evaluation');
-    } else await this.requireActive(model, suppliedClient);
+    } else if (!hotPrior) await this.requireActive(model, suppliedClient);
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
     if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
       throw new Conflict('Scenario evaluation requires a staged Action');
@@ -190,11 +219,11 @@ export class Actions {
         scenarioEdits: model.scenario ? [] as ScenarioMutation[] : undefined };
       const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
       await objects.lockWrites();
-      const previous = await priorResult(client);
-      if (previous.rows[0]) {
-        if (previous.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
+      const previous = hotPrior ? hotPrior.get(requestId) : (await priorResult(client)).rows[0];
+      if (previous) {
+        if (previous.digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
-        return objectRefSchema.parse(previous.rows[0].result);
+        return objectRefSchema.parse(previous.result);
       }
       if (approvedWebhook?.success && execution) {
         const proof = webhookApprovalDigest(model, actionName, requestId, input);
@@ -221,7 +250,12 @@ export class Actions {
         }else {
           const fields = Object.fromEntries(Object.entries(rule.properties).map(([name, value]) => [name, evaluate(value, input)]));
           if (rule.op === 'createObject') await objects.create(ref(rule.object), fields);
-          else await objects.edit(objectRefSchema.parse(evaluate(rule.object, input)), Number(evaluate(rule.expectedRevision, input)), fields);
+          else {
+            const target = objectRefSchema.parse(evaluate(rule.object, input));
+            const expected = rule.expectedProperties && Object.fromEntries(Object.entries(rule.expectedProperties)
+              .map(([name,value]) => [name,evaluate(value,input)]));
+            await objects.edit(target, Number(evaluate(rule.expectedRevision,input)), fields, expected);
+          }
         }
       }
       const result = write ? objectRefSchema.parse(await write(objects)) : ref(action.result!);
@@ -229,6 +263,7 @@ export class Actions {
       else await this.db.query(
         `INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [principal.owner, requestId, fingerprint, actionName, model.release, result, actor.kind, actor.id, change.taskId ?? null], client);
+      hotPrior?.set(requestId, {digest:fingerprint,result});
       const pendingEffects = [...declaredEffects];
       if(objects instanceof JournalObjects){
         const changes=await objects.changes();

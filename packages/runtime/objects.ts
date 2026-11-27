@@ -973,15 +973,21 @@ export class Objects {
     }
     return found;
   }
-  async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).edit(ref, revision, fields));
+  async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>, expected?: Record<string, unknown>): Promise<void> {
+    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).edit(ref, revision, fields, expected));
     this.writeType(ref.type); await this.prepareWrite(); await this.lockObjects([ref], 'exclusive');
     this.assertStoredFields(ref,fields);
     const old = await this.stored(ref), properties = this.model.parseObject(ref, { ...old.properties, ...fields });
     this.access.readRow(this.model,ref.type,old.properties);
     for (const field of Object.keys(fields)) if (!this.access.cell(this.model,ref.type,field,old.properties)) throw new PermissionDenied('Cannot edit a hidden property');
     this.access.writeRow(this.model,ref.type,properties);
-    if (old.revision !== revision) throw new Conflict('Object revision changed');
+    if (expected) {
+      const fieldsMatch = Object.keys(fields).every(name => Object.hasOwn(expected, name) &&
+        digest({ value: old.properties[name] }) === digest({ value: expected[name] }));
+      if (!Number.isSafeInteger(revision) || revision < 1 || revision > old.revision || !fieldsMatch)
+        throw new Conflict('Compared object properties changed');
+      revision = old.revision;
+    } else if (old.revision !== revision) throw new Conflict('Object revision changed');
     if (this.model.scenario) {
       await stageObject(this.db, this.model, this.owner, ref, revision + 1, properties, this.client, Object.keys(fields), { op: 'edit', journal: this.change?.scenarioEdits }); return;
     }
