@@ -102,6 +102,13 @@ jobs:
         run: |
           grep -o '{"event":"kernel_shadow"[^}]*}' shadow.log | jq -s 'reduce .[] as $r ({}; reduce ($r | del(.event) | to_entries[]) as $e (.; .[$e.key] += $e.value))' | tee -a "$GITHUB_STEP_SUMMARY" || true
 
+          grep -o '{"event":"kernel_shadow_operation"[^}]*}' shadow.log | jq -s '
+            group_by(.operation) | map(reduce .[] as $r ({operation: .[0].operation};
+              reduce ($r | del(.event,.operation) | to_entries[]) as $e (.; .[$e.key] += $e.value))) |
+            map(.attempted = (.compared + .declined + .stale) |
+              .declinedFraction = (if .attempted == 0 then null else .declined / .attempted end))
+          ' | tee -a "$GITHUB_STEP_SUMMARY" || true
+
   hot-writes:
     runs-on: ubuntu-latest
     timeout-minutes: 10

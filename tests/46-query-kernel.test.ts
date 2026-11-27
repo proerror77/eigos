@@ -27,13 +27,14 @@ const values = (items: { ref: unknown; revision: number; properties: Record<stri
 const request = (id: string) => ({ type: 'RideRequest', id });
 const place = (id: string) => ({ type: 'Place', id });
 
-async function setup() {
+async function setup(extend: (document: Awaited<ReturnType<typeof fixture>>['model']['document']) => void = () => {}) {
   const f = await fixture();
   const document = structuredClone(f.model.document);
   const properties = document.objectTypes.find(type => type.apiName === 'Route')!.properties;
   properties.distance = { description: 'Synthetic distance', schema: { type: 'number' }, required: false };
   properties.lanes = { description: 'Synthetic lane count', schema: { type: 'integer' }, required: false };
   properties.open = { description: 'Synthetic open flag', schema: { type: 'boolean' }, required: false };
+  extend(document);
   const model = await f.metadata.publish(document, f.capabilities, f.publisher);
   await setGrants(f.db, principal.owner, businessGrants(model));
   const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
@@ -832,6 +833,34 @@ test('the query kernel follows an object\'s relationships like the reference', {
       .follow(place('p1'), 'departingRoutes')).map(item => item.ref.id)));
     assert.deepEqual(ids, ['Z', 'a', 'a!', 'a"b', 'ab', '\u00E9']);
   } finally { await t.kernel.stop(); await t.close(); }
+});
+
+test('relationship reads use the kernel while hydrating classified source and target fields', { skip: !binary }, async () => {
+  const f = await setup(document => {
+    const label = { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] };
+    document.objectTypes.find(type => type.apiName === 'Route')!.properties.name!.classification = label;
+    document.objectTypes.find(type => type.apiName === 'Place')!.properties.address!.classification = label;
+  });
+  try {
+    for (const clearance of clearances) {
+      await compareFollow(f, clearance, { ref: route('a'), link: 'origin' });
+      await compareFollow(f, clearance, { ref: place('p1'), link: 'departingRoutes' });
+    }
+    const read = async (clearance: Clearance) => {
+      const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
+      return access.measureEgress(async () => {
+        const targets = await followWithKernel(f.kernel, f.model, access, graph, {
+          ref: route('a'), link: 'origin', view: 'Route', maximum: 10,
+        });
+        assert(targets);
+        return targets[0]?.properties.address;
+      }, clearance);
+    };
+    assert.equal((await read(clearances[1])).result, null);
+    const visible = await read(clearances[2]);
+    assert.equal(visible.result, 'A');
+    assert.deepEqual(visible.classification, { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] });
+  } finally { await f.kernel.stop(); await f.close(); }
 });
 
 test('queries answer through the kernel when routed, page with kernel cursors, and fall back to the reference', { skip: !binary }, async () => {
