@@ -643,6 +643,7 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
       return { set: { op: 'traverse', set: start.set, steps }, types };
     }
     case 'saved':
+    case 'machinery':
       return undefined;
   }
 }

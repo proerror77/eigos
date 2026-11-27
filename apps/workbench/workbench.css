@@ -662,3 +662,8 @@ input { accent-color:var(--accent); }
 .machinery-graph .unexpected { stroke: #a94e29; }
 .machinery-graph .expected { stroke: #8a9592; stroke-dasharray: 4 3; }
 .machinery-graph text { fill: var(--ink); font-size: 12px; }
+
+/* Machinery: node tones from metric thresholds or the dwell target of a duration view. */
+.machinery-graph rect.tone-green { fill: #e5f4e8; stroke: #2f7d45; }
+.machinery-graph rect.tone-amber { fill: #fdf1d6; stroke: #a86b00; }
+.machinery-graph rect.tone-red { fill: #fbe3e1; stroke: #b3261e; }

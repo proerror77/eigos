@@ -1,5 +1,6 @@
 import { Conflict, digest } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
+import { processLogTarget } from '../ontology/process-definition.js';
 import { valueKinds } from '../ontology/property-path.js';
 import type { Database, Sql } from './database.js';
 import { setExpressionSchema, type SetExpression } from './object-sets.js';
@@ -58,6 +59,14 @@ function contract(model: Ontology, root: SavedSet, sets: ReadonlyMap<string, Sav
         let current = visit(node.set);
         for (const step of node.path) current = new Set([...current].map(type => follow(type, step.link, step.as)));
         return current;
+      }
+      case 'machinery': {
+        // The process's tracked objects: the ProcessLog and the object type must both remain.
+        const target = processLogTarget(model, String(node.analysis.type));
+        if (!target) throw new Error('Machinery process is unavailable');
+        dependencies.add(target.type);
+        dependencies.add(target.objectType);
+        return new Set([target.objectType]);
       }
       case 'union':
         return new Set(node.sets.flatMap(child => [...visit(child)]));

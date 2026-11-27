@@ -658,13 +658,18 @@ export function ontologyServices(
     machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input), { mcpOperatorRead: true });
   register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',
     machineryHistorySchema,true,async(a,input)=>ingestMachineryHistory(db,a,await active(),input));
-  register('save_machinery_cases','Save all authorized matches from a Machinery filter into a static Object Set.',
-    z.strictObject({analysis:machineryAnalysisSchema,name:z.string().min(1).max(200),requestId:z.string().min(1).max(128)}),
+  register('save_machinery_cases','Save the authorized matches of a Machinery filter as an Object Set: static keeps today\'s cases, dynamic analyzes again on each read.',
+    z.strictObject({analysis:machineryAnalysisSchema,name:z.string().min(1).max(200),requestId:z.string().min(1).max(128),
+      mode:z.enum(['static','dynamic']).default('static')}),
     true,async(a,input)=>{
       requireScope(a.principal,'ontology:read');
       const model=await active(), result=await analyzeMachinery(db,a,model,input.analysis,true);
       if(!result.members?.length)throw new Conflict('The analysis contains no visible cases');
       if(!await a.canReturn(a.dataRequirements()))throw new Conflict('Machinery case permissions changed');
+      if(input.mode==='dynamic'){
+        if(input.analysis.setId||input.analysis.focus)throw new Conflict('A dynamic Machinery selection analyzes all readable processes or one object');
+        return sets.save(a,model,{requestId:input.requestId,name:input.name,mode:'dynamic',set:{op:'machinery',analysis:input.analysis}});
+      }
       return sets.save(a,model,{requestId:input.requestId,name:input.name,mode:'static',set:{op:'refs',objects:result.members}});
     });
   register('machinery_propose_model', 'Open a definition branch for a manual or mined process model at the observed release.',
