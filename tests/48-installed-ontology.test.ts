@@ -50,7 +50,9 @@ test('installed Ontologies scope inbox identity, scheduled promotion, observatio
     await graph.create(ref, { id: ref.id, name: 'Synthetic', state: 'open' });
     const deadline = new Date(Date.now() + 600000).toISOString();
     const schedule = new ScheduledActions(db, metadata);
-    const job = { id: randomUUID(), action: 'CloseRecord', arguments: { record: ref }, runAt: new Date().toISOString(), deadline };
+    // Promotion uses the database clock. Supply an already-due time from that same clock.
+    const due = (await db.query<{ at: Date }>("SELECT now() - interval '1 second' AS at")).rows[0]!.at.toISOString();
+    const job = { id: randomUUID(), action: 'CloseRecord', arguments: { record: ref }, runAt: due, deadline };
     await assert.rejects(schedule.enqueue(graph, { ...job, sourceTaskId: first.id }), /mismatch/);
     await schedule.enqueue(graph, { ...job, sourceTaskId: second.id });
     const current = await metadata.publish({ ...fixture.document, version: '2' }, runtime, publish);
@@ -75,7 +77,7 @@ test('installed Ontologies scope inbox identity, scheduled promotion, observatio
     const wake = (await db.query(`SELECT release,input FROM ${db.schema}.tasks WHERE conversation_id='updates'`)).rows;
     assert.equal(wake.length, 1); assert.equal(wake[0]!.release, current.release);
     assert.equal(wake[0]!.input.paClient, principal.clientId);
-    const revoked = { ...job, id: randomUUID(), runAt: new Date().toISOString() };
+    const revoked = { ...job, id: randomUUID() };
     await schedule.enqueue(new Objects(db, current, access), revoked);
     await setGrants(db, principal.owner, []);
     assert(await schedule.promoteOne());
