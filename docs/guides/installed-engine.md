@@ -4,14 +4,14 @@
 
 ## 构建与安装
 
-在开发仓库运行以下命令。独立构建从宿主、类型生成器和 Code Mode Worker 入口编译其依赖，并检查产物中的反向依赖。
+在开发仓库构建引擎后，将清单路径指向本次安装选定的业务包。独立构建从宿主、类型生成器和 Code Mode Worker 入口编译其依赖，并检查产物中的反向依赖。
 
 ```sh
 npm ci
 npm run build:engine
-export EIGOS_SOLUTION_MANIFEST="$PWD/packages/solutions/shipment/installation.json"
+export EIGOS_SOLUTION_MANIFEST="/path/to/your-package/installation.json"
 node dist/engine/apps/engine.js check
-node dist/engine/scripts/generate-ontology-sdk.js packages/solutions/shipment/ontology.json
+node dist/engine/scripts/generate-ontology-sdk.js /path/to/your-package/ontology.json
 ```
 
 配置该安装的 `DATABASE_URL` 和数据库角色后运行以下命令。已有安装使用 `upgrade` 代替 `initialize`。更新前保留数据库备份，停止旧版本接收新任务。已有任务固定到原发布和原实现。存储迁移根据发布记录回填任务所属 Ontology，并从任务回填 inbox 事件。旧写入角色应在切换 schema 前停止。
@@ -29,4 +29,4 @@ node dist/engine/apps/engine.js publish
 
 安装清单引用同目录的定义包、定义摘要，以及可选的单文件 ESM 实现及 SHA-256。实现应预先打包。它以受信任的进程权限运行，导出 `register` 并返回 Function 处理器、来源投影、Effects 或 AgentDriver。运行时验证模块字节后加载，使用实现摘要和 Engine 摘要建立发布身份。定义所需的 Function、Source 和 Effect 按原发布机制校验。单独的 `prepare` 和 `activate <release>` 支持已有候选发布流程。
 
-可运行的参考包位于 `packages/solutions/shipment/`。测试在空数据库注册一票合成运单，由原 PA 补充名称，替换 Worker 后恢复，并独立回读运单。EIGOS 使用内置注册和原有实现身份，保留历史调用契约。
+引擎验收使用 `tests/fixtures/installed-ontology/` 中的测试包。测试在空库创建一条记录，由原 PA 补充名称，替换 Worker 后恢复并回读该记录。EIGOS 使用内置注册和原有实现身份，保留历史调用契约。

@@ -17,17 +17,17 @@ test('installed Ontologies scope inbox identity, scheduled promotion, observatio
   const url = process.env.EIGOS_TEST_DATABASE_URL!;
   assert.equal(new URL(url).hostname, '127.0.0.1');
   assert.equal(new URL(url).password, 'synthetic-only');
-  const installation = await loadInstallation(resolve('packages/solutions/shipment/installation.json'));
-  const db = new Database(url, 'eigos_shipment_' + randomUUID().replaceAll('-', ''));
+  const installation = await loadInstallation(resolve('tests/fixtures/installed-ontology/installation.json'));
+  const db = new Database(url, 'eigos_record_' + randomUUID().replaceAll('-', ''));
   const principal = { owner: 'sender', clientId: 'original-pa', scopes: ['tasks:read', 'tasks:write', 'ontology:read', 'ontology:write'] };
   try {
     await db.initialize();
-    const metadata = new Metadata(db, 'Shipment'), runtime = installation.assemble(db);
-    await setGrants(db, 'publisher', ['Shipment','Freight'].map(resource => ({ resource, permission: 'manage_definition' })));
+    const metadata = new Metadata(db, 'TestRecord'), runtime = installation.assemble(db);
+    await setGrants(db, 'publisher', ['TestRecord','SecondFixture'].map(resource => ({ resource, permission: 'manage_definition' })));
     const publish = await Access.load(db, { owner: 'publisher', scopes: [] });
-    const shipment = await metadata.publish(installation.model.document, runtime, publish);
-    const freight = await metadata.publish({ ...shipment.document, id: 'Freight' }, runtime, publish);
-    const grants = [...businessGrants(shipment), ...businessGrants(freight)];
+    const record = await metadata.publish(installation.model.document, runtime, publish);
+    const fixture = await metadata.publish({ ...record.document, id: 'SecondFixture' }, runtime, publish);
+    const grants = [...businessGrants(record), ...businessGrants(fixture)];
     await setGrants(db, principal.owner, grants);
     const access = await Access.load(db, principal);
     const tasks = new Tasks(db, metadata), message = { message: 'synthetic inquiry', requestId: 'same', conversationId: 'chat' };
@@ -39,27 +39,27 @@ test('installed Ontologies scope inbox identity, scheduled promotion, observatio
       CREATE UNIQUE INDEX tasks_conversation_batch ON ${db.schema}.tasks(owner,conversation_id,conversation_batch) WHERE conversation_id IS NOT NULL;
       ALTER TABLE ${db.schema}.task_inbox_events DROP COLUMN ontology, ADD PRIMARY KEY(owner,request_id);`);
     await upgradePublicationStorage(db);
-    const second = await tasks.submit(principal, message, { ontologyId: 'Freight' });
+    const second = await tasks.submit(principal, message, { ontologyId: 'SecondFixture' });
     assert.notEqual(first.id, second.id);
-    assert.equal(first.release, shipment.release); assert.equal(second.release, freight.release);
+    assert.equal(first.release, record.release); assert.equal(second.release, fixture.release);
     assert.equal((await tasks.submit(principal, message)).id, first.id);
     await assert.rejects(tasks.submit({ ...principal, clientId: 'other-pa' }, message), /another PA/);
     await tasks.cancel(principal, first.id); await tasks.cancel(principal, second.id);
-    const ref = { type: 'Shipment', id: 's1' };
-    const graph = new Objects(db, freight, access);
-    await graph.create(ref, { id: ref.id, name: 'Synthetic', state: 'registered' });
+    const ref = { type: 'TestRecord', id: 's1' };
+    const graph = new Objects(db, fixture, access);
+    await graph.create(ref, { id: ref.id, name: 'Synthetic', state: 'open' });
     const deadline = new Date(Date.now() + 600000).toISOString();
     const schedule = new ScheduledActions(db, metadata);
-    const job = { id: randomUUID(), action: 'DeliverShipment', arguments: { shipment: ref }, runAt: new Date().toISOString(), deadline };
+    const job = { id: randomUUID(), action: 'CloseRecord', arguments: { record: ref }, runAt: new Date().toISOString(), deadline };
     await assert.rejects(schedule.enqueue(graph, { ...job, sourceTaskId: first.id }), /mismatch/);
     await schedule.enqueue(graph, { ...job, sourceTaskId: second.id });
-    const current = await metadata.publish({ ...freight.document, version: '2' }, runtime, publish);
+    const current = await metadata.publish({ ...fixture.document, version: '2' }, runtime, publish);
     const observations = new ObservationInterests(db, metadata), subscriptions = new ChangeSubscriptions(db, tasks);
     const interest = await observations.start(access, current, { requestId: 'watch', object: ref, deadline,
-      phases: [{ name: 'delivery', process: 'ShipmentStateLog', complete: ['delivered'], wait: { maxSilenceSeconds: 300 } }] });
-    const sub = await subscriptions.subscribe(access, current, { requestId: 'watch', conversationId: 'updates', types: ['Shipment'] });
-    // A commit by this same owner to the same type in the other Ontology must not wake Freight.
-    await new Objects(db, shipment, access).create(ref, { id: ref.id, name: 'Other', state: 'registered' });
+      phases: [{ name: 'closure', process: 'TestRecordStateLog', complete: ['closed'], wait: { maxSilenceSeconds: 300 } }] });
+    const sub = await subscriptions.subscribe(access, current, { requestId: 'watch', conversationId: 'updates', types: ['TestRecord'] });
+    // A commit by this same owner to the same type in the other Ontology must not wake SecondFixture.
+    await new Objects(db, record, access).create(ref, { id: ref.id, name: 'Other', state: 'open' });
     assert(await subscriptions.scanOne());
     assert.equal((await db.query(`SELECT id FROM ${db.schema}.tasks WHERE conversation_id='updates'`)).rowCount, 0);
     assert(await schedule.promoteOne()); assert.equal(await schedule.promoteOne(), false);

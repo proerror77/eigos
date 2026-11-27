@@ -1,21 +1,21 @@
 {
   "format": "eigos-ontology-package-v1",
-  "ontology": "Shipment",
+  "ontology": "TestRecord",
   "version": "1",
-  "digest": "f729b6a7eb4e282df4cd5f3ec30ec02de2d713d7a3d95ae0ec31ac3490002940",
+  "digest": "1c77411bc4431fd0d42ac758e9c0291b6bd977bd38dcd2f81184b2473a4d6dd6",
   "document": {
-    "id": "Shipment",
+    "id": "TestRecord",
     "version": "1",
     "objectTypes": [
       {
-        "apiName": "Shipment",
-        "displayName": "Shipment",
-        "description": "Synthetic freight shipment",
+        "apiName": "TestRecord",
+        "displayName": "TestRecord",
+        "description": "Synthetic test record",
         "primaryKey": "id",
         "titleProperty": "name",
         "properties": {
           "id": {
-            "description": "Shipment ID",
+            "description": "TestRecord ID",
             "schema": {
               "type": "string",
               "minLength": 1
@@ -23,7 +23,7 @@
             "required": true
           },
           "name": {
-            "description": "Shipment name",
+            "description": "TestRecord name",
             "schema": {
               "type": "string",
               "minLength": 1
@@ -31,12 +31,12 @@
             "required": true
           },
           "state": {
-            "description": "Delivery state",
+            "description": "Record state",
             "schema": {
               "type": "string",
               "enum": [
-                "registered",
-                "delivered"
+                "open",
+                "closed"
               ]
             },
             "required": true
@@ -45,9 +45,9 @@
         "interfaces": {}
       },
       {
-        "apiName": "ShipmentStateLog",
-        "displayName": "Shipment process log",
-        "description": "Committed changes to Shipment.state; proposed Scenario edits are excluded",
+        "apiName": "TestRecordStateLog",
+        "displayName": "TestRecord process log",
+        "description": "Committed changes to TestRecord.state; proposed Scenario edits are excluded",
         "primaryKey": "id",
         "titleProperty": "name",
         "properties": {
@@ -180,7 +180,7 @@
         "typeClasses": [
           {
             "kind": "machinery-log",
-            "name": "Shipment"
+            "name": "TestRecord"
           },
           {
             "kind": "machinery-property",
@@ -350,15 +350,15 @@
     ],
     "linkTypes": [
       {
-        "apiName": "ShipmentStateLogProcess",
-        "description": "State changes of Shipment.state",
+        "apiName": "TestRecordStateLogProcess",
+        "description": "State changes of TestRecord.state",
         "from": {
-          "type": "ShipmentStateLog",
+          "type": "TestRecordStateLog",
           "name": "process",
           "cardinality": "one"
         },
         "to": {
-          "type": "Shipment",
+          "type": "TestRecord",
           "name": "stateLogs",
           "cardinality": "many"
         }
@@ -366,8 +366,8 @@
     ],
     "functionTypes": [
       {
-        "apiName": "RegisterShipment",
-        "description": "Register a synthetic shipment",
+        "apiName": "CreateRecord",
+        "description": "Create a test record",
         "parameters": {
           "type": "object",
           "properties": {
@@ -405,8 +405,8 @@
         "edits": true
       },
       {
-        "apiName": "ReadShipment",
-        "description": "Read a shipment name",
+        "apiName": "ReadRecord",
+        "description": "Read a record name",
         "parameters": {
           "type": "object",
           "properties": {
@@ -426,12 +426,12 @@
         }
       },
       {
-        "apiName": "DeliverShipment",
-        "description": "Mark the shipment delivered",
+        "apiName": "CloseRecord",
+        "description": "Mark the record closed",
         "parameters": {
           "type": "object",
           "properties": {
-            "shipment": {
+            "record": {
               "type": "object",
               "properties": {
                 "type": {
@@ -450,7 +450,7 @@
             }
           },
           "required": [
-            "shipment"
+            "record"
           ],
           "additionalProperties": false
         },
@@ -476,8 +476,8 @@
     ],
     "actionTypes": [
       {
-        "apiName": "RegisterShipment",
-        "description": "RegisterShipment",
+        "apiName": "CreateRecord",
+        "description": "CreateRecord",
         "parameters": {
           "type": "object",
           "properties": {
@@ -497,15 +497,15 @@
         },
         "objectParameters": {},
         "submissionCriteria": [],
-        "function": "RegisterShipment"
+        "function": "CreateRecord"
       },
       {
-        "apiName": "DeliverShipment",
-        "description": "DeliverShipment",
+        "apiName": "CloseRecord",
+        "description": "CloseRecord",
         "parameters": {
           "type": "object",
           "properties": {
-            "shipment": {
+            "record": {
               "type": "object",
               "properties": {
                 "type": {
@@ -524,15 +524,15 @@
             }
           },
           "required": [
-            "shipment"
+            "record"
           ],
           "additionalProperties": false
         },
         "objectParameters": {
-          "shipment": "Shipment"
+          "record": "TestRecord"
         },
         "submissionCriteria": [],
-        "function": "DeliverShipment"
+        "function": "CloseRecord"
       }
     ],
     "dataSources": []
