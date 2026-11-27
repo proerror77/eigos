@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { scenarioReviewActions } from '../packages/ontology/scenario-definition.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Objects } from '../packages/runtime/objects.js';
-import { Scenarios } from '../packages/runtime/scenarios.js';
+import { initializeScenarioLifecycle, Scenarios } from '../packages/runtime/scenarios.js';
 import { ontologyServices } from '../packages/runtime/services.js';
 import { document, fixture, principal } from './fixture.js';
 
@@ -64,6 +64,10 @@ test('published Scenario review Actions retain the legacy receipt and govern rej
     assert.equal((await metadata()).reviewStatus, 'in-review');
     assert.deepEqual(await legacy('approve_scenario_review', reviewer, { id: draft.id, revision: next.revision, snapshot: next.snapshot }),
       { id: draft.id, revision: next.revision, reviewer: reviewer.owner, approved: true });
+    assert.equal((await metadata()).reviewStatus, 'approved');
+    // Reconstruct the old storage shape: the decision existed before the metadata fields were backfilled.
+    await db.query(`UPDATE ${db.schema}.scenarios SET review_status=NULL,reviewed_revision=NULL WHERE id=$1`, [draft.id]);
+    await initializeScenarioLifecycle(db);
     assert.equal((await metadata()).reviewStatus, 'approved');
     await capabilities.actions.apply(await access(), model, 'MergeReviewedRoute',
       { id: draft.id, revision: next.revision, route: route.id }, 'approved-merge');
