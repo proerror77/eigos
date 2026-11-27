@@ -1,4 +1,5 @@
 import type { ComponentFunctions } from '../../runtime/component-functions.js';
+import type { ProviderBudgets } from '../../runtime/provider-budgets.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -58,7 +59,7 @@ export async function verifiedDidiRead(source: DidiSource, context: FunctionCont
 }
 
 export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
-  components?: ComponentFunctions) {
+  components?: ComponentFunctions, budgets?: ProviderBudgets) {
   const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>) => {
     const source = await resolveSource(context.principal.owner);
     return verifiedDidiRead(source, context, tool, input);
@@ -189,5 +190,5 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
     ['readRideEstimates', readEstimates(false)],
     ['readInteractiveRideEstimate', readEstimates(true)],
     ...additional,
-  ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes, versions, components);
+  ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes, versions, components, budgets);
 }

@@ -12,6 +12,7 @@ import {initializeActionUndo} from './action-journal.js';
 import { initializeObjectSets } from './object-sets.js';
 import { initializeChangeSubscriptions } from './change-subscriptions.js';
 import { initializeLogArchives } from './log-retention.js';
+import { initializeProviderBudgets } from './provider-budgets.js';
 import { initializeProcessNotifications } from './process-notifications.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
 import { initializeGovernance } from './governance.js';
@@ -45,6 +46,9 @@ export const objectLockBudget = 128;
 /** Tables whose rows object locks protect; statements on them must come from code that took those locks. */
 const ontologyData = /\.(?:objects|links|source_values|object_edits|edit_history|scenario_objects|scenario_links)\b/;
 
+/** Connections a process keeps to PostgreSQL. A Worker needs about one per slot and two more. */
+const poolSize = () => Math.min(100, Math.max(2, Number(process.env.EIGOS_DB_POOL_MAX ?? 8) || 8));
+
 export class Database {
   readonly pool: pg.Pool;
   readonly schema: string;
@@ -61,7 +65,8 @@ export class Database {
     readonly sandboxEnabled = developmentSandboxEnabled()) {
     if (!/^eigos(?:_[a-z0-9]+)*$/.test(schema)) throw new Error('Invalid schema');
     this.schema = `"${schema}"`;
-    this.pool = new pg.Pool({ connectionString, max: 8, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+    // Each process sizes its own pool (runtime budget 06.3): EIGOS_DB_POOL_MAX, 8 by default.
+    this.pool = new pg.Pool({ connectionString, max: poolSize(), connectionTimeoutMillis: 5000, statement_timeout: 10000 });
     if (queryConnectionString) {
       this.queryPool = new pg.Pool({connectionString:queryConnectionString,max:8,connectionTimeoutMillis:1000,statement_timeout:10000,options:'-c default_transaction_read_only=on'});
       this.queryPool.on('error',()=>{});
@@ -370,6 +375,7 @@ export class Database {
     await initializeEditHistory(this);
     await initializeChangeSubscriptions(this);
     await initializeLogArchives(this);
+    await initializeProviderBudgets(this);
     await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
     await initializeExecutionTrace(this);

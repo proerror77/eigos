@@ -276,6 +276,18 @@ export class Tasks {
       await this.db.query(`UPDATE ${this.db.schema}.scheduled_actions SET continue_at=NULL WHERE owner=$1 AND id=$2 AND task_id=$3`,[task.owner,task.input.scheduledAction!.scheduleId,task.id],client);
     });
   }
+  /**
+   * Puts a task back in the queue until `until`, as when its owner's budget for a provider is used up. It then runs again
+   * from the start, as a task whose lease expired does; its Actions are idempotent by request.
+   */
+  async postpone(task: Task, until: string) {
+    if (!Number.isFinite(Date.parse(until))) throw new Conflict('Invalid task retry time');
+    await this.db.transaction(async client => {
+      await this.current(task, client, true);
+      await this.db.query(`UPDATE ${this.db.schema}.tasks SET state='submitted',available_at=$2,token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`,
+        [task.id, until], client);
+    });
+  }
   async finish(task: Task, state: 'completed' | 'failed' | 'input-required', result: unknown,
     error?: string, permissions: Requirement[] = [], pending?: PlaceContinuation) {
     await this.db.transaction(async client => {

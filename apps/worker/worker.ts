@@ -6,6 +6,7 @@ import { profileDatabase, profileSummary, type DatabaseProfile } from '../../pac
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
+import { ProviderBudgetExceeded } from '../../packages/runtime/provider-budgets.js';
 
 type TaskLane = 'scheduled' | 'interactive';
 
@@ -52,6 +53,8 @@ export class Worker {
       return 'completed';
     } catch (error) {
       if (error instanceof DeferredExecution) return await this.tasks.defer(task, error.until).then(() => 'deferred', () => 'uncommitted');
+      // A provider call over its owner's budget waits for the budget instead of failing the task (runtime budget 06.3).
+      if (error instanceof ProviderBudgetExceeded) return await this.tasks.postpone(task, error.until).then(() => 'deferred', () => 'uncommitted');
       const clarification = error instanceof Clarification;
       const state = clarification ? 'input-required' : 'failed';
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');

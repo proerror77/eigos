@@ -1,5 +1,6 @@
 import { Conflict, FunctionFailed, InvalidInput, NotFound, ServiceUnavailable, SourceReadFailure, digest, type Principal, type ExecutionActor } from '../core/identity.js';
 import type { ComponentFunctions } from './component-functions.js';
+import type { ProviderBudgets } from './provider-budgets.js';
 import { timeOperation } from '../core/operation-timing.js';
 import { validator, type Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
@@ -53,7 +54,7 @@ const componentBinding = (definition: Definition) =>
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
-    private readonly components?: ComponentFunctions) {
+    private readonly components?: ComponentFunctions, private readonly budgets?: ProviderBudgets) {
     for (const definition of definitions) {
       if (definition.version) continue;
       const handler = handlers.get(definition.apiName);
@@ -115,9 +116,15 @@ export class Functions {
       context.execution?.task.cognitive_context?.scenarioId === model.scenario))
       throw new Conflict('Read external sources before opening a scenario; scenario Functions only use Ontology data');
     if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');
-    if (definition.source) { await access.refresh(); access.source(model, definition.source); }
+    if (definition.source) {
+      await access.refresh(); access.source(model, definition.source);
+    }
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
+    if (definition.source && this.budgets) {
+      await this.budgets.take(access.principal.owner, definition.source);
+      context.signal.throwIfAborted();
+    }
     const output = await timeOperation('function', async () => entry.handler(parameters, definition.edits ? context : {
       ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
     }), name);

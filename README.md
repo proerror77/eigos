@@ -35,6 +35,10 @@ Worker 的并发和公平（运行时预算 06.1、06.2）：
 - 同一通道里，owner 轮流领取：最久没有被服务的 owner 先领（`task_turns` 记录每个 owner 上次被服务的时间）。所以一个 owner 的大批任务不会挡住其他 owner。
 - 生产的 Worker 数据库角色需要 `task_turns` 的 SELECT、INSERT、UPDATE。
 
+供应商速率（06.3）用 `EIGOS_PROVIDER_RATES` 配置，例如 `{"Didi":{"perMinute":60,"burst":2}}`。键是已发布 Function 的 `source` 名称，区分大小写。Gateway 和 Worker 应读相同的配置。每个 owner 和 source 共享一个 PostgreSQL 令牌桶，合法调用消耗一个令牌，未列出的 source 不限速。预算耗尽时，Worker 延后任务到可重试时刻，直接 HTTP 调用返回 429，MCP 工具错误的结构化状态为 429。
+
+升级时建好 `provider_budgets`，给配置了速率且调用 source Function 的 Gateway、Worker 和 Indexer 数据库角色授予 SELECT、INSERT、UPDATE。`EIGOS_DB_POOL_MAX` 按进程配置主 PostgreSQL 连接池，默认 8。若增加 Worker 槽数，也要核对连接池容量。当前速率预算覆盖声明 `source` 的 Function 调用，直接由 Action 发起的供应商写入仍有各自的执行约束。
+
 每次 CI 都会构建这两个镜像，但不发布。`scripts/container-smoke.sh` 以非 root 用户、在没有任何配置的情况下运行 Gateway、Worker 和 Indexer 的入口。每个入口都必须先加载完全部依赖，并停在配置检查上，才算通过。镜像只能手动发布：在 Actions 中运行 Release images，并填写 main 上 CI 已通过的完整提交号。镜像推送到 `ghcr.io/<仓库>/gateway` 和 `ghcr.io/<仓库>/worker`，标签为 `sha-<提交号>`。同一标签不会被覆盖，部署仍须单独授权。
 
 JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject 计算。`GET /identity` 返回当前 owner 与 scopes。本地开发使用 `.env` 中的随机令牌，owner 为 `local-developer`。

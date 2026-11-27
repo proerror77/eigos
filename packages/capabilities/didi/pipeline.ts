@@ -1,4 +1,5 @@
 import { ComponentFunctions } from '../../runtime/component-functions.js';
+import { ProviderBudgets } from '../../runtime/provider-budgets.js';
 import {EntityResolution} from '../../runtime/entity-resolution.js';
 import type { RuntimeExtensions } from '../../runtime/extensions.js';
 import { Effects } from '../../runtime/effects.js';
@@ -30,7 +31,7 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
     ['prepareRideInquiry', prepare],
     ['prepareRideInquiryWithPlaceClues', prepareInteractive],
     [prepareWithEndpoints, prepareInteractive],
-  ]), definitions, extensions.functions, new ComponentFunctions(db));
+  ]), definitions, extensions.functions, new ComponentFunctions(db), new ProviderBudgets(db));
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {
