@@ -2,6 +2,7 @@ import type { Ontology } from '../ontology/model.js';
 import type { OntologyDocument } from '../ontology/schema.js';
 import { Actions, type CommittedEffects } from './actions.js';
 import { ComponentFunctions } from './component-functions.js';
+import { ActionSourceWebhooks, effectHandlerName } from './action-webhooks.js';
 import { configuredComponentSources } from './component-source-egress.js';
 import type { Database } from './database.js';
 import { Effects } from './effects.js';
@@ -20,15 +21,19 @@ export function assembleRuntime(
     if (registered.has(name)) throw new Error('Source projection is already registered: ' + name);
     registered.set(name, projection);
   }
-  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources(db)), new ProviderBudgets(db));
+  const componentSources = extensions.componentSources ?? configuredComponentSources(db);
+  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db, undefined, componentSources), new ProviderBudgets(db));
   const sources = new Sources(db, functions, registered);
-  const effects = new Effects(db, extensions.effects ?? new Map());
+  const webhooks = componentSources && new ActionSourceWebhooks(componentSources, functions);
+  const effects = new Effects(db, extensions.effects ?? new Map(), webhooks);
   const actions = new Actions(db, functions, effects, committedEffects);
   return {
     functions, sources, effects, actions,
     describe(model: Ontology) {
-      effects.check(model.resolvedDocument.actionTypes.flatMap(action => action.effects?.map(effect => effect.handler) ?? []));
-      return { functions: functions.bindings(model), sources: sources.bindings(model) };
+      effects.check(model.resolvedDocument.actionTypes.flatMap(action => action.effects?.map(effectHandlerName) ?? []));
+      const publishedWebhooks = webhooks?.bindings(model);
+      return { functions: functions.bindings(model), sources: sources.bindings(model),
+        ...(publishedWebhooks && Object.keys(publishedWebhooks).length ? { webhooks: publishedWebhooks } : {}) };
     },
     checkRelease: (model: Ontology) => functions.checkRelease(model),
   };

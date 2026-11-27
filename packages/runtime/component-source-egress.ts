@@ -4,7 +4,8 @@ import { request } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { InvalidInput, PermissionDenied, SourceReadFailure, digest } from '../core/identity.js';
-import { ontologyName } from '../ontology/schema.js';
+import { ontologyName, webhookMethod, webhookPath } from '../ontology/schema.js';
+import { allowsClassification, classificationSchema, type Classification } from '../ontology/classification.js';
 import { ComponentSourceSecrets } from './component-source-secrets.js';
 import { ComponentOAuthGrants, SourceOAuthReauthorization, SourceOAuthRejection } from './component-source-oauth.js';
 import type { Database } from './database.js';
@@ -37,6 +38,8 @@ const connectionSchema = z.strictObject({
   networks: z.array(z.string().min(3).max(90)).max(32).optional(),
   bearerSecret: secretName.optional(),
   oauth: oauthSchema.optional(),
+  webhooks: z.array(z.strictObject({ method: webhookMethod, path: webhookPath, clearance: classificationSchema }))
+    .min(1).max(50).optional(),
 }).refine(value => !value.bearerSecret || !value.oauth, 'Configure one Source credential mechanism');
 export const componentHttpConnections = z.record(ontologyName, connectionSchema);
 type Method = z.infer<typeof method>;
@@ -48,8 +51,7 @@ const outboundRequest = z.strictObject({
   contentType: z.enum(['application/json', 'text/plain']).default('application/json'),
 });
 const responseLimit = 1 << 20;
-type OutboundContext = {
-  mode: 'read' | 'effect';
+type OutboundContext = ({ mode: 'read' } | { mode: 'effect'; idempotencyKey: string; classification: Classification }) & {
   signal: AbortSignal;
   /** Revalidates the current source permission and, for effects, the persisted dispatch authorization. */
   authorize: (source: string, method: Method) => Promise<void>;
@@ -149,6 +151,13 @@ export class ComponentSourceEgress {
     this.connections = componentHttpConnections.parse(configuration);
     for (const connection of Object.values(this.connections)) {
       if (connection.networks) networkList(connection.networks);
+      const destinations = new Set<string>();
+      for (const webhook of connection.webhooks ?? []) {
+        const target = targetUrl(connection, webhook.path), key = webhook.method + ' ' + target.href;
+        if (!connection.methods.includes(webhook.method) || destinations.has(key))
+          throw new InvalidInput('Webhook targets need unique allowed methods and paths');
+        destinations.add(key);
+      }
       if (connection.oauth?.grant === 'refresh_token' && !this.grants)
         throw new Error('Configure encrypted Source OAuth grant storage');
     }
@@ -159,6 +168,15 @@ export class ComponentSourceEgress {
     if (!connection) throw new PermissionDenied('The declared Source has no HTTP connection');
     const { oauth, ...transport } = connection;
     return digest({ ...transport, baseUrl: connection.baseUrl.href, ...(oauth ? { oauth: { ...oauth, tokenUrl: oauth.tokenUrl.href } } : {}) });
+  }
+
+  webhookBinding(source: string, method: Method, path: string, label?: Classification) {
+    const binding = this.binding(source), connection = this.connections[source]!;
+    const target = targetUrl(connection, path);
+    const permission = connection.webhooks?.find(rule => rule.method === method && targetUrl(connection, rule.path).href === target.href);
+    if (!permission || label && !allowsClassification(permission.clearance, label))
+      throw new PermissionDenied('Source webhook exceeds its destination policy');
+    return binding;
   }
 
   private async clientToken(source: string, oauth: Extract<OAuth, { grant: 'client_credentials' }>, context: OutboundContext,
@@ -237,8 +255,13 @@ export class ComponentSourceEgress {
         throw new PermissionDenied('The Source request method is not allowed');
       if (body !== undefined && ['GET', 'HEAD'].includes(method)) throw new InvalidInput('A read request cannot have a body');
       const url = targetUrl(connection, path);
+      if (context.mode === 'effect') {
+        this.webhookBinding(source, method, path, context.classification);
+        if (!/^[0-9a-f]{64}$/.test(context.idempotencyKey)) throw new PermissionDenied('An Action effect requires a committed idempotency key');
+      }
       await context.authorize(source, method);
       const headers: Record<string, string> = { accept: 'application/json, text/plain' };
+      if (context.mode === 'effect') headers['idempotency-key'] = context.idempotencyKey;
       if (body !== undefined) headers['content-type'] = contentType;
       const signal = AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]);
       const oauth = connection.oauth;
@@ -247,8 +270,8 @@ export class ComponentSourceEgress {
         credential = oauth.grant === 'refresh_token'
           ? await this.refreshToken(source, method, oauth, context, connection.networks, signal)
           : (await this.clientToken(source, oauth, context, connection.networks)).value;
-        await context.authorize(source, method);
       } else if (connection.bearerSecret) credential = await context.secret(connection.bearerSecret);
+      if (oauth || context.mode === 'effect') await context.authorize(source, method);
       if ((connection.bearerSecret || connection.oauth) && (!credential || /[\r\n]/.test(credential)))
         throw new PermissionDenied('Source credential is unavailable');
       if (credential) headers.authorization = 'Bearer ' + credential;

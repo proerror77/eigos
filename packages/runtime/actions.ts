@@ -14,6 +14,8 @@ import { checkScenario, recordScenarioAction, type ScenarioMutation } from './sc
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
+import { effectHandlerName, webhookApprovalCapability, webhookApprovalDigest } from './action-webhooks.js';
+import { PARequests } from './pa.js';
 import { validateCognitive } from './cognitive-workflow.js';
 import { ActionInputRequired, Clarification, actionContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
@@ -146,9 +148,18 @@ export class Actions {
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
     if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
       throw new Conflict('Scenario evaluation requires a staged Action');
+    const agentWebhook = !model.scenario && action.effects?.some(effect => 'webhook' in effect) &&
+      (execution || actor.kind !== 'client');
+    const approvedWebhook = agentWebhook ? actionContinuationSchema.safeParse(execution?.task.input.placeContinuation) : undefined;
+    if (agentWebhook && (!approvedWebhook?.success || !execution || !model.objects.has('ActionConfirmation') ||
+        approvedWebhook.data.pending?.capability !== webhookApprovalCapability ||
+        approvedWebhook.data.pending.purpose !== 'authorization' ||
+        approvedWebhook.data.action !== actionName || approvedWebhook.data.requestId !== requestId ||
+        digest(validator(action.parameters).parse(approvedWebhook.data.input)) !== digest(input)))
+      throw new PermissionDenied('A Source webhook requires explicit approval for this Action request');
     if (action.effects?.length && !model.scenario) {
       if (!this.effects) throw new Error('Action effects require a configured dispatcher');
-      this.effects.check(action.effects.map(effect => effect.handler));
+      this.effects.check(action.effects.map(effectHandlerName));
     }
     const fingerprint = digest({ release: model.release, action: actionName, input });
     const declaredEffects: ActionEffect[] = [];
@@ -182,6 +193,16 @@ export class Actions {
         if (previous.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
         return objectRefSchema.parse(previous.rows[0].result);
+      }
+      if (approvedWebhook?.success && execution) {
+        const proof = webhookApprovalDigest(model, actionName, requestId, input);
+        const approval = await this.db.query(`SELECT 1 FROM ${this.db.schema}.pa_requests
+          WHERE id=$1 AND task_id=$2 AND owner=$3 AND request->>'capability'=$4
+            AND request->>'actionRequestId'=$5 AND request->>'purpose'='authorization'
+            AND request#>>'{input,digest}'=$6 AND response->>'digest'=$6 AND response->'approved'='true'::jsonb`,
+        [approvedWebhook.data.pending!.id, execution.task.id, principal.owner, webhookApprovalCapability, requestId, proof], client);
+        if (!approval.rowCount) throw new PermissionDenied('The original Action webhook was not approved');
+        await assertActionConfirmed(this.db, model, execution.task, approvedWebhook.data, client);
       }
       await this.checkInput(objects, actionName, input, signal, scenarioEvaluation);
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
@@ -294,11 +315,27 @@ export class Actions {
     } : undefined;
     let reference: ObjectRef;
     try {
+      const action = execution && !model.scenario ? model.actions.get(selected.action) : undefined;
+      const webhooks = action?.effects?.flatMap(effect => 'webhook' in effect ? [effect.webhook] : []) ?? [];
+      if (execution && action && webhooks.length) {
+        await access.refresh();
+        access.action(model, selected.action);
+        await this.requireActive(model);
+        for (const webhook of webhooks) access.dispatchSource(model, webhook.source);
+        const input = validator(action.parameters).parse(selected.input) as Record<string, unknown>;
+        const proof = webhookApprovalDigest(model, selected.action, requestId, input);
+        const response = await new PARequests(execution.tasks).requestActionInput(execution.task, requestId, proof,
+          webhookApprovalCapability, 'authorization', { action: selected.action, requestId, input, digest: proof },
+          { type: 'object', properties: { approved: { type: 'boolean' }, digest: { const: proof } },
+            required: ['approved', 'digest'], additionalProperties: false }) as { approved: boolean };
+        if (!response.approved) throw new PermissionDenied('The original Action webhook was declined');
+      }
       reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
     } catch (error) {
       if (!execution || !options.allowPause || model.scenario) throw error;
       if (error instanceof ActionInputRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions,
+        const permissions = error.wait.pending?.capability === webhookApprovalCapability ? access.requirements() : error.permissions;
+        throw new Clarification(error.message, error.choices, permissions,
           { ...selected, requestId, read, ...error.wait });
       }
       throw error;

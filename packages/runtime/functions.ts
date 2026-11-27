@@ -9,6 +9,7 @@ import { objectRefSchema, type ObjectRef, type OntologyDocument } from '../ontol
 import { legacySourceEvidence } from '../ontology/source-evidence.js';
 import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
+import type { Access } from './access.js';
 import type { ActionEffect } from './effects.js';
 
 export type ScenarioEvaluation = { client: Sql; evaluatedAt: number };
@@ -94,6 +95,18 @@ export class Functions {
     if (!model.resolvedDocument.functionTypes.some(fn => fn.implementation)) return;
     if (!this.components) throw new Conflict('Component Functions are unavailable in this runtime');
     await this.components.check(model);
+  }
+  async formatWebhook(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, signal: AbortSignal) {
+    access.function(model, name);
+    const definition = model.functions.get(name);
+    if (!this.components || !definition?.implementation || definition.source || definition.edits ||
+        model.bindings.functions[name] !== componentBinding(definition))
+      throw new Conflict('Published webhook formatter is unavailable');
+    const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
+    // A formatter receives only the Action's mapped input. There is no callback session.
+    const output = await this.components.invoke(name, definition.implementation, parameters, signal);
+    signal.throwIfAborted();
+    return validator(definition.returns).parse(output);
   }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);

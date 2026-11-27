@@ -142,6 +142,12 @@ export class Ontology {
     if (!options.published) validateDerivedProperties(this, validator);
     for (const action of this.actions.values()) {
       if (new Set(action.effects?.map(effect => effect.name)).size !== (action.effects?.length ?? 0)) throw new Error('Duplicate Action effect name');
+      for (const effect of action.effects ?? []) {
+        if (!('webhook' in effect) || !effect.webhook.function) continue;
+        const fn = required(this.functions, effect.webhook.function);
+        if (!fn.implementation || fn.source || fn.edits)
+          throw new Error('A webhook formatter requires a component Function without Source access or edits');
+      }
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) acceptedVersion(action.apiName, required(this.functions, criterion.function), criterion.functionVersion);
