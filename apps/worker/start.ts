@@ -1,5 +1,5 @@
 import type { Installation } from '../../packages/runtime/installation.js';
-import { openInstallation } from '../../packages/runtime/open-installation.js';
+import { checkInstallation, openInstallation } from '../../packages/runtime/open-installation.js';
 import { Tasks } from '../../packages/runtime/tasks.js';
 import { OntologyAgent } from '../../packages/runtime/agent.js';
 import { Worker } from './worker.js';
@@ -11,7 +11,7 @@ export async function startWorker(installation: Installation) {
   await assertOwnerIsolation(db);
   const tasks = new Tasks(db, metadata);
   const capabilities = installation.assemble(db);
-  metadata.checkBindings(await metadata.active(), capabilities);
+  await checkInstallation(installation, metadata, capabilities);
   const driver = installation.driver();
   const worker = new Worker(tasks, new OntologyAgent(db, metadata, tasks, capabilities, driver, {
     sandbox: db.sandboxEnabled,

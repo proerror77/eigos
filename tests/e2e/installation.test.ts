@@ -72,6 +72,7 @@ test('an independently built host installs Shipment and resumes its PA Action af
     await waitFor(() => api('/health').then(r => r.ontologyRelease === release).catch(() => false));
     const card = await api('/.well-known/agent-card.json');
     assert.equal(card.name, 'Shipment');
+    assert.deepEqual(card.skills.map((skill: { id: string }) => skill.id), ['registerShipment']);
     assert.deepEqual((await api('/ontology/query', { query: { type: 'Shipment' } })).items, []);
     const response = await api('/a2a', { jsonrpc: '2.0', id: 1, method: 'SendMessage', params: { message: {
       messageId: 'shipment-register', role: 'ROLE_USER',

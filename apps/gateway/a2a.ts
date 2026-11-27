@@ -24,7 +24,7 @@ const taskView = (task: Task, projectResult: TaskResultProjection) => {
   return A2ATask.fromJSON({ id: task.id, contextId: task.conversation_id ?? task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
     artifacts: result ? [{ artifactId: task.id, name: 'Task result', parts: [{ data: result, mediaType: 'application/json' }] }] : [], metadata: { error: task.error } });
 };
-export function agentCard(url: string, profile?: { name: string; description: string; skills: AgentCard['skills'] }) {
+export function agentCard(url: string, profile?: { name: string; description: string; skills: Pick<AgentCard['skills'][number], 'id' | 'name' | 'description' | 'tags'>[] }) {
   return AgentCard.fromJSON({ name: 'EIGOS', description: 'Source-backed inquiries and calendar-backed scenario scheduling through Ontology queries, functions and actions.', version: '0.2.0',
     supportedInterfaces: [{ url: url + '/a2a', protocolBinding: 'JSONRPC', protocolVersion: '1.0' }], capabilities: { streaming: false, pushNotifications: false },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['application/json'],

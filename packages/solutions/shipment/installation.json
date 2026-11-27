@@ -5,5 +5,15 @@
   "implementation": {
     "file": "implementation.mjs",
     "sha256": "bde767534cd889964b24df2776f883e2982ef0a5e6f462db0706d8c8e913787a"
-  }
+  },
+  "publicSkills": [
+    {
+      "id": "registerShipment",
+      "name": "Register shipment",
+      "description": "Register a synthetic freight shipment and read its confirmed name.",
+      "tags": [
+        "freight"
+      ]
+    }
+  ]
 }

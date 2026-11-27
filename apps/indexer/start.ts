@@ -1,6 +1,6 @@
 import { FunctionInvocations } from '../../packages/runtime/function-invocations.js';
 import type { Installation } from '../../packages/runtime/installation.js';
-import { openInstallation } from '../../packages/runtime/open-installation.js';
+import { checkInstallation, openInstallation } from '../../packages/runtime/open-installation.js';
 import { ObservationInterests } from '../../packages/runtime/observation-interests.js';
 import { ProcessNotifications } from '../../packages/runtime/process-notifications.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,7 +19,7 @@ export async function startIndexer(installation: Installation) {
   await assertOwnerIsolation(db);
   const notifications = new ProcessNotifications(db, metadata);
   const capabilities = installation.assemble(db);
-  metadata.checkBindings(await metadata.active(), capabilities);
+  await checkInstallation(installation, metadata, capabilities);
   const indexing = new Indexing(db, metadata);
   const { effects } = capabilities;
   const automation = new Automation(db, metadata, capabilities.actions);
