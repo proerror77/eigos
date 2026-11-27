@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
@@ -78,12 +80,14 @@ export class ArchiveCodec {
       child.stdout.on('data', chunk => out.push(chunk));
       child.stderr.on('data', chunk => err.push(chunk));
       child.once('error', reject);
-      child.once('close', code => code === 0 ? resolve(Buffer.concat(out).toString())
-        : reject(new Error(`eigos-archive ${args[0]} failed: ${Buffer.concat(err).toString().trim()}`)));
-      (async () => {
-        for (const line of input) if (!child.stdin.write(line)) await new Promise(resolve => child.stdin.once('drain', resolve));
-        child.stdin.end();
-      })().catch(reject);
+      const pipe = pipeline(Readable.from(input), child.stdin).catch((error: unknown) => ({ error }));
+      child.once('close', async code => {
+        // A codec that exits early can also close its input pipe. Keep the codec's error and let the caller roll back.
+        if (code !== 0) return reject(new Error(`eigos-archive ${args[0]} failed: ${Buffer.concat(err).toString().trim()}`));
+        const failure = await pipe;
+        if (failure) return reject(failure.error);
+        resolve(Buffer.concat(out).toString());
+      });
     });
   }
 }
