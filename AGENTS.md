@@ -16,7 +16,8 @@
 
 ## 验证与交付
 
-- 代码修改运行 `npm run check`、`npm run build`、`npm run ontology:check`、`npm test`、构建后的 `npm run test:e2e:run` 和 `git diff --check`。迭代时可用 `npm test -- --suite=NN` 只跑相关套件。同一提交内容上已通过的本地或 CI 结果可以复用，输入变了再重跑。
+- 修改或排查代码时，先运行能验证当前改动的检查。例如，用 `npm test -- --suite=NN` 运行受影响的套件。修复失败后先复跑该检查，影响范围扩大时再扩大验证范围。
+- 代码改动交付前，确认最终提交内容通过完整验证：`npm run check`、`npm run build`、`npm run ontology:check`、`npm test`、构建后的 `npm run test:e2e:run` 和 `git diff --check`。可复用同一提交内容上已通过的本地或 CI 结果，补跑缺项或输入已变化的检查。
 - 本机有并行会话：只停止或删除自己创建的容器和进程。测试脚本会自行清理它的 `eigos-test-<uuid>` 容器。
 - 交付：从最新的 `origin/main` 开任务分支，提交并推送，创建或更新 PR，跟到必需检查 `CI result` 通过。分支、worktree 与提交的细则沿用全局规则。
 - 解决合并冲突时让每个 PR 的功能都保持可用：把功能迁到当前结构，而不是关闭或降级它。
