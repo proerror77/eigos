@@ -9,7 +9,7 @@ import { objectPolicySchema } from '../packages/runtime/security.js';
 import { Access, setGrants, businessGrants, syncAccountGrants, syncAccountGrantsAfterActivation, grantSchema } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
-import { configuredSource } from '../packages/core/config.js';
+import { configuredSource } from '../packages/capabilities/didi/config.js';
 import { z } from 'zod';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';

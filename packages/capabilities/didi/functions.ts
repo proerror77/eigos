@@ -1,13 +1,9 @@
-import type { ComponentFunctions } from '../../runtime/component-functions.js';
-import type { ProviderBudgets } from '../../runtime/provider-budgets.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import type { OntologyDocument } from '../../ontology/schema.js';
 import { Conflict, digest } from '../../core/identity.js';
 import { timeOperation } from '../../core/operation-timing.js';
 import { objectRefSchema, type ObjectData } from '../../ontology/schema.js';
-import { Functions, type FunctionContext, type FunctionHandler, type VersionedFunction } from '../../runtime/functions.js';
+import type { FunctionContext, FunctionHandler } from '../../runtime/functions.js';
 import type { DidiConnector, DidiCallContext, DidiReadResult } from './connector.js';
 import { didiDataSchema, didiEvidence, didiReceiptSchema } from './contracts.js';
 import type { RideOrders } from './operations.js';
@@ -58,8 +54,7 @@ export async function verifiedDidiRead(source: DidiSource, context: FunctionCont
   return sourceResultSchema.parse({ ...result, evidence: source.connector.evidenceKind });
 }
 
-export function rideFunctions(resolveSource: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
-  components?: ComponentFunctions, budgets?: ProviderBudgets) {
+export function rideFunctions(resolveSource: SourceResolver) {
   const read = async (context: FunctionContext, tool: 'maps_textsearch' | 'taxi_estimate', input: Record<string, string>) => {
     const source = await resolveSource(context.principal.owner);
     return verifiedDidiRead(source, context, tool, input);
@@ -99,7 +94,7 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
   const providerMaps = {
     walking: 'maps_direction_walking', bicycling: 'maps_direction_bicycling', transit: 'maps_direction_transit',
   } as const;
-  return new Functions(new Map<string, FunctionHandler>([
+  return new Map<string, FunctionHandler>([
     ['generateDidiRideAppLink', async (input, context) => {
       const { request, estimate } = didiAppLinkInput.parse(input);
       if (request.type !== 'RideRequest') throw new Conflict('Use the resolved ride inquiry');
@@ -189,6 +184,5 @@ export function rideFunctions(resolveSource: SourceResolver, additional: Readonl
     ['locationsReady', async (input, context) => locationsReady(context, await Promise.all([input.origin, input.destination].map(ref => context.objects.read(objectRefSchema.parse(ref)))))],
     ['readRideEstimates', readEstimates(false)],
     ['readInteractiveRideEstimate', readEstimates(true)],
-    ...additional,
-  ]), definitions ?? (JSON.parse(readFileSync(new URL('../../ontology/definitions/ride.json', import.meta.url), 'utf8')) as OntologyDocument).functionTypes, versions, components, budgets);
+  ]);
 }

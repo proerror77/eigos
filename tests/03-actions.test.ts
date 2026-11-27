@@ -5,6 +5,7 @@ import { Objects } from '../packages/runtime/objects.js';
 import { fixture, principal, route } from './fixture.js';
 import { Ontology } from '../packages/ontology/model.js';
 import { Functions } from '../packages/runtime/functions.js';
+import { assembleRuntime } from '../packages/runtime/assembly.js';
 import { Actions } from '../packages/runtime/actions.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { ExternalOperations } from '../packages/runtime/external-operations.js';
@@ -41,6 +42,36 @@ test('function-backed inquiry commits its graph once and rolls it all back when 
     assert.equal(f.provider.calls.length, calls);
     assert.equal((await objects.query({ type: 'RideRequest' })).items.length, 1);
     assert.equal((await objects.query({ type: 'PriceEstimate' })).items.length, 2);
+  } finally { await f.close(); }
+});
+
+test('a standalone Ontology can publish, query, apply and read back with neutral assembly', async () => {
+  const f = await fixture();
+  try {
+    const parameters = { type: 'object', properties: {}, additionalProperties: false };
+    const ref = { type: 'Shipment', id: 'synthetic-shipment' };
+    const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } },
+      required: ['type', 'id'], additionalProperties: false };
+    const definition = new Ontology({
+      id: 'Eigos', version: 'standalone-shipment', interfaceTypes: [], linkTypes: [], dataSources: [],
+      objectTypes: [{ apiName: ref.type, displayName: 'Shipment', description: 'Synthetic shipment',
+        primaryKey: 'id', titleProperty: 'name', interfaces: {},
+        properties: { id: { description: 'ID', required: true, schema: { type: 'string' } },
+          name: { description: 'Name', required: true, schema: { type: 'string' } } } }],
+      functionTypes: [{ apiName: 'RegisterShipment', description: 'Register a shipment', edits: true, parameters, returns: reference }],
+      actionTypes: [{ apiName: 'RegisterShipment', description: 'Register a shipment', parameters,
+        objectParameters: {}, submissionCriteria: [], function: 'RegisterShipment' }],
+    });
+    const capabilities = assembleRuntime(f.db, definition.document.functionTypes, new Map([
+      ['RegisterShipment', (_input, context) => context.edit!(ref, graph => graph.create(ref, { id: ref.id, name: 'Shipment' }))],
+    ]));
+    const model = await f.metadata.publish(definition.document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
+    assert.deepEqual((await graph.query({ type: ref.type })).items, []);
+    assert.deepEqual(await capabilities.actions.apply(access, model, 'RegisterShipment', {}, 'register-shipment'), ref);
+    assert.equal((await graph.read(ref)).properties.name, 'Shipment');
+    assert.equal(f.provider.calls.length, 0);
   } finally { await f.close(); }
 });
 
