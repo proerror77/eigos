@@ -79,42 +79,45 @@ test('owner turns admit another owner before the first of 1,000 tasks finishes a
   } finally { await f.close(); }
 });
 
-test('four concurrent claims admit another owner even when all initially contend for one owner', async () => {
-  const f = await fixture();
-  const ownerLock = await f.db.pool.connect();
-  let claims: Promise<Awaited<ReturnType<Tasks['claim']>>[]> | undefined;
-  try {
-    const tasks = new Tasks(f.db, f.metadata, 2);
-    const other = { ...principal, owner: 'contested-other-owner' };
-    for (let index = 0; index < 4; index++)
-      await tasks.submit(principal, { requestId: 'contended-' + index, message: '只询价', route });
-    await tasks.submit(other, { requestId: 'contended-other', message: '只询价', route });
-    const key = f.db.lockKey('task-owner-claim', principal.owner);
-    await ownerLock.query('BEGIN');
-    await ownerLock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
-    // Every claimant selects one of the first owner's rows before any can fill its share.
-    claims = Promise.all(Array.from({ length: 4 }, () => tasks.claim('interactive')));
-    const deadline = Date.now() + 1000;
-    let blocked: number;
-    do {
-      const result = await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks
-        WHERE locktype='advisory' AND NOT granted AND objsubid=1
-          AND classid::bigint=((hashtextextended($1,0)>>32) & 4294967295)
-          AND objid::bigint=(hashtextextended($1,0) & 4294967295)`, [key]);
-      blocked = result.rows[0]!.n;
-      if (blocked < 4) await delay(5);
-    } while (blocked < 4 && Date.now() < deadline);
-    await ownerLock.query('COMMIT');
-    assert.equal(blocked, 4);
-    const claimed = (await claims).flatMap(task => task ? [task.owner] : []);
-    assert.deepEqual(claimed.sort(), [principal.owner, principal.owner, other.owner].sort());
-  } finally {
-    await ownerLock.query('ROLLBACK');
-    ownerLock.release();
-    await claims?.catch(() => {});
-    await f.close();
-  }
-});
+for (const ownerSlots of [2, 4]) {
+  test(`four concurrent claims admit another owner when one owner may occupy ${ownerSlots} slots`, async () => {
+    const f = await fixture();
+    const ownerLock = await f.db.pool.connect();
+    let claims: Promise<Awaited<ReturnType<Tasks['claim']>>[]> | undefined;
+    try {
+      const tasks = new Tasks(f.db, f.metadata, ownerSlots);
+      const other = { ...principal, owner: 'contested-other-owner' };
+      for (let index = 0; index < 4; index++)
+        await tasks.submit(principal, { requestId: 'contended-' + index, message: '只询价', route });
+      await tasks.submit(other, { requestId: 'contended-other', message: '只询价', route });
+      const key = f.db.lockKey('task-owner-claim', principal.owner);
+      await ownerLock.query('BEGIN');
+      await ownerLock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
+      // Every claimant selects one of the first owner's rows before any can fill its share.
+      claims = Promise.all(Array.from({ length: 4 }, () => tasks.claim('interactive')));
+      const deadline = Date.now() + 1000;
+      let blocked: number;
+      do {
+        const result = await f.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks
+          WHERE locktype='advisory' AND NOT granted AND objsubid=1
+            AND classid::bigint=((hashtextextended($1,0)>>32) & 4294967295)
+            AND objid::bigint=(hashtextextended($1,0) & 4294967295)`, [key]);
+        blocked = result.rows[0]!.n;
+        if (blocked < 4) await delay(5);
+      } while (blocked < 4 && Date.now() < deadline);
+      await ownerLock.query('COMMIT');
+      assert.equal(blocked, 4);
+      const claimed = (await claims).flatMap(task => task ? [task.owner] : []);
+      const expected = [other.owner, ...Array<string>(Math.min(ownerSlots, 3)).fill(principal.owner)];
+      assert.deepEqual(claimed.sort(), expected.sort());
+    } finally {
+      await ownerLock.query('ROLLBACK');
+      ownerLock.release();
+      await claims?.catch(() => {});
+      await f.close();
+    }
+  });
+}
 
 test('a provider call over its owner budget waits: the call is deferred and the Worker resumes the task later', async () => {
   const f = await fixture();
