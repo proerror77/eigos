@@ -299,10 +299,18 @@ export async function queryWithKernel(kernel: KernelClient, model: PublishedOnto
   catch (error) { if (error instanceof InvalidInput || error instanceof NotFound) return undefined; throw error; }
   const version = await versionOf(kernel, model, access, graph);
   if (!version) return undefined;
-  const plan = await compileSet(model, access, graph, { op: 'query', query: members });
+  // A classified field may be observed only on a row that actually has a visible value.
+  // The ordinary row hydrator records that evidence if the first page contains every match.
+  const properties = model.objects.get(query.type)?.properties;
+  const keys = [...Object.keys(query.where ?? {}), ...(query.orderBy ?? []).map(order => order.property)];
+  const completePage = properties && Boolean(query.orderBy?.length) && input.offset === 0 && !query.from && !query.filter && !query.intervalOverlap && !select &&
+    Object.values(properties).some(property => property.classification) && !Object.values(properties).some(property => property.derived) &&
+    keys.every(key => !key.includes('.') && properties[key] && !properties[key].classification);
+  const plan = await compileSet(model, access, graph, { op: 'query', query: members }, completePage ? query.type : undefined);
   const output = plan && compileQueryOrder(model, access, plan, query, input.offset, limit);
   if (!plan || !output) return undefined;
   const response = await kernel.query(access.principal.owner, plan, output, version);
+  if (completePage && response && response.total !== response.refs.length) return undefined;
   if (!response || !observeReads(access, model, plan, response.reads)) return undefined;
   const objects = await hydrate(graph, response.refs);
   if (!objects || !await unchangedSince(graph, model, access.principal.owner, version, response.commit)) return undefined;

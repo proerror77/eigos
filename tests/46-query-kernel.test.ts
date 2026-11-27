@@ -864,6 +864,13 @@ test('relationship reads use the kernel while hydrating classified source and ta
       await compareFollow(f, clearance, { ref: route('a'), link: 'origin' });
       await compareFollow(f, clearance, { ref: place('p1'), link: 'departingRoutes' });
     }
+    for (const clearance of clearances) {
+      await compareQuery(f,clearance,{type:'Place',where:{id:'p1'},orderBy:[{property:'name'}]});
+      const access = await Access.load(f.db,principal), graph = new Objects(f.db,f.model,access);
+      const partial = await access.measureEgress(() => queryWithKernel(f.kernel,f.model,access,graph,{
+        query:querySchema.parse({type:'Place',orderBy:[{property:'name'}],limit:1}),offset:0 }),clearance);
+      assert.equal(partial.result,undefined,'a partial page cannot account for classified cells outside the page');
+    }
     const read = async (clearance: Clearance) => {
       const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
       return access.measureEgress(async () => {

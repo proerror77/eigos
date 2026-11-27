@@ -1190,10 +1190,14 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
       }
       SetNode::Except { left, right } => {
         let left_small = estimated_rows(snapshot,left) <= estimated_rows(snapshot,right);
-        let a = set_frame(snapshot,owner,left).await?;
-        let b = set_frame(snapshot,owner,right).await?;
-        if left_small { a.join(b, JoinType::LeftAnti, &["$key"], &["$key"], None).map_err(internal) }
-        else { b.join(a, JoinType::RightAnti, &["$key"], &["$key"], None).map_err(internal) }
+        if left_small {
+          // The original left-minus-right plan already starts with the narrower side.
+          set_frame(snapshot, owner, left).await?.except(set_frame(snapshot, owner, right).await?)
+            .map_err(internal)?.distinct().map_err(internal)
+        } else {
+          let exclusions = set_frame(snapshot, owner, right).await?;
+          exclusions.join(set_frame(snapshot, owner, left).await?, JoinType::RightAnti, &["$key"], &["$key"], None).map_err(internal)
+        }
       }
       SetNode::Traverse { set, steps } | SetNode::BoundedTraverse { set, steps, .. } => {
         let mut current = set_frame(snapshot, owner, set).await?;
