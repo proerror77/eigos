@@ -20,7 +20,7 @@ export type OntologyLimits = { calls: number; objects: number; bytes: number; ed
 export const defaultOntologyLimits: OntologyLimits = { calls: 1000, objects: 100000, bytes: 4 << 20, edits: 10000 };
 
 /** `writer` is set for an edit Function inside its Action's commit: edits go through it, and reads see them. */
-type Session = { db: Database; context: FunctionContext; writer?: Objects; limits: OntologyLimits; calls: number; objects: number; edits: number };
+type Session = { db: Database; context: FunctionContext; writer?: Objects; outgoing?: (input: unknown) => Promise<unknown>; limits: OntologyLimits; calls: number; objects: number; edits: number };
 type Failure = { code: string; message: string };
 class LimitReached extends Error {}
 
@@ -77,6 +77,10 @@ const operations: Record<string, (session: Session, input: Record<string, unknow
   },
   async link(session, input) { await writer(session).link(edge(input)); return null; },
   async unlink(session, input) { await writer(session).unlink(edge(input)); return null; },
+  async outgoing(session, input) {
+    if (!session.outgoing) throw new PermissionDenied('The Function has no declared HTTP Source');
+    return session.outgoing(input.request);
+  },
 };
 
 /** How an error reaches the Function: a stable code it can act on. Anything unexpected is the runtime's problem. */
@@ -95,10 +99,10 @@ export class FunctionCallbacks {
   private readonly sessions = new Map<string, Session>();
 
   /** Opens the session of one call; `close` ends it, after which its token is refused. */
-  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits) {
+  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits, outgoing?: Session['outgoing']) {
     const { url } = await this.listen();
     const token = randomBytes(24).toString('base64url');
-    this.sessions.set(token, { db, context, writer, limits, calls: 0, objects: 0, edits: 0 });
+    this.sessions.set(token, { db, context, writer, outgoing, limits, calls: 0, objects: 0, edits: 0 });
     return { callback: { url, token }, close: () => { this.sessions.delete(token); } };
   }
 

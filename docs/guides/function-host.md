@@ -56,7 +56,7 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 
    - `limits` 的每一项都不能超过宿主的上限（下文“调用的上限”），schema 直接拒绝超出的值。
    - 组件函数必须有语义化版本 `x.y.z`。
-   - 组件函数暂时不能声明 `source` 或 `edits`：外部调用和编辑接口分别是 F3 和 F2。
+   - 组件函数可声明 `edits` 供 Action 执行，或声明 `source` 读取外部源，见下文。
 3. **准备发布：** 准备发布时，运行时依次检查：
    - 配置了函数宿主；
    - 宿主的上限不低于函数要求的上限；
@@ -276,3 +276,42 @@ fuel 计的是指令，截止时间计的是墙钟，两者分别生效：等待
 - **认证：** 宿主自身不做认证，所以只监听 loopback，与查询内核相同。运行时接入后，只有运行时上传组件，上传要求 `edit_definition`。
 - **数据目录：** 宿主信任其中的预编译文件，因为载入时不会再校验机器码。所以这个目录只能由宿主的用户写入。
 - **wasmtime 升级：** 版本固定在 `Cargo.lock`。wasmtime 发布安全公告后，单独发一个 PR 升级。升级后旧的预编译文件无法载入，宿主会删掉它们，然后由运行时重新上传。
+
+
+## 组件外部源
+
+声明 `source: "Inventory"` 的组件通过 `eigos:http/outgoing@0.1.0` 的
+`send` 导入读取该源。组件传入 JSON 请求，如 `{"path":"/v1/items"}`，
+并收到包含 `status`、`contentType` 和 `body` 的 JSON。请求使用已配置的
+HTTPS 主机、端口和路径前缀。默认方法为 GET，当前组件调用也支持 HEAD。
+发布记录包含连接和出站策略摘要。修改连接策略后重新准备发布。
+
+在 Gateway、Worker 和 Indexer 指定同一份 `EIGOS_COMPONENT_SOURCES_FILE`，
+该 JSON 文件放在仓库外：
+
+```json
+{
+  "Inventory": {
+    "baseUrl": "https://inventory.example.com/v1/",
+    "methods": ["GET"],
+    "bearerSecret": "inventory_token"
+  }
+}
+```
+
+`networks` 可指定批准的 CIDR。未指定时仅连接公共地址，运行时核验 DNS
+解析结果后固定连接地址并继续校验证书。生产配置由部署人员管理。发送前
+再次检查调用者的 Source 权限。运行日志记录源名称、结果和 HTTP 状态码。
+
+Bearer 密钥可以换成配置的 OAuth `client_credentials`。配置 `oauth` 的
+`grant`、`tokenUrl`、`clientId`、`clientSecret` 和可选的 `scope`，其中
+`clientSecret` 是密钥名称。令牌只供运行时使用。运行时通过
+`EIGOS_COMPONENT_SOURCE_SECRETS_FILE` 和
+`EIGOS_COMPONENT_SOURCE_SECRETS_KEY_FILE` 打开加密密钥包。使用
+`node --import tsx scripts/seal-component-source-secrets.ts /path/to/key`
+从标准输入读取密钥名到密钥值的 JSON，并把密文输出到配置路径。密钥文件为
+32 字节随机数据。两个文件都只授予运行服务和部署人员读取权限。
+
+读取外部源要求协议 3 宿主。旧组件继续使用原有导入。带外部源的组件与
+Scenario 离线求值保持隔离。需要外部写入的业务流使用经授权的 Action 和
+提交后的副作用。 [Foundry 函数的外部 API](https://www.palantir.com/docs/foundry/functions/api-calls/)

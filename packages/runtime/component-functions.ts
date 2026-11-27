@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { Conflict, FunctionFailed, InvalidInput, ResourceExhausted, ServiceUnavailable, type Principal } from '../core/identity.js';
+import { Conflict, FunctionFailed, InvalidInput, PermissionDenied, ResourceExhausted, ServiceUnavailable, type Principal } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
 import type { componentImplementationSchema } from '../ontology/schema.js';
 import type { z } from 'zod';
 import type { Database } from './database.js';
 import { functionCallbacks } from './function-callbacks.js';
+import type { ConfiguredComponentSources } from './component-source-egress.js';
 import { defaultFunctionHost, FunctionHostError, lostFunctionHost, type FunctionHostClient, type FunctionOutcome } from './function-host.js';
 import type { FunctionContext } from './functions.js';
 import type { Objects } from './objects.js';
@@ -29,7 +30,13 @@ export async function initializeFunctionArtifacts(db: Database) {
  * components; when it does not have one, it gets it from `function_artifacts`.
  */
 export class ComponentFunctions {
-  constructor(private readonly db: Database, private readonly host: () => Promise<FunctionHostClient> | undefined = defaultFunctionHost) {}
+  constructor(private readonly db: Database, private readonly host: () => Promise<FunctionHostClient> | undefined = defaultFunctionHost,
+    private readonly sources?: ConfiguredComponentSources) {}
+
+  sourceBinding(source: string) {
+    if (!this.sources) throw new ServiceUnavailable('Component HTTP Sources are unavailable');
+    return this.sources.egress.binding(source);
+  }
 
   /**
    * Stores a component once the function host has checked it: its imports, and an `invoke` export of the EIGOS world.
@@ -54,7 +61,10 @@ export class ComponentFunctions {
     const host = await this.connect();
     let maxima;
     try { maxima = (await host.health()).maxima; } catch (error) { throw this.refusal(host, error); }
+    if (functions.some(fn => fn.source) && !await host.supports(3))
+      throw new ServiceUnavailable('Component HTTP Sources require a protocol 3 function host');
     for (const fn of functions) {
+      if (fn.source) this.sourceBinding(fn.source);
       const { sha256, limits } = fn.implementation!;
       const over = (['fuel', 'memoryMb', 'deadlineMs', 'inputBytes', 'outputBytes'] as const)
         .filter(limit => (limits[limit] ?? 0) > maxima[limit]);
@@ -68,13 +78,30 @@ export class ComponentFunctions {
    * Function reads the Ontology as that call's caller, through a callback session that ends with the call.
    */
   async invoke(name: string, implementation: ComponentImplementation, parameters: Record<string, unknown>, signal: AbortSignal,
-    context?: FunctionContext, options: { writer?: Objects } = {}) {
+    context?: FunctionContext, options: { writer?: Objects; source?: { name: string; binding: string } } = {}) {
     const input = JSON.stringify(parameters), limits = implementation.limits;
     const inputBytes = limits.inputBytes ?? maxInputBytes;
     if (Buffer.byteLength(input) > inputBytes) throw new InvalidInput(`The input of ${name} exceeds ${inputBytes} bytes`);
     const host = await this.connect();
     // A host before protocol 2 would refuse the callback; its Functions then find no Ontology to read.
-    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer) : undefined;
+    const source = options.source, sources = this.sources;
+    const outgoing = source && sources && context ? (raw: unknown) => sources.egress.send(source.name, source.binding, raw, {
+      mode: 'read',
+      signal,
+      authorize: async name => {
+        const access = context.objects.access;
+        await access.refresh();
+        access.source(context.objects.model, name);
+        signal.throwIfAborted();
+      },
+      secret: async name => {
+        if (!sources.secrets) throw new PermissionDenied('Source credential is unavailable');
+        return sources.secrets.get(name);
+      },
+    }) : undefined;
+    if (source && (!outgoing || !await host.supports(3)))
+      throw new ServiceUnavailable('Component HTTP Sources require a configured protocol 3 function host');
+    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer, undefined, outgoing) : undefined;
     let outcome: FunctionOutcome;
     try {
       try { outcome = await host.invoke(implementation.sha256, input, limits, signal, session?.callback); }

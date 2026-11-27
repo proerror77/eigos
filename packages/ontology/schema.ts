@@ -140,7 +140,7 @@ export const ontologySchema = z.strictObject({
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
     dependencies:functionDependenciesSchema.optional(), implementation: componentImplementationSchema.optional(),
   }).refine(fn => !fn.implementation || semanticVersion.test(fn.version ?? ''), 'A component Function needs a semantic version such as 1.0.0')
-    .refine(fn => !fn.implementation || !fn.source, 'A component Function cannot read a source yet')),
+    .refine(fn => !fn.implementation || !fn.source || !fn.edits, 'A component edit Function uses Source writes through a committed Action effect')),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),
     submissionCriteria: z.array(z.strictObject({

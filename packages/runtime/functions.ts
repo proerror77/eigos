@@ -49,8 +49,9 @@ const key = (definition: Definition) => JSON.stringify([definition.apiName, defi
 /** The result an Action's component edit Function stages before it runs; its commit replaces it with the real one. */
 const pendingResult: ObjectRef = { type: 'PendingFunctionResult', id: 'pending' };
 /** A component Function's binding follows from its definition, so every runtime with a function host agrees on it. */
-const componentBinding = (definition: Definition) =>
-  digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation });
+const componentBinding = (definition: Definition, sourceBinding?: string) =>
+  digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation,
+    ...(sourceBinding ? { sourceBinding } : {}) });
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
@@ -78,7 +79,10 @@ export class Functions {
   }
   bindings(model: Ontology): Record<string, string> {
     return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
-      if (fn.implementation) return [fn.apiName, componentBinding(fn)];
+      if (fn.implementation) {
+        const sourceBinding = fn.source ? this.componentSourceBinding(fn.source) : undefined;
+        return [fn.apiName, componentBinding(fn, sourceBinding)];
+      }
       const entry = this.registered.get(key(fn));
       const reply = contract(fn);
       if (!entry || entry.contract !== reply && entry.legacy !== reply) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
@@ -94,7 +98,7 @@ export class Functions {
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
     // A component Function reads its input and, through its call's own Objects, the evaluated Scenario.
-    if (definition?.implementation) return true;
+    if (definition?.implementation) return !definition.source;
     return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
   }
   requireScenarioEvaluation(model: PublishedOntology, name: string) {
@@ -135,10 +139,17 @@ export class Functions {
     if (definition.source) throw new SourceReadFailure('Source result does not match its published contract', { cause: result.error });
     throw new Error('Function result does not match its published contract', { cause: result.error });
   }
+  private componentSourceBinding(source: string) {
+    if (!this.components) throw new ServiceUnavailable('Component HTTP Sources are unavailable');
+    return this.components.sourceBinding(source);
+  }
+
   /** A Function implemented by a WebAssembly component: the function host runs it on the validated parameters. */
   private async invokeComponent(model: PublishedOntology, definition: Definition, input: Record<string, unknown>, context: FunctionContext) {
     const name = definition.apiName;
-    if (model.bindings.functions[name] !== componentBinding(definition)) throw new Conflict('Historical Function implementation is unavailable in this runtime');
+    const source = definition.source ? { name: definition.source, binding: this.componentSourceBinding(definition.source) } : undefined;
+    if (model.bindings.functions[name] !== componentBinding(definition, source?.binding))
+      throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
     if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');
     context.signal.throwIfAborted();
@@ -154,7 +165,16 @@ export class Functions {
         return objectRefSchema.parse(result.data);
       });
     }
-    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal, context), name);
+    if (source) {
+      if (model.scenario || context.scenarioEvaluation) throw new Conflict('Read external sources before opening a scenario');
+      const access = context.objects.access;
+      await access.refresh();
+      access.source(model, source.name);
+      await this.budgets?.take(access.principal.owner, source.name);
+      context.signal.throwIfAborted();
+    }
+    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters,
+      context.signal, context, { source }), name);
     context.signal.throwIfAborted();
     await context.objects.access.refresh(context.scenarioEvaluation?.client);
     const result = validator(definition.returns).safeParse(output);

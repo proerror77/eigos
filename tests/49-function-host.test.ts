@@ -35,12 +35,12 @@ test('the function host keeps only components that import allowed interfaces and
 
   const uploaded = await host.upload(echo);
   assert.equal(uploaded.cached, false);
-  assert.ok(uploaded.imports!.every(name => /^(wasi:(cli|clocks|random|io|filesystem)|eigos:function)\//.test(name)), uploaded.imports!.join());
+  assert.ok(uploaded.imports!.every(name => /^(wasi:(cli|clocks|random|io|filesystem)|eigos:function)\//.test(name) || name === 'eigos:http/outgoing@0.1.0'), uploaded.imports!.join());
   assert.ok(uploaded.imports!.includes('eigos:function/ontology@0.2.0'), uploaded.imports!.join());
   assert.deepEqual(await host.upload(echo), { sha256: uploaded.sha256, cached: true });
   const health = await host.health();
   assert.equal(health.world, 'eigos:function/handler@0.2.0');
-  assert.equal(health.protocol, 2);
+  assert.equal(health.protocol, 3);
   assert.equal(health.components, 1);
 }));
 

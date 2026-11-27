@@ -182,6 +182,11 @@
 
 ## F3：外部源
 
+**状态：** 组件已能用协议 3 读取声明的 HTTP Source。发布时绑定 HTTPS
+连接和出口策略，调用时复查 Source 权限。密钥以 AES-GCM 密文保存，
+OAuth client credentials 由运行时交换和缓存。授权码凭据刷新及 Action
+副作用写入待继续实现。 [组件外部源](../../guides/function-host.md#组件外部源)
+
 - **source 的组成：**
   - 连接：基础 URL；
   - 出口策略：允许的主机、端口和方法；

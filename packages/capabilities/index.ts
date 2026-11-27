@@ -162,7 +162,8 @@ export function createCapabilities(
     new Map([...handlers, ...didi.handlers]),
     new Map([...didi.projections, ...serviceProjections(services), [transferObservationSource, transferObservationProjection]]),
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
-      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources },
+      effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources,
+      componentSources: extensions.componentSources },
     notifications.committed);
   sources = capabilities.sources;
   return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
