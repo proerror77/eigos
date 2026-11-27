@@ -151,9 +151,8 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
     assert.equal((await a2a('GetTask', { id: task.id })).artifacts[0].parts[0].data.order.orderId, orderId);
     assert.equal(await worker.runOne('interactive'), false);
     assert.deepEqual([sent, checked], [1, 1]);
-    const recovery = await call('complete_with_action', { requestId: 'reconcile-original',
-      action: { action: reconcileImmediateRideAction, input: { originalTaskId: task.id } },
-      read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
+    const recovery = await call('apply_ontology_action', { requestId: 'reconcile-original',
+      action: reconcileImmediateRideAction, input: { originalTaskId: task.id },
     });
     const readback = await finishResponse(recovery.id, didiPAReconcileCapability);
     assert.equal(readback.input.originalTaskId, task.id);
@@ -163,9 +162,16 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
     assert(await worker.runOne('interactive'));
     const verified = await call('get_task', { taskId: recovery.id });
     assert.equal(verified.state, 'completed', verified.error ?? JSON.stringify(verified.result));
-    assert.equal(verified.result.state, 'ordered');
-    assert.equal(verified.result.order.orderId, orderId);
-    assert.equal(verified.result.order.independentRead, true);
+    const ride = { type: 'DidiImmediateRide', id: done.result.id };
+    assert.equal(verified.result.id, ride.id);
+    const [reconciledRide] = (await call('query_ontology', { query: { type: ride.type } })).items;
+    assert.deepEqual(reconciledRide.ref, ride);
+    assert.equal(reconciledRide.properties.state, 'ordered');
+    const [original] = (await call('query_ontology', {
+      query: { type: 'DidiRideOrder', from: { object: ride, link: 'order' } },
+    })).items;
+    assert.equal(original.properties.orderId, orderId);
+    assert.equal(original.properties.independentRead, true);
     assert.deepEqual([sent, checked], [1, 2]);
     const recorded = await f.db.query(`SELECT state FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id]);
     assert.deepEqual(recorded.rows, [{ state: 'confirmed' }]);
