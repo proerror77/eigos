@@ -1,3 +1,5 @@
+import { scenarioInterfaceName } from '../ontology/scenario-definition.js';
+import { projectView } from './object-view.js';
 import { z } from 'zod';
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import type { ObjectData, ObjectRef } from '../ontology/schema.js';
@@ -8,7 +10,9 @@ import { viewTables } from './scenario-store.js';
 
 export const scenarioMetadataType = 'OntologyScenario';
 
-function asObject(row: Record<string, any>): ObjectData {
+function asObject(model: PublishedOntology, row: Record<string, any>): ObjectData {
+  // Merging advances the proposal revision after the approved changes have committed.
+  const reviewRevision = Number(row.revision) - Number(row.state === 'merged');
   return {
     ref: { type: scenarioMetadataType, id: String(row.id) },
     revision: Number(row.revision),
@@ -17,10 +21,15 @@ function asObject(row: Record<string, any>): ObjectData {
       name: String(row.name),
       owner: String(row.owner),
       state: String(row.state),
+      ...(model.object(scenarioMetadataType).properties.reviewStatus ? {
+        reviewStatus: Number(row.reviewed_revision) === reviewRevision && row.review_status
+          ? row.review_status : row.reviewers?.length ? 'in-review' : 'draft',
+      } : {}),
       release: String(row.release),
       revision: Number(row.revision),
       expiresAt: new Date(row.expires_at).toISOString(),
       kind: String(row.kind),
+      ...(model.object(scenarioMetadataType).properties.syncConflict ? { syncConflict: row.sync_state === 'conflict' } : {}),
       description: String(row.description),
     },
   };
@@ -37,7 +46,7 @@ export async function syncScenarioMetadata(db: Database, model: PublishedOntolog
     )
   ).rows[0];
   if (!row || row.kind !== 'persisted') return;
-  const object = asObject(row),
+  const object = asObject(model, row),
     properties = model.parseObject(object.ref, object.properties);
   const readers = [...new Set([String(row.owner), ...(row.readers as string[])])].sort();
   const recipients = new Set(readers);
@@ -84,12 +93,12 @@ export async function scenarioMetadataRead(graph: Objects, ref: ObjectRef): Prom
     )
   ).rows[0];
   if (!row) throw new NotFound('Scenario metadata is unavailable');
-  const object = asObject(row),
+  const object = asObject(graph.model, row),
     properties = graph.maskSnapshot(object.ref, object.properties);
   if (!properties) throw new NotFound('Scenario metadata is unavailable');
   return { ...object, properties };
 }
-export async function scenarioMetadataQuery(graph: Objects, input: Query) {
+export async function scenarioMetadataQuery(graph: Objects, input: Query, among?: readonly string[]) {
   graph.access.read(graph.model, scenarioMetadataType);
   const limit = z
     .number()
@@ -103,7 +112,7 @@ export async function scenarioMetadataQuery(graph: Objects, input: Query) {
     scenario: graph.model.scenario,
     from: input.from,
     where: input.where ?? {},
-    select: input.select,
+    select: input.select, ...(input.type === scenarioInterfaceName ? { view: input.type } : {}), ...(among ? { among } : {}),
   });
   const cursor = input.cursor
     ? z
@@ -118,6 +127,10 @@ export async function scenarioMetadataQuery(graph: Objects, input: Query) {
     `(s.owner=$2 OR s.readers ? $2)`,
     `($3::uuid IS NULL OR s.id>$3)`,
   ];
+  if (among) {
+    values.push([...among]);
+    clauses.push(`s.id::text=ANY($${values.length}::text[])`);
+  }
   let prefix = '';
   if (input.from) {
     const navigation = graph.model.navigation(input.from.object.type, input.from.link, input.from.as);
@@ -126,13 +139,14 @@ export async function scenarioMetadataQuery(graph: Objects, input: Query) {
     await graph.read(input.from.object);
     graph.access.definition(graph.model, 'link', navigation.link);
     if (input.from.as) graph.access.definition(graph.model, 'interface', input.from.as);
+    const start = values.length;
     values.push(graph.model.projection, navigation.link, input.from.object.type, input.from.object.id);
     const source = navigation.forward ? 'from' : 'to',
       target = navigation.forward ? 'to' : 'from';
     const tables = viewTables(graph.db, graph.model, graph.owner, values);
     prefix = tables.prefix;
-    clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} link WHERE link.projection=$4 AND link.owner=$2 AND link.type=$5
-      AND link.${source}_type=$6 AND link.${source}_id=$7 AND link.${target}_type='OntologyScenario' AND link.${target}_id=s.id::text)`);
+    clauses.push(`EXISTS(SELECT 1 FROM ${tables.links} link WHERE link.projection=$${start+1} AND link.owner=$2 AND link.type=$${start+2}
+      AND link.${source}_type=$${start+3} AND link.${source}_id=$${start+4} AND link.${target}_type='OntologyScenario' AND link.${target}_id=s.id::text)`);
   }
   const items: ObjectData[] = [];
   let after = cursor;
@@ -149,11 +163,13 @@ export async function scenarioMetadataQuery(graph: Objects, input: Query) {
     more = rows.length > 100;
     for (const row of rows.slice(0, 100)) {
       after = String(row.id);
-      const object = asObject(row),
-        visible = graph.maskSnapshot(object.ref, object.properties);
-      if (!visible) continue;
+      const object = asObject(graph.model, row);
+      const masked = graph.maskSnapshot(object.ref, object.properties);
+      if (!masked) continue;
+      const visible = input.type === scenarioInterfaceName
+        ? projectView(graph.access, graph.model, { ...object, properties: masked }, input.type).properties : masked;
       for (const field of Object.keys(input.where ?? {}))
-        graph.model.propertyName(scenarioMetadataType, scenarioMetadataType, field);
+        graph.model.propertyName(scenarioMetadataType, input.type, field);
       if (
         !Object.entries(input.where ?? {}).every(
           ([key, value]) => digest(visible[key] ?? null) === digest(value),
@@ -163,7 +179,7 @@ export async function scenarioMetadataQuery(graph: Objects, input: Query) {
       const properties = input.select
         ? Object.fromEntries(
             input.select.map((field) => {
-              graph.model.propertyName(scenarioMetadataType, scenarioMetadataType, field);
+              graph.model.propertyName(scenarioMetadataType, input.type, field);
               return [field, visible[field]];
             }),
           )

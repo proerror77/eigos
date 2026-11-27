@@ -4,6 +4,8 @@ import { MachineryWatchPlanner } from './machinery-watch.js';
 import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
 import { ProcessNotifications, notificationsSchema, readNotificationSchema } from './process-notifications.js';
 import {digest} from '../core/identity.js';
+import { randomUUID } from 'node:crypto';
+import { isScenarioReviewAction, scenarioReviewActions } from '../ontology/scenario-definition.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import {
   EntityResolution,
@@ -593,7 +595,13 @@ export function ontologyServices(
     'Require an invited separate identity to approve the exact owned proposal revision before merge.',
     scenarioRevision.extend({ reviewers: z.array(z.string().min(1).max(200)).max(100) }),
     true,
-    async (a, input) => new Scenarios(db).inviteReviewers(a, await active(), input.id, input.revision, input.reviewers),
+    async (a, input) => {
+      const model = await active();
+      if (!isScenarioReviewAction(model.actions.get(scenarioReviewActions.submit)))
+        return new Scenarios(db).inviteReviewers(a, model, input.id, input.revision, input.reviewers);
+      await actions.apply(a, model, scenarioReviewActions.submit, input, randomUUID());
+      return { id: input.id, revision: input.revision + 1, reviewers: [...new Set(input.reviewers)].sort() };
+    },
   );
   register(
     'pending_scenario_reviews',
@@ -614,7 +622,26 @@ export function ontologyServices(
     'Approve the revision and snapshot returned by the invited reviewer inspection.',
     scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/), decision: scenarioDecisionApprovalSchema.optional() }),
     true,
-    async (a, input) => new Scenarios(db, bindings.scenarioDecisions).approveReview(a, await active(), input.id, input.revision, input.snapshot, input.decision),
+    async (a, input) => {
+      const model = await active();
+      if (!isScenarioReviewAction(model.actions.get(scenarioReviewActions.approve)))
+        return new Scenarios(db, bindings.scenarioDecisions).approveReview(a, model, input.id, input.revision, input.snapshot, input.decision);
+      await actions.apply(a, model, scenarioReviewActions.approve, input, randomUUID());
+      return { id: input.id, revision: input.revision, reviewer: a.principal.owner, approved: true as const };
+    },
+  );
+  register(
+    'reject_scenario_review',
+    'Reject the exact reviewed Scenario revision and snapshot.',
+    scenarioRevision.extend({ snapshot: z.string().regex(/^[a-f0-9]{64}$/) }),
+    true,
+    async (a, input) => {
+      const model = await active();
+      if (!isScenarioReviewAction(model.actions.get(scenarioReviewActions.reject)))
+        throw new Conflict('The published Scenario rejection Action is unavailable');
+      await actions.apply(a, model, scenarioReviewActions.reject, input, randomUUID());
+      return { id: input.id, revision: input.revision, reviewer: a.principal.owner, rejected: true as const };
+    },
   );
   register(
     'save_workflow',
