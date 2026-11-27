@@ -121,6 +121,18 @@ jobs:
           (cd templates/function-ts && npm ci --no-audit --no-fund && npm run build)
           cp templates/function-ts/function.wasm "$out/ts.wasm"
           echo "EIGOS_FUNCTION_TEMPLATES=$out" >> "$GITHUB_ENV"
+      - if: matrix.suite == '49'
+        name: Test both packaged Function templates offline
+        run: |
+          npm run build:function-test
+          npm pack ./dist/function-test-package --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          for language in rust ts; do
+            project="$RUNNER_TEMP/function-test-$language"
+            mkdir -p "$project"
+            cp "templates/function-$language/tests/offline.test.mjs" "$project/"
+            npm install --prefix "$project" --offline --no-audit --no-fund "$RUNNER_TEMP/eigos-function-test-0.1.0.tgz"
+            EIGOS_COMPONENT="$EIGOS_FUNCTION_TEMPLATES/$language.wasm" node --test "$project/offline.test.mjs"
+          done
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'

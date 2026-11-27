@@ -10,6 +10,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "node scripts/build.mjs",
+    "build:function-test": "node scripts/package-function-test.mjs",
     "test": "node scripts/test.mjs",
     "test:changed": "node scripts/test.mjs",
     "test:e2e:run": "node scripts/test.mjs --e2e",
