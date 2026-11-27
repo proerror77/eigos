@@ -78,6 +78,37 @@ test('open persisted Scenarios follow compatible live changes and stop at a conf
   } finally { await f.close(); }
 });
 
+test('a Scenario created before automatic sync joins it at its first explicit rebase', async () => {
+  const f = await lifecycleFixture();
+  try {
+    const document = structuredClone(f.model.document);
+    document.objectTypes.find(type => type.apiName === 'Route')!.properties.distance = { description: 'Synthetic distance', schema: { type: 'number' }, required: false };
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const live = new Objects(f.db, model, await access());
+    const route = { type: 'Route', id: 'legacy-route' };
+    await live.create(route, { id: route.id, name: 'Before', distance: 1 });
+    const scene = await f.scenarios.create(await access(), model, { requestId: 'legacy-sync', name: 'Legacy proposal' });
+    await new Objects(f.db, await f.scenarios.view(await access(), model, scene.id), await access()).edit(route, 1, { name: 'Proposed' });
+    // As stored before automatic sync: no creator and no position.
+    await f.db.query(`UPDATE ${f.db.schema}.scenarios SET principal=NULL, sync_position=NULL WHERE id=$1`, [scene.id]);
+    const sync = async () => { await f.db.query(`UPDATE ${f.db.schema}.scenarios SET synced_at=NULL WHERE id=$1`, [scene.id]); return f.scenarios.syncOne(f.metadata); };
+    const read = async () => (await new Objects(f.db, await f.scenarios.view(await access(), model, scene.id), await access()).read(route)).properties;
+    await live.edit(route, 1, { distance: 5 });
+    assert.equal(await sync(), false, 'a Scenario without a creator is not synced');
+    assert.equal((await read()).distance, 1);
+    await f.scenarios.rebase(await access(), model, scene.id, (await f.scenarios.inspect(await access(), model, scene.id)).revision);
+    const recorded = (await f.db.query<{ principal: { owner: string } | null }>(`SELECT principal FROM ${f.db.schema}.scenarios WHERE id=$1`, [scene.id])).rows[0]!;
+    assert.equal(recorded.principal?.owner, principal.owner);
+    assert.deepEqual({ name: (await read()).name, distance: (await read()).distance }, { name: 'Proposed', distance: 5 });
+    // From then on it follows compatible live changes like any other.
+    await live.edit(route, 2, { distance: 7 });
+    assert.equal(await sync(), true);
+    assert.equal((await read()).distance, 7);
+  } finally { await f.close(); }
+});
+
 test('temporary scenarios are bound to owned sessions and close and TTL cleanup remove their deltas',async()=>{
   const f=await lifecycleFixture();try{
     const session=await f.scenarios.openSession(f.access),scene=await f.scenarios.create(f.access,f.model,{requestId:'temporary',name:'Temporary',kind:'temporary',sessionId:session.id});

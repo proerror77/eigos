@@ -964,8 +964,11 @@ export class Scenarios {
       }
       if (rebased) await bumpScenario(this.db, view, owner, client);
       // A rebase brings the Scenario up to the owner's latest commit, and resolves a conflict that stopped automatic sync.
-      await this.db.query(`UPDATE ${this.db.schema}.scenarios SET sync_state='current',sync_error=NULL,synced_at=now(),
-        sync_position=(SELECT coalesce(max(commit_seq),0) FROM ${this.db.schema}.change_commits WHERE owner=$1) WHERE owner=$1 AND id=$2`, [owner, id], client);
+      // A Scenario created before automatic sync has no creator to sync as; its first explicit rebase records the author.
+      const author={owner:access.principal.owner,scopes:[...access.principal.scopes],...(access.principal.memberAccess?{memberAccess:true}:{})};
+      await this.db.query(`UPDATE ${this.db.schema}.scenarios SET sync_state='current',sync_error=NULL,synced_at=now(),principal=coalesce(principal,$3::jsonb),
+        sync_position=(SELECT coalesce(max(commit_seq),0) FROM ${this.db.schema}.change_commits WHERE owner=$1) WHERE owner=$1 AND id=$2`,
+        [owner, id, JSON.stringify(author)], client);
       await access.refresh(client);
       return { id, revision: revision + Number(rebased) };
     });
