@@ -46,6 +46,14 @@ function codeOf(error: unknown, signal: AbortSignal) {
   return 'failed';
 }
 
+const pendingWrites = new WeakMap<Database, Set<Promise<void>>>();
+
+/** Drains records requested before the caller closes or removes a database. */
+export async function flushFunctionInvocations(db: Database) {
+  const pending = pendingWrites.get(db);
+  while (pending?.size) await Promise.all(pending);
+}
+
 export class FunctionInvocations {
   constructor(private readonly db: Database) {}
 
@@ -59,12 +67,20 @@ export class FunctionInvocations {
     finally {
       // The measurement describes the Function call, including attempts that an Action later rolls back.
       // An asynchronous insert can obtain its own connection after the caller releases its transaction.
-      void this.db.query(`INSERT INTO ${this.db.schema}.function_invocations
+      const write = this.db.query(`INSERT INTO ${this.db.schema}.function_invocations
         (owner,ontology,function_name,version,release,started_at,duration_ms,host_ms,fuel_used,callbacks,error_code)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [
         principal.owner, model.document.id, name, version ?? null, model.release, startedAt,
         Math.round(performance.now() - start), metrics.hostMs ?? null, metrics.fuelUsed ?? null, metrics.callbacks, errorCode,
-      ]).catch(() => { console.error('Could not record Function invocation'); });
+      ]).then(() => {}).catch(() => { console.error('Could not record Function invocation'); });
+      let pending = pendingWrites.get(this.db);
+      if (!pending) {
+        pending = new Set();
+        pendingWrites.set(this.db, pending);
+      }
+      const batch = pending;
+      batch.add(write);
+      void write.then(() => batch.delete(write));
     }
   }
 
