@@ -6,6 +6,7 @@ import { profileDatabase, profileSummary, type DatabaseProfile } from '../../pac
 import { Clarification } from '../../packages/runtime/agent.js';
 import { Tasks, type Task } from '../../packages/runtime/tasks.js';
 import { DeferredExecution } from '../../packages/runtime/scheduled-actions.js';
+import { ProviderBudgetExceeded } from '../../packages/runtime/provider-budgets.js';
 
 type TaskLane = 'scheduled' | 'interactive';
 
@@ -52,6 +53,8 @@ export class Worker {
       return 'completed';
     } catch (error) {
       if (error instanceof DeferredExecution) return await this.tasks.defer(task, error.until).then(() => 'deferred', () => 'uncommitted');
+      // A provider call over its owner's budget waits for the budget instead of failing the task (runtime budget 06.3).
+      if (error instanceof ProviderBudgetExceeded) return await this.tasks.postpone(task, error.until).then(() => 'deferred', () => 'uncommitted');
       const clarification = error instanceof Clarification;
       const state = clarification ? 'input-required' : 'failed';
       if (!clarification) console.error('Inquiry execution failed', error instanceof Error ? error.message : 'Unknown error');
@@ -68,10 +71,12 @@ export class Worker {
     const consumers: Promise<void>[] = [];
     try {
       await listener.query('LISTEN eigos_tasks');
+      // Each Worker runs EIGOS_WORKER_SLOTS tasks at once, 4 by default (runtime budget 06.1).
+      const slots = Math.max(1, Number(process.env.EIGOS_WORKER_SLOTS ?? 4) || 4);
       if (this.schedules && this.scheduledRunner) {
-        // Provider-backed scheduled Actions have a slot even when both model runs are busy.
-        consumers.push(this.consume('scheduled'), this.consume('interactive'), this.consume('interactive'));
-      } else consumers.push(this.consume(), this.consume());
+        // Provider-backed scheduled Actions have a slot even when every interactive slot is busy.
+        consumers.push(this.consume('scheduled'), ...Array.from({ length: slots }, () => this.consume('interactive')));
+      } else consumers.push(...Array.from({ length: slots }, () => this.consume()));
       await Promise.all(consumers);
     } finally {
       this.stop();
