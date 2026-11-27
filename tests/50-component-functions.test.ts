@@ -129,7 +129,7 @@ test('a release with component Functions needs a function host, their components
       return f.metadata.publish(document, f.capabilities, f.publisher);
     };
     await assert.rejects(publish(echoFunction(sha256, { version: '1' })), /A component Function needs a semantic version/);
-    await assert.rejects(publish(echoFunction(sha256, { source: 'Didi' })), /A component Function cannot read a source yet/);
+    await assert.rejects(publish(echoFunction(sha256, { source: 'Didi' })), /Component HTTP Sources are unavailable/);
     await assert.rejects(publish(echoFunction(sha256, { implementation: { ...implementation(sha256), limits: { ...limits, memoryMb: 1024 } } })), /memoryMb/);
     await assert.rejects(publish(echoFunction('a'.repeat(64))), error => error instanceof Conflict && /has not been uploaded/.test(error.message));
     const configured = process.env.EIGOS_FUNCTION_HOST_BIN;
@@ -201,8 +201,9 @@ test('a component Function reads the Ontology as its caller would, within its li
   try {
     const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
     const document = structuredClone(f.model.document);
+    // Reach the callback-count limit even when 1,001 sequential PostgreSQL reads take more than the default deadline.
     document.functionTypes.push(echoFunction(sha256, { apiName: 'ReadOntology', description: 'Read the Ontology through the function host',
-      returns: { type: 'object' } }));
+      returns: { type: 'object' }, implementation: implementation(sha256, { deadlineMs: 30_000 }) }));
     const model = await f.metadata.publish(document, f.capabilities, f.publisher);
     await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), live = new Objects(f.db, model, access), sets = new ObjectSets(f.db);
@@ -353,5 +354,56 @@ test('Function invocation history records host costs and errors by caller and ex
     await f.db.query(`UPDATE ${f.db.schema}.function_invocations SET started_at=now()-interval '31 days' WHERE function_name=$1`, [name]);
     assert.deepEqual(await reporter.list(access, model, input), { items: [] });
     assert.equal(await reporter.prune(), 2);
+  } finally { await f.close(); }
+});
+
+test('a component reads through its declared Source with caller permission and receives no credential', { skip }, async () => {
+  const { ComponentSourceEgress } = await import('../packages/runtime/component-source-egress.js');
+  const requests: { path: string; header?: string }[] = [];
+  const secret = 'synthetic-inventory-token';
+  const egress = new ComponentSourceEgress({
+    Inventory: { baseUrl: 'https://inventory.example.com/v1/', methods: ['GET'], bearerSecret: 'inventory' },
+  }, async (url, options) => {
+    requests.push({ path: url.pathname, header: options.headers.authorization });
+    return { status: 200, contentType: 'application/json', body: '{"available":true}' };
+  }, () => {});
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, {
+    componentSources: { egress, secrets: { async get(name) { assert.equal(name, 'inventory'); return secret; } } },
+  });
+  try {
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(
+      echoFunction(sha256, { apiName: 'InventoryLookup', source: 'Inventory', returns: { type: 'object' } }),
+      echoFunction(sha256, { apiName: 'UndeclaredLookup', returns: { type: 'object' } }),
+    );
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const other = { ...principal, owner: 'component-source-without-grant' };
+    await setGrants(f.db, other.owner, businessGrants(model).filter(grant => grant.permission !== 'read_source'));
+    const call = async (caller: typeof principal, name: string, path = '/v1/items') => {
+      const access = await Access.load(f.db, caller);
+      return f.capabilities.functions.invoke(model, name, { ontology: { op: 'outgoing', args: [{ path }] } },
+        { principal: caller, objects: new Objects(f.db, model, access), signal: AbortSignal.timeout(10000) });
+    };
+    await assert.rejects(call(other, 'InventoryLookup'), PermissionDenied);
+    await assert.rejects(call(principal, 'UndeclaredLookup'), failed('permission-denied'));
+    await assert.rejects(call(principal, 'InventoryLookup', '/outside'), failed('permission-denied'));
+    assert.deepEqual(requests, []);
+    const result = await call(principal, 'InventoryLookup');
+    assert.deepEqual(result, { result: { status: 200, contentType: 'application/json', body: '{"available":true}' } });
+    assert.deepEqual(requests, [{ path: '/v1/items', header: 'Bearer ' + secret }]);
+    assert(!JSON.stringify(result).includes(secret));
+    const access = await Access.load(f.db, principal);
+    const reporter = new FunctionInvocations(f.db);
+    const input = functionInvocationsQuery.parse({ function: 'InventoryLookup' });
+    let history = await reporter.list(access, model, input);
+    const deadline = Date.now() + 3000;
+    while (!history.items.some(item => item.status === 'returned') && Date.now() < deadline) {
+      await delay(15);
+      history = await reporter.list(access, model, input);
+    }
+    assert.equal(history.items.find(item => item.status === 'returned')?.callbacks.outgoing?.count, 1);
+    assert(!JSON.stringify(history.items).includes(secret));
   } finally { await f.close(); }
 });

@@ -2,6 +2,7 @@ import type { Ontology } from '../ontology/model.js';
 import type { OntologyDocument } from '../ontology/schema.js';
 import { Actions, type CommittedEffects } from './actions.js';
 import { ComponentFunctions } from './component-functions.js';
+import { configuredComponentSources } from './component-source-egress.js';
 import type { Database } from './database.js';
 import { Effects } from './effects.js';
 import type { RuntimeExtensions } from './extensions.js';
@@ -20,7 +21,8 @@ export function assembleRuntime(
     if (registered.has(name)) throw new Error('Source projection is already registered: ' + name);
     registered.set(name, projection);
   }
-  const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db), new ProviderBudgets(db), new FunctionInvocations(db));
+  const components = new ComponentFunctions(db, undefined, extensions.componentSources ?? configuredComponentSources());
+  const functions = new Functions(handlers, definitions, extensions.functions, components, new ProviderBudgets(db), new FunctionInvocations(db));
   const sources = new Sources(db, functions, registered);
   const effects = new Effects(db, extensions.effects ?? new Map());
   const actions = new Actions(db, functions, effects, committedEffects);
