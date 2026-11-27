@@ -10,6 +10,7 @@ import { Access } from '../packages/runtime/access.js';
 import { Database } from '../packages/runtime/database.js';
 import { assertOwnerIsolation, installOwnerIsolation } from '../packages/runtime/owner-isolation.js';
 import { ScheduledActions, ScheduledActionRunner } from '../packages/runtime/scheduled-actions.js';
+import { Tasks } from '../packages/runtime/tasks.js';
 import { fakeAmap, testConnection } from './amap-fixture.js';
 import { fixture, principal } from './fixture.js';
 
@@ -21,7 +22,7 @@ async function eventually(predicate: () => Promise<boolean>) {
   assert.fail('Server worker did not process the queued action');
 }
 
-test('EIGOS processes a due journey while both model slots are busy and a restricted dispatcher only sends its own current notice', async () => {
+test('EIGOS processes a due journey while its owner fills both model slots and a restricted dispatcher only sends its own current notice', async () => {
   const f = await fixture(), folder = await mkdtemp(join(tmpdir(), 'eigos-travel-pa-'));
   const role = 'eigos_reminder_role_' + f.schema.slice(-28);
   let finish!: () => void, markStarted!: () => void;
@@ -86,7 +87,7 @@ test('EIGOS processes a due journey while both model slots are busy and a restri
     const schedules = new ScheduledActions(f.db, f.metadata);
     const runner = new ScheduledActionRunner(f.db, f.metadata, f.tasks, capabilities.actions);
     let activeModelRuns = 0;
-    worker = new Worker(f.tasks, { async run() {
+    worker = new Worker(new Tasks(f.db, f.metadata, 2), { async run() {
       activeModelRuns++;
       if (activeModelRuns === 2) markStarted();
       await interactive;

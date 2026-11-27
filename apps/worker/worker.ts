@@ -68,10 +68,12 @@ export class Worker {
     const consumers: Promise<void>[] = [];
     try {
       await listener.query('LISTEN eigos_tasks');
+      // Each Worker runs EIGOS_WORKER_SLOTS tasks at once, 4 by default (runtime budget 06.1).
+      const slots = Math.max(1, Number(process.env.EIGOS_WORKER_SLOTS ?? 4) || 4);
       if (this.schedules && this.scheduledRunner) {
-        // Provider-backed scheduled Actions have a slot even when both model runs are busy.
-        consumers.push(this.consume('scheduled'), this.consume('interactive'), this.consume('interactive'));
-      } else consumers.push(this.consume(), this.consume());
+        // Provider-backed scheduled Actions have a slot even when every interactive slot is busy.
+        consumers.push(this.consume('scheduled'), ...Array.from({ length: slots }, () => this.consume('interactive')));
+      } else consumers.push(...Array.from({ length: slots }, () => this.consume()));
       await Promise.all(consumers);
     } finally {
       this.stop();

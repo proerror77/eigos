@@ -7,6 +7,7 @@ import { Ontology } from '../packages/ontology/model.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { Access, setGrants, businessGrants } from '../packages/runtime/access.js';
 import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
+import { Tasks } from '../packages/runtime/tasks.js';
 
 test('concurrent submissions retain one task and cancellation fences late results', async () => {
   const f = await fixture();
@@ -48,4 +49,26 @@ test('the existing PostgreSQL data upgrades in place with old definitions and ta
     assert.deepEqual(task.result, { kept: true }); assert(task.result_permissions.length > 0);
     assert.equal((await db.query(`SELECT count(*)::int n FROM ${s}.objects`)).rows[0]!.n, 1);
   } finally { await db.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`); await db.close(); }
+});
+
+test('owners take turns at the task queue, and each runs at most its share of slots', async () => {
+  const f = await fixture();
+  try {
+    const tasks = new Tasks(f.db, f.metadata, 2);
+    const other = { ...principal, owner: 'queue-other-owner' };
+    await setGrants(f.db, other.owner, businessGrants(f.model));
+    const submit = (as: typeof principal, requestId: string) => tasks.submit(as, { requestId, message: '只询价', route });
+    for (let index = 0; index < 4; index++) await submit(principal, 'backlog-' + index);
+    await submit(other, 'other-owner-task');
+    const next = async () => (await tasks.claim())?.request_id;
+    // The other owner's task came last but goes second: owners take turns.
+    assert.deepEqual([await next(), await next(), await next()], ['backlog-0', 'other-owner-task', 'backlog-1']);
+    // The first owner now runs two tasks, its share, so its backlog waits even with slots free.
+    assert.equal(await next(), undefined);
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET state='completed' WHERE request_id='backlog-0'`);
+    assert.equal(await next(), 'backlog-2');
+    // A lease that expired frees its slot as well.
+    await f.db.query(`UPDATE ${f.db.schema}.tasks SET lease_until=now()-interval '1 second' WHERE request_id='backlog-1'`);
+    assert.deepEqual([await next(), await next()], ['backlog-1', undefined]);
+  } finally { await f.close(); }
 });
