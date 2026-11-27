@@ -389,7 +389,7 @@ export class Objects {
   }
   private shadowQuery(kernels: KernelUse, args: z.output<typeof querySchema>) {
     const offset = args.cursor ? referenceOffset(args.cursor) : 0;
-    return compareWithKernel(this.db, kernels.registry, this.access, this.model, args, async fork => {
+    return compareWithKernel(this.db, kernels.registry, this.access, this.model, 'query', args, async fork => {
       const page = await new Objects(this.db, this.model, fork).queryObjects(args);
       return { items: page.items, more: Boolean(page.cursor) };
     }, async (client, fork) => {
@@ -825,7 +825,7 @@ export class Objects {
       if (routed) return routed;
     }
     const targets = await this.followObjects(ref, link, view, maximum);
-    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, { follow: { ref, link, view, maximum } },
+    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, 'follow', { follow: { ref, link, view, maximum } },
       fork => new Objects(this.db, this.model, fork).followObjects(ref, link, view, maximum),
       (client, fork) => new Objects(this.db, this.model, fork).kernelFollow(client, ref, link, view, maximum));
     return targets;
