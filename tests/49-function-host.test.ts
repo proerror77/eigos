@@ -177,3 +177,25 @@ test('the offline Function harness supplies a principal and reads its staged edi
   assert.equal(readOnly.error?.kind === 'failure' && readOnly.error.code, 'conflict');
   assert.deepEqual(readOnly.stagedEdits, []);
 });
+
+
+test('a component model stub supplies segments for offline stream assertions', {skip}, async () => {
+  const {runFunction} = await import('../packages/function-test/index.js');
+  const outcome=await runFunction({binary:binary!,component:await component('echo_rust'),
+    input:{ontology:{op:'generate',args:['Writer',[{role:'user',content:'hello'}]]}},streaming:true,
+    models:{Writer(messages) { assert.deepEqual(messages,[{role:'user',content:'hello'}]); return ['one','two']; }}});
+  assert.deepEqual(outcome.chunks,['one','two']);
+  assert.deepEqual(outcome.value,{result:'onetwo'});
+});
+
+test('SSE framing handles split Unicode, CRLF, bare CR and incomplete responses', async () => {
+  const { sseData } = await import('../packages/sdk/event-stream.js');
+  const response = (text: string) => new Response(new ReadableStream({ start(controller) {
+    for (const byte of new TextEncoder().encode(text)) controller.enqueue(new Uint8Array([byte]));
+    controller.close();
+  }}), { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
+  const read = async (r:Response,limit=1024) => { const events=[];for await (const data of sseData(r,limit)) events.push(data);return events; };
+  assert.deepEqual(await read(response(': comment\r\ndata: 甲\r\ndata: 乙\r\n\r\ndata: 丙\r\r')),['甲\n乙','丙']);
+  await assert.rejects(read(response('data: partial')),/Incomplete/);
+  await assert.rejects(read(response('data: abc\n\n'),5),/byte limit/);
+});

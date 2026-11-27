@@ -53,11 +53,18 @@ export class ComponentModels {
     if (measurement) measurement.calls++;
     const response=await this.transport(config.endpoint,{method:'POST',redirect:'error',signal,
       headers:{authorization:'Bearer '+credential,'content-type':'application/json',accept:'text/event-stream'},
-      body:JSON.stringify({model:config.model,messages:body,max_tokens:config.maxTokens,stream:true,stream_options:{include_usage:true}})});
+      body:JSON.stringify({model:config.model,messages:body,max_tokens:config.maxTokens,stream:true,stream_options:{include_usage:true}})}).catch(() => {
+        signal.throwIfAborted();
+        throw new ServiceUnavailable('The configured model endpoint could not be reached');
+      });
     let recorded=false;
     for await (const data of sseData(response,4<<20)) {
       if (data==='[DONE]') return;
-      const frame=event.parse(JSON.parse(data));
+      let raw: unknown;
+      try { raw = JSON.parse(data); } catch { throw new ServiceUnavailable('The model returned a malformed event'); }
+      const parsed = event.safeParse(raw);
+      if (!parsed.success) throw new ServiceUnavailable('The model returned an invalid event');
+      const frame=parsed.data;
       if (frame.usage && !recorded) {
         recorded=true;
         if (measurement) {
