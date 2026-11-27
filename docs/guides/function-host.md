@@ -204,9 +204,9 @@ world handler {
 
 | 请求 | 说明 |
 | --- | --- |
-| `GET /health` | 协议版本 1、world、内存中的组件数与容量、并发槽数、是否持久化，以及各项上限 |
+| `GET /health` | 协议版本 2、world、内存中的组件数与容量、并发槽数、是否持久化，以及各项上限 |
 | `POST /components` | 请求体是组件，`x-eigos-sha256` 头给出它的 SHA-256。宿主检查、预编译并保存它，已有的直接返回 `cached: true` |
-| `POST /invoke` | `{ sha256, input, limits }`，宿主在新实例中调用 `invoke` |
+| `POST /invoke` | `{ sha256, input, limits, callback? }`，宿主在新实例中调用 `invoke`。运行时可提供本机 Ontology 回调。 |
 
 ### 调用的上限
 
