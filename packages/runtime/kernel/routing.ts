@@ -74,16 +74,27 @@ function reportShadow(mismatch: string, input: unknown) {
  * - skipped, when the owner committed during the comparison;
  * - stale, when the kernel differed until it loaded the projection again, because it missed writes outside the commit
  *   log;
- * - aborted, when a comparison that ran after its request failed, for example because the data was gone.
+ * - aborted, when a comparison that ran after its request failed, for example because the data was gone;
+ * - unavailable, when the runtime could not obtain a kernel for this projection.
  * With EIGOS_KERNEL_SHADOW_REPORT=true, printed once when the process exits.
  */
-const shadowCounts = { compared: 0, declined: 0, skipped: 0, stale: 0, aborted: 0 };
+export type KernelOperation = 'query' | 'follow' | 'evaluate' | 'aggregate';
+const emptyShadowCounts = () => ({ compared: 0, declined: 0, skipped: 0, stale: 0, aborted: 0, unavailable: 0 });
+const shadowCounts = emptyShadowCounts();
+const shadowOperations = new Map<KernelOperation, ReturnType<typeof emptyShadowCounts>>();
 let shadowReport = false;
-function countShadow(outcome: keyof typeof shadowCounts) {
+function countShadow(outcome: keyof typeof shadowCounts, operation: KernelOperation) {
   shadowCounts[outcome]++;
+  const counts = shadowOperations.get(operation) ?? emptyShadowCounts();
+  counts[outcome]++;
+  shadowOperations.set(operation, counts);
   if (!shadowReport && process.env.EIGOS_KERNEL_SHADOW_REPORT === 'true') {
     shadowReport = true;
-    process.once('exit', () => console.error(JSON.stringify({ event: 'kernel_shadow', ...shadowCounts })));
+    process.once('exit', () => {
+      console.error(JSON.stringify({ event: 'kernel_shadow', ...shadowCounts }));
+      for (const [operation, outcomes] of shadowOperations)
+        console.error(JSON.stringify({ event: 'kernel_shadow_operation', operation, ...outcomes }));
+    });
   }
 }
 
@@ -100,26 +111,26 @@ async function versionStamp(db: Database, model: PublishedOntology, owner: strin
  * profile. With EIGOS_KERNEL_SHADOW_STRICT=true the comparison finishes before the request answers, so a mismatch
  * fails it; otherwise it runs after the request answers, adding no latency.
  */
-export async function compareWithKernel(db: Database, registry: KernelSource, access: Access, model: PublishedOntology, input: unknown,
+export async function compareWithKernel(db: Database, registry: KernelSource, access: Access, model: PublishedOntology, operation: KernelOperation, input: unknown,
   reference: (fork: Access) => Promise<unknown>, kernel: (client: KernelClient, fork: Access) => Promise<unknown | undefined>) {
   const compare = async () => {
     const client = await registry.kernelFor(db, model, true);
-    if (!client) return;
+    if (!client) return countShadow('unavailable', operation);
     const before = await versionStamp(db, model, access.principal.owner);
     const expected = await isolated(access, reference);
     const viaKernel = () => isolated(access, fork => kernel(client, fork));
     let actual = await viaKernel();
-    if (actual.result === undefined) return countShadow('declined');
-    if (await versionStamp(db, model, access.principal.owner) !== before) return countShadow('skipped');
+    if (actual.result === undefined) return countShadow('declined', operation);
+    if (await versionStamp(db, model, access.principal.owner) !== before) return countShadow('skipped', operation);
     let mismatch = shadowMismatch(expected, actual);
     if (mismatch && registry.reload) {
       // Writes outside the commit log are invisible to the kernel until it loads the projection again.
       await registry.reload(db, model);
       actual = await viaKernel();
-      if (actual.result !== undefined && !shadowMismatch(expected, actual)) return countShadow('stale');
+      if (actual.result !== undefined && !shadowMismatch(expected, actual)) return countShadow('stale', operation);
       mismatch = actual.result === undefined ? undefined : shadowMismatch(expected, actual);
     }
-    countShadow('compared');
+    countShadow('compared', operation);
     if (mismatch) reportShadow(mismatch, input);
   };
   if (process.env.EIGOS_KERNEL_SHADOW_STRICT === 'true') {
@@ -127,7 +138,7 @@ export async function compareWithKernel(db: Database, registry: KernelSource, ac
     try { await unprofiled(compare); } finally { db.queries = counted; }
     return;
   }
-  void unprofiled(compare).catch(() => countShadow('aborted'));
+  void unprofiled(compare).catch(() => countShadow('aborted', operation));
 }
 
 /**
