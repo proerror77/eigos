@@ -351,7 +351,7 @@ export class Database {
         UPDATE ${s}.task_inbox_events e SET ontology=t.ontology FROM ${s}.tasks t WHERE t.id=e.task_id;
         ALTER TABLE ${s}.task_inbox_events ALTER COLUMN ontology SET NOT NULL;
         ALTER TABLE ${s}.task_inbox_events DROP CONSTRAINT task_inbox_events_pkey, ADD PRIMARY KEY(ontology,owner,request_id);
-        ALTER TABLE ${s}.tasks DROP CONSTRAINT tasks_owner_request_id_key, ADD UNIQUE(ontology,owner,request_id);
+        ALTER TABLE ${s}.tasks DROP CONSTRAINT IF EXISTS tasks_owner_request_id_key, ADD UNIQUE(ontology,owner,request_id);
         DROP INDEX ${s}.tasks_conversation_batch;
         CREATE UNIQUE INDEX tasks_conversation_batch ON ${s}.tasks(ontology,owner,conversation_id,conversation_batch) WHERE conversation_id IS NOT NULL;
       END IF;

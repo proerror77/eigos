@@ -50,8 +50,8 @@ test('the existing PostgreSQL data upgrades in place with old definitions and ta
     const access = await Access.load(db, principal), historical = await new Metadata(db).get(model.digest);
     assert.equal(historical.runtimeId, 'legacy-readonly');
     assert.equal((await new Objects(db, historical, access).read({ type: 'Route', id: 'kept' })).properties.name, 'Original data');
-    const task = (await db.query(`SELECT result,result_permissions FROM ${s}.tasks`)).rows[0]!;
-    assert.deepEqual(task.result, { kept: true }); assert(task.result_permissions.length > 0);
+    const task = (await db.query(`SELECT ontology,result,result_permissions FROM ${s}.tasks`)).rows[0]!;
+    assert.equal(task.ontology, model.document.id); assert.deepEqual(task.result, { kept: true }); assert(task.result_permissions.length > 0);
     assert.equal((await db.query(`SELECT count(*)::int n FROM ${s}.objects`)).rows[0]!.n, 1);
   } finally { await db.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`); await db.close(); }
 });
