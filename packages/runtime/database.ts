@@ -27,6 +27,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { activeProfiles, chargeProfiles, profileDatabase, type DatabaseProfile } from '../core/database-profile.js';
 import { recordOperationEvent } from '../core/operation-timing.js';
+import { digest } from '../core/identity.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -63,6 +64,7 @@ export class Database {
   private readonly sharedEditLocks = new WeakSet<Sql>();
   private readonly objectScopes = new WeakMap<Sql, ObjectScope>();
   private readonly objectAccess = new AsyncLocalStorage<true>();
+  private readonly objectLockReportMs = Number(process.env.EIGOS_OBJECT_LOCK_REPORT_MS ?? 0);
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
     queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
     readonly sandboxEnabled = developmentSandboxEnabled()) {
@@ -165,7 +167,21 @@ export class Database {
     if (scope.held.size + needed.filter(key => !scope.held.has(key)).length > objectLockBudget)
       this.requireExclusive(client, 'object lock budget');
     const lock = mode === 'exclusive' ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
-    await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
+    if (Number.isFinite(this.objectLockReportMs) && this.objectLockReportMs > 0) {
+      // The dependent CTEs place the timestamps on either side of one PostgreSQL lock acquisition.
+      // The lateral query follows the sorted inputs and keeps all of the locks in the original transaction.
+      const { rows } = await this.query<{ key: string; wait_ms: number }>(`SELECT key, wait_ms
+        FROM unnest($1::text[]) AS keys(key)
+        CROSS JOIN LATERAL (
+          WITH started AS MATERIALIZED (SELECT clock_timestamp() AS at, keys.key AS lock_key),
+               acquired AS MATERIALIZED (SELECT at, ${lock}(hashtextextended(lock_key,0)) FROM started)
+          SELECT 1000 * EXTRACT(EPOCH FROM clock_timestamp() - at)::double precision AS wait_ms FROM acquired
+        ) wait WHERE wait_ms >= $2`, [needed, this.objectLockReportMs], client);
+      for (const row of rows)
+        recordOperationEvent('object_lock_wait', { objectKey: digest(row.key), mode, waitMs: Math.round(row.wait_ms) });
+    } else {
+      await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
+    }
     for (const key of needed) scope.held.set(key, mode);
   }
   /**
