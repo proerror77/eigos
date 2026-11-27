@@ -136,6 +136,10 @@
 
 **目标：** 组件函数在执行中读取对象、遍历关系、查询和聚合 Object Set，并暂存编辑。
 
+**状态：** 读取和编辑都已实现，见 [函数宿主指南](../../guides/function-host.md#ontology-接口)。实现与下文的不同之处：
+- 回调用每次调用一个的本机 HTTP 端点加令牌，而不是双向流，接口参数和结果都是 JSON 文本；
+- 编辑按 Palantir 的 staged writes 语义实现：编辑函数在 Action 的提交事务里运行，所以读取、查询和聚合都反映之前的编辑，并与 Action 一起原子提交，不需要单独的编辑缓冲。
+
 ### 宿主接口
 
 在 world 里增加导入接口 `eigos:ontology/objects`：

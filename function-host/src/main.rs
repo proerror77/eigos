@@ -40,11 +40,14 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 mod world {
     wasmtime::component::bindgen!({ world: "handler", path: "wit" });
 }
-use world::{Failure, HandlerPre};
+use world::HandlerPre;
+use world::eigos::function::types::Failure;
 
-/// What this host answers: 1, uploads and invocations of `eigos:function/handler@0.1.0`.
-const PROTOCOL: u32 = 1;
-const WORLD: &str = "eigos:function/handler@0.1.0";
+/// What this host answers: 1, uploads and invocations; 2 adds the Ontology a call reaches through its callback.
+const PROTOCOL: u32 = 2;
+const WORLD: &str = "eigos:function/handler@0.2.0";
+/// The most a callback answer may hold.
+const MAX_CALLBACK: usize = 16 << 20;
 /// The host's maxima for the limits a call may ask for.
 const MAX_FUEL: u64 = 200_000_000_000;
 const MAX_MEMORY_MB: u64 = 512;
@@ -59,13 +62,93 @@ const STDERR_BYTES: usize = 64 << 10;
 /// How often the epoch advances, which is the granularity of deadlines.
 const EPOCH_MS: u64 = 10;
 /// The WASI interfaces a component may import, by package prefix.
-const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/"];
+const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/", "eigos:function/"];
 
 type Refusal = (StatusCode, Json<Value>);
 fn refuse(status: StatusCode, message: impl ToString) -> Refusal { (status, Json(json!({ "error": message.to_string() }))) }
 
-/// One call's store data: WASI with no network, no environment and nothing opened, and the call's limits.
-struct Call { wasi: WasiCtx, table: ResourceTable, limiter: Limiter }
+/// One call's store data: WASI with no network, no environment and nothing opened, the call's limits, and the runtime's
+/// callback through which the call reads the Ontology.
+struct Call { wasi: WasiCtx, table: ResourceTable, limiter: Limiter, callback: Option<Callback>, deadline: Instant }
+
+/// The runtime's endpoint for one call: on the loopback interface, with a token that names the call.
+struct Callback { port: u16, path: String, token: String }
+
+impl Call {
+    /// Asks the runtime to run an Ontology operation for this call. The runtime checks permissions as for a direct read;
+    /// its error comes back as the Function's failure, which the Function may handle.
+    fn ontology(&mut self, operation: &str, arguments: Value) -> Result<Option<String>, Failure> {
+        let failure = |code: &str, message: String| Failure { code: code.into(), message };
+        let Some(callback) = &self.callback else { return Err(failure("unavailable", "This call has no Ontology to read".into())) };
+        let body = json!({ "token": callback.token, "operation": operation, "arguments": arguments }).to_string();
+        // A host function cannot be interrupted, so the wait ends with the call's deadline.
+        let wait = self.deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
+        let response = post_callback(callback.port, &callback.path, &body, wait)
+            .map_err(|e| failure("unavailable", format!("The runtime did not answer: {e}")))?;
+        let value: Value = serde_json::from_str(&response).map_err(|_| failure("unavailable", "The runtime answered malformed JSON".into()))?;
+        if let Some(error) = value.get("error") {
+            return Err(failure(error["code"].as_str().unwrap_or("failed"), error["message"].as_str().unwrap_or_default().to_string()));
+        }
+        Ok(match value.get("result") { None | Some(Value::Null) => None, Some(result) => Some(result.to_string()) })
+    }
+    fn required(&mut self, operation: &str, arguments: Value) -> Result<String, Failure> {
+        self.ontology(operation, arguments)?.ok_or_else(|| Failure { code: "unavailable".into(), message: format!("{operation} returned nothing") })
+    }
+}
+
+/// The JSON an argument holds, or the Function's failure.
+fn argument(name: &str, text: &str) -> Result<Value, Failure> {
+    serde_json::from_str(text).map_err(|e| Failure { code: "invalid".into(), message: format!("{name} is not JSON: {e}") })
+}
+
+impl world::eigos::function::types::Host for Call {}
+impl world::eigos::function::ontology::Host for Call {
+    fn get(&mut self, object_type: String, id: String) -> Result<Option<String>, Failure> {
+        self.ontology("get", json!({ "type": object_type, "id": id }))
+    }
+    fn follow(&mut self, object: String, link: String) -> Result<String, Failure> {
+        let object = argument("object", &object)?;
+        self.required("follow", json!({ "object": object, "link": link }))
+    }
+    fn query(&mut self, query: String) -> Result<String, Failure> { let query = argument("query", &query)?; self.required("query", json!({ "query": query })) }
+    fn evaluate(&mut self, request: String) -> Result<String, Failure> { let request = argument("request", &request)?; self.required("evaluate", request) }
+    fn aggregate(&mut self, request: String) -> Result<String, Failure> { let request = argument("request", &request)?; self.required("aggregate", request) }
+    fn create(&mut self, object_type: String, id: String, properties: String) -> Result<(), Failure> {
+        let properties = argument("properties", &properties)?;
+        self.ontology("create", json!({ "type": object_type, "id": id, "properties": properties })).map(|_| ())
+    }
+    fn update(&mut self, object: String, properties: String) -> Result<(), Failure> {
+        let (object, properties) = (argument("object", &object)?, argument("properties", &properties)?);
+        self.ontology("update", json!({ "object": object, "properties": properties })).map(|_| ())
+    }
+    fn delete(&mut self, object: String) -> Result<(), Failure> {
+        let object = argument("object", &object)?;
+        self.ontology("delete", json!({ "object": object })).map(|_| ())
+    }
+    fn link(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
+        let (from, to) = (argument("from", &from)?, argument("to", &to)?);
+        self.ontology("link", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
+    fn unlink(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
+        let (from, to) = (argument("from", &from)?, argument("to", &to)?);
+        self.ontology("unlink", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
+}
+
+/// A minimal HTTP/1.1 POST to the runtime on the loopback interface, which answers with a Content-Length and closes.
+fn post_callback(port: u16, path: &str, body: &str, wait: Duration) -> std::io::Result<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), wait)?;
+    stream.set_read_timeout(Some(wait))?;
+    stream.set_write_timeout(Some(wait))?;
+    write!(stream, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())?;
+    let mut response = Vec::new();
+    stream.take(MAX_CALLBACK as u64 + 4096).read_to_end(&mut response)?;
+    let response = String::from_utf8(response).map_err(std::io::Error::other)?;
+    let (head, rest) = response.split_once("\r\n\r\n").ok_or_else(|| std::io::Error::other("malformed response"))?;
+    if !head.starts_with("HTTP/1.1 200") { return Err(std::io::Error::other(head.lines().next().unwrap_or_default().to_string())); }
+    Ok(rest.to_string())
+}
 impl WasiView for Call {
     fn ctx(&mut self) -> WasiCtxView<'_> { WasiCtxView { ctx: &mut self.wasi, table: &mut self.table } }
 }
@@ -210,15 +293,30 @@ struct Limits {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Invoke { sha256: String, input: String, limits: Limits }
+struct CallbackSpec { url: String, token: String }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Invoke { sha256: String, input: String, limits: Limits, #[serde(default)] callback: Option<CallbackSpec> }
+
+/// The callback of a call, which must be on the loopback interface: the host reaches nothing else.
+fn callback(spec: &CallbackSpec) -> Result<Callback, String> {
+    let rest = spec.url.strip_prefix("http://127.0.0.1:").ok_or("The callback must be http://127.0.0.1:<port>/<path>")?;
+    let (port, path) = rest.split_once('/').ok_or("The callback needs a path")?;
+    let port: u16 = port.parse().map_err(|_| "The callback port is not a number")?;
+    if spec.token.len() < 32 || !spec.token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') { return Err("The callback token is malformed".into()); }
+    if !path.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_/".contains(&b)) { return Err("The callback path is malformed".into()); }
+    Ok(Callback { port, path: format!("/{path}"), token: spec.token.clone() })
+}
 
 /// Runs one call in a fresh store and describes how it ended.
-fn run(engine: &Engine, pre: &HandlerPre<Call>, call: &Invoke) -> Value {
+fn run(engine: &Engine, pre: &HandlerPre<Call>, call: &Invoke, callback: Option<Callback>) -> Value {
     let limits = &call.limits;
     let stderr = MemoryOutputPipe::new(STDERR_BYTES);
     let wasi = WasiCtxBuilder::new().stderr(stderr.clone()).allow_tcp(false).allow_udp(false).allow_ip_name_lookup(false).build();
     let limiter = Limiter { memory: (limits.memory_mb as usize) << 20, memory_used: 0, table_elements: 0, refused: false };
-    let mut store = Store::new(engine, Call { wasi, table: ResourceTable::new(), limiter });
+    let deadline = Instant::now() + Duration::from_millis(limits.deadline_ms);
+    let mut store = Store::new(engine, Call { wasi, table: ResourceTable::new(), limiter, callback, deadline });
     store.limiter(|call| &mut call.limiter);
     store.set_fuel(limits.fuel).expect("fuel is enabled");
     store.set_epoch_deadline(limits.deadline_ms.div_ceil(EPOCH_MS));
@@ -259,6 +357,7 @@ async fn invoke(State(host): State<Shared>, Json(call): Json<Invoke>) -> Result<
             deadlineMs {MAX_DEADLINE_MS}, inputBytes {MAX_INPUT} and outputBytes {MAX_OUTPUT}")));
     }
     if !is_digest(&call.sha256) { return Err(refuse(StatusCode::BAD_REQUEST, "sha256 is 64 lowercase hexadecimal characters")); }
+    let reach = match &call.callback { Some(spec) => Some(callback(spec).map_err(|message| refuse(StatusCode::BAD_REQUEST, message))?), None => None };
     if call.input.len() > limits.input_bytes {
         return Err(refuse(StatusCode::PAYLOAD_TOO_LARGE, format!("The input exceeds {} bytes", limits.input_bytes)));
     }
@@ -267,7 +366,7 @@ async fn invoke(State(host): State<Shared>, Json(call): Json<Invoke>) -> Result<
     tokio::task::spawn_blocking(move || {
         let _slot = slot;
         let pre = find(&host, &call.sha256).ok_or_else(|| refuse(StatusCode::NOT_FOUND, "Unknown component; upload it first"))?;
-        Ok(Json(run(&host.engine, &pre, &call)))
+        Ok(Json(run(&host.engine, &pre, &call, reach)))
     }).await.map_err(|e| refuse(StatusCode::INTERNAL_SERVER_ERROR, e))?
 }
 
@@ -293,6 +392,7 @@ async fn main() {
     std::thread::spawn(move || loop { std::thread::sleep(Duration::from_millis(EPOCH_MS)); ticker.increment_epoch(); });
     let mut linker = Linker::<Call>::new(&engine);
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker).expect("WASI");
+    world::Handler::add_to_linker::<Call, wasmtime::component::HasSelf<Call>>(&mut linker, |call| call).expect("Ontology imports");
     let data = env("EIGOS_FUNCTION_HOST_DATA").map(PathBuf::from);
     if let Some(dir) = &data {
         std::fs::create_dir_all(dir).expect("data directory");

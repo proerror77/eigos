@@ -4,10 +4,13 @@ import type { Ontology } from '../ontology/model.js';
 import type { componentImplementationSchema } from '../ontology/schema.js';
 import type { z } from 'zod';
 import type { Database } from './database.js';
+import { functionCallbacks } from './function-callbacks.js';
 import { defaultFunctionHost, FunctionHostError, lostFunctionHost, type FunctionHostClient, type FunctionOutcome } from './function-host.js';
+import type { FunctionContext } from './functions.js';
+import type { Objects } from './objects.js';
 
 export type ComponentImplementation = z.infer<typeof componentImplementationSchema>;
-export const componentWorld = 'eigos:function/handler@0.1.0';
+export const componentWorld = 'eigos:function/handler@0.2.0';
 const maxComponentBytes = 16 << 20, maxInputBytes = 1 << 20;
 
 /** Components that definition editors uploaded, by SHA-256. A release refers to them from its component Functions. */
@@ -60,24 +63,32 @@ export class ComponentFunctions {
     }
   }
 
-  /** Calls a component Function on parameters that match its contract, and returns its JSON output. */
-  async invoke(name: string, implementation: ComponentImplementation, parameters: Record<string, unknown>, signal: AbortSignal) {
+  /**
+   * Calls a component Function on parameters that match its contract, and returns its JSON output. With `context`, the
+   * Function reads the Ontology as that call's caller, through a callback session that ends with the call.
+   */
+  async invoke(name: string, implementation: ComponentImplementation, parameters: Record<string, unknown>, signal: AbortSignal,
+    context?: FunctionContext, options: { writer?: Objects } = {}) {
     const input = JSON.stringify(parameters), limits = implementation.limits;
     const inputBytes = limits.inputBytes ?? maxInputBytes;
     if (Buffer.byteLength(input) > inputBytes) throw new InvalidInput(`The input of ${name} exceeds ${inputBytes} bytes`);
     const host = await this.connect();
+    // A host before protocol 2 would refuse the callback; its Functions then find no Ontology to read.
+    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer) : undefined;
     let outcome: FunctionOutcome;
     try {
-      try { outcome = await host.invoke(implementation.sha256, input, limits, signal); }
+      try { outcome = await host.invoke(implementation.sha256, input, limits, signal, session?.callback); }
       catch (error) {
         if (!(error instanceof FunctionHostError && error.status === 404)) throw error;
         // A restarted host, or one that evicted the component without keeping it on disk.
         await this.provide(host, implementation.sha256, name);
-        outcome = await host.invoke(implementation.sha256, input, limits, signal);
+        outcome = await host.invoke(implementation.sha256, input, limits, signal, session?.callback);
       }
     } catch (error) {
       if (signal.aborted) throw signal.reason;
       throw this.refusal(host, error);
+    } finally {
+      session?.close();
     }
     const detail = { fuelUsed: outcome.fuelUsed, ms: outcome.ms, ...(outcome.stderr ? { stderr: outcome.stderr } : {}) };
     if (outcome.error) {

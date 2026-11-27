@@ -39,7 +39,8 @@ npm run build
 
 - **逻辑与失败：** `run` 是函数的逻辑。`fail(code, message)` 返回调用方看到的失败。ComponentizeJS 只把抛出值的 `payload` 当作失败返回，所以直接 `throw new Error()` 会让调用以 trap 结束，调用方得到 `code: 'trap'`。
 - **单个文件：** ComponentizeJS 接收一个模块。函数分成多个文件时，先用打包工具合成一个文件。
-- **能读到什么：** 函数只能读到输入，既没有网络，也打不开文件。
+- **读取 Ontology：** `import { get, follow, query, evaluate, aggregate } from 'eigos:function/ontology@0.2.0';`。参数和结果都是 JSON 文本，见 [Ontology 接口](../../docs/guides/function-host.md#ontology-接口)。读取按调用者的权限执行。
+- **能读到什么：** 函数能读到输入和 Ontology（经上面的接口），既没有网络，也打不开文件。
 - **规模：**
   - 组件约 12 MB。上传时宿主要预编译约 2 秒，之后从预编译结果载入只要约 10 ms。
   - 调用一次约 2.4 ms。在执行函数代码之前，就要先用掉约 1000 万 fuel。

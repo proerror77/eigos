@@ -31,7 +31,7 @@ Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建�
 
 Worker 的并发和公平（运行时预算 06.1、06.2）：
 - 每个 Worker 进程同时执行 `EIGOS_WORKER_SLOTS` 个任务，默认 4；有排程时另有一个排程槽。
-- 每个 owner 在所有 Worker 上同时最多占 `EIGOS_TASK_OWNER_SLOTS` 个槽，默认 2。领取时以 owner 为单位加锁并复查，所以多个 Worker 同时领取也不会超出。
+- 每个 owner 在所有 Worker 上同时最多占 `EIGOS_TASK_OWNER_SLOTS` 个交互槽，默认 2。领取交互任务时以 owner 为单位加锁并复查。排程槽独立运行。
 - 同一通道里，owner 轮流领取：最久没有被服务的 owner 先领（`task_turns` 记录每个 owner 上次被服务的时间）。所以一个 owner 的大批任务不会挡住其他 owner。
 - 生产的 Worker 数据库角色需要 `task_turns` 的 SELECT、INSERT、UPDATE。
 

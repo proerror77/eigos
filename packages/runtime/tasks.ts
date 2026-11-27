@@ -38,7 +38,7 @@ export type TaskResultProjection = (result: unknown) => unknown;
 export const publicTask = (task: Task, project: TaskResultProjection) => ({ id: task.id, ...(task.conversation_id ? { conversationId: task.conversation_id } : {}), state: task.state, result: project(task.result), error: task.error, createdAt: task.created_at, updatedAt: task.updated_at });
 export class Tasks {
   /**
-   * `ownerSlots` is how many tasks of one owner may run at once across all Workers (runtime budget 06.1), from
+   * `ownerSlots` is how many interactive tasks of one owner may run at once across all Workers (runtime budget 06.1), from
    * EIGOS_TASK_OWNER_SLOTS, 2 by default.
    */
   constructor(readonly db: Database, private readonly metadata: Metadata,
@@ -214,25 +214,29 @@ export class Tasks {
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
-    const kind = lane === 'scheduled' ? " AND t.input ? 'scheduledAction'" :
-      lane === 'interactive' ? " AND NOT (t.input ? 'scheduledAction')" : '';
+    const scheduled = "t.input ? 'scheduledAction'";
+    const kind = lane === 'scheduled' ? ` AND ${scheduled}` : lane === 'interactive' ? ` AND NOT (${scheduled})` : '';
     const table = `${this.db.schema}.tasks`;
     const atHead = `(t.conversation_id IS NULL OR ${headOfConversation(table)})`;
-    const running = (owner: string) => `(SELECT count(*) FROM ${table} w WHERE w.owner=${owner} AND w.state='working' AND w.lease_until>=clock_timestamp())`;
+    const running = (owner: string) => `(SELECT count(*) FROM ${table} w WHERE w.owner=${owner} AND w.state='working'
+      AND w.lease_until>=clock_timestamp() AND NOT (w.input ? 'scheduledAction'))`;
+    const withinShare = lane === 'scheduled' ? '' : ` AND ((${scheduled}) OR ${running('t.owner')}<$1)`;
     return this.db.transaction(async client => {
-      // Owners take turns (06.2): the owner served least recently goes first, so one owner's backlog cannot hold up the
-      // others, and an owner already running its share of slots waits (06.1).
-      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'>>(
-        `SELECT t.id,t.owner,t.conversation_id FROM ${table} t LEFT JOIN ${this.db.schema}.task_turns turn ON turn.owner=t.owner
+      // Owners take turns (06.2). Only interactive tasks are subject to the per-owner slot limit (06.1).
+      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'> & { scheduled: boolean }>(
+        `SELECT t.id,t.owner,t.conversation_id,(${scheduled}) AS scheduled
+        FROM ${table} t LEFT JOIN ${this.db.schema}.task_turns turn ON turn.owner=t.owner
         WHERE ((t.state='submitted' AND t.available_at<=now()) OR (t.state='working' AND t.lease_until<now()))
-          AND ${atHead}${kind} AND ${running('t.owner')}<$1
+          AND ${atHead}${kind}${withinShare}
         ORDER BY coalesce(turn.served_at,'-infinity'::timestamptz),t.available_at,t.created_at FOR UPDATE OF t SKIP LOCKED LIMIT 1`,
-        [this.ownerSlots], client)).rows[0];
+        lane === 'scheduled' ? [] : [this.ownerSlots], client)).rows[0];
       if (!candidate) return undefined;
-      // Workers claiming for the same owner at once take turns here, so the owner's share holds across them.
-      await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-owner-claim', candidate.owner)], client);
-      const { rows: [busy] } = await this.db.query<{ n: string }>(`SELECT ${running('$1')}::text AS n`, [candidate.owner], client);
-      if (Number(busy!.n) >= this.ownerSlots) return undefined;
+      if (!candidate.scheduled) {
+        // Serialize interactive claims for the same owner across Workers, then recheck its share.
+        await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-owner-claim', candidate.owner)], client);
+        const { rows: [busy] } = await this.db.query<{ n: string }>(`SELECT ${running('$1')}::text AS n`, [candidate.owner], client);
+        if (Number(busy!.n) >= this.ownerSlots) return undefined;
+      }
       if (candidate.conversation_id) {
         // A paused source retry can rejoin while another Worker is selecting a later batch.
         const key = this.db.lockKey('task-inbox-claim', candidate.owner, candidate.conversation_id);

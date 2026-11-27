@@ -70,8 +70,8 @@
 
 1. **工作槽（06.1）：**
    - Worker 进程同时处理多个任务，每个进程有 N 个槽，默认 4；
-   - 每个 owner 同时最多占 M 个槽，默认 2；
-   - `claim` 在领取时检查这两个上限，用 `FOR UPDATE SKIP LOCKED` 加上按 owner 统计的运行中任务数。
+   - 每个 owner 同时最多占 M 个交互槽，默认 2，排程有独立槽；
+   - Worker 控制进程槽数，`claim` 领取交互任务时用 `FOR UPDATE SKIP LOCKED` 和 owner 锁复查运行中交互任务数。
 2. **队列与公平（06.2）：**
    - 两条通道各有优先级，交互通道优先；
    - 同一通道内，按 owner 轮转领取，避免一个 owner 的大批任务挡住其他 owner；

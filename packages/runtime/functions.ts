@@ -4,7 +4,7 @@ import { timeOperation } from '../core/operation-timing.js';
 import { validator, type Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
-import type { ObjectRef, OntologyDocument } from '../ontology/schema.js';
+import { objectRefSchema, type ObjectRef, type OntologyDocument } from '../ontology/schema.js';
 import { legacySourceEvidence } from '../ontology/source-evidence.js';
 import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
@@ -24,7 +24,11 @@ export interface FunctionContext {
   assertDispatch?: (client: Sql) => Promise<void>;
   /** Queue a declared effect with the Action's eventual atomic commit. */
   deferEffect?: (effect: ActionEffect) => void;
-  edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void>) => ObjectRef;
+  /**
+   * Stages the edits of an Action's edit Function, which `write` applies in the Action's commit. A `write` that returns
+   * a reference decides the Action's result there, as a component Function does once it has run.
+   */
+  edit?: (result: ObjectRef, write: (objects: Objects) => Promise<void | ObjectRef>) => ObjectRef;
 }
 export type FunctionHandler = ((input: Record<string, unknown>, context: FunctionContext) => unknown | Promise<unknown>)
   & { scenarioPARead?: true; scenarioEvaluation?: true };
@@ -41,6 +45,8 @@ export interface VersionedFunction {
 }
 const contract = ({ parameters, returns, source, edits, dependencies }: Definition) => digest({ parameters, returns, source, edits, ...(dependencies?{dependencies}:{}) });
 const key = (definition: Definition) => JSON.stringify([definition.apiName, definition.version ?? null]);
+/** The result an Action's component edit Function stages before it runs; its commit replaces it with the real one. */
+const pendingResult: ObjectRef = { type: 'PendingFunctionResult', id: 'pending' };
 /** A component Function's binding follows from its definition, so every runtime with a function host agrees on it. */
 const componentBinding = (definition: Definition) =>
   digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation });
@@ -86,7 +92,7 @@ export class Functions {
   }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
-    // A component Function reads nothing but its input, so it evaluates offline as it does live.
+    // A component Function reads its input and, through its call's own Objects, the evaluated Scenario.
     if (definition?.implementation) return true;
     return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
   }
@@ -127,9 +133,21 @@ export class Functions {
     const name = definition.apiName;
     if (model.bindings.functions[name] !== componentBinding(definition)) throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
+    if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');
     context.signal.throwIfAborted();
     const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
-    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal), name);
+    if (definition.edits) {
+      // As Palantir's staged writes: the Function runs inside the Action's commit, so its reads, queries and aggregations
+      // see its own edits, and all of them commit with the Action or not at all.
+      return context.edit!(pendingResult, async objects => {
+        const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal,
+          { ...context, objects }, { writer: objects }), name);
+        const result = validator(definition.returns).safeParse(output);
+        if (!result.success) throw new FunctionFailed(`${name} returned a result that does not match its published contract`, 'contract', { cause: result.error });
+        return objectRefSchema.parse(result.data);
+      });
+    }
+    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal, context), name);
     context.signal.throwIfAborted();
     await context.objects.access.refresh(context.scenarioEvaluation?.client);
     const result = validator(definition.returns).safeParse(output);

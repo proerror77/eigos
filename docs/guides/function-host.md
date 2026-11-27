@@ -36,7 +36,7 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
    ```bash
    curl -X POST "$EIGOS/ontology/function-artifacts?ontology=Eigos" \
      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/wasm' --data-binary @echo.wasm
-   # {"sha256":"…","size":63654,"world":"eigos:function/handler@0.1.0","imports":[…]}
+   # {"sha256":"…","size":107276,"world":"eigos:function/handler@0.2.0","imports":[…]}
    ```
 
    - 需要 `ontology:write` scope 和该本体的 `edit_definition`。
@@ -133,17 +133,70 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 ## WIT world
 
 ```wit
-package eigos:function@0.1.0;
+package eigos:function@0.2.0;
+
+interface types { record failure { code: string, message: string } }
+
+interface ontology {
+  use types.{failure};
+  get: func(object-type: string, id: string) -> result<option<string>, failure>;
+  follow: func(object: string, link: string) -> result<string, failure>;
+  query: func(query: string) -> result<string, failure>;
+  evaluate: func(request: string) -> result<string, failure>;
+  aggregate: func(request: string) -> result<string, failure>;
+  create: func(object-type: string, id: string, properties: string) -> result<_, failure>;
+  update: func(object: string, properties: string) -> result<_, failure>;
+  delete: func(object: string) -> result<_, failure>;
+  link: func(link-type: string, %from: string, to: string) -> result<_, failure>;
+  unlink: func(link-type: string, %from: string, to: string) -> result<_, failure>;
+}
 
 world handler {
-  record failure { code: string, message: string }
+  use types.{failure};
+  import ontology;
   export invoke: func(input: string) -> result<string, failure>;
 }
 ```
 
 - 输入和输出都是 JSON 文本。宿主不解析它们，由运行时按函数的契约校验。
 - 函数用 `failure` 返回自己的失败：`code` 是调用方可以据此处理的稳定代码，`message` 给人看。
-- F2 在同一个 world 上增加 Ontology 宿主接口。
+- `ontology` 是函数读取 Ontology 的接口，见下文“Ontology 接口”。0.1.0 的组件没有导入它，仍可原样运行。
+
+## Ontology 接口
+
+函数执行时可以读取 Ontology（F2 的读取部分）。依据是 Palantir 的 Functions：函数在服务端读取对象、遍历关系、查询和聚合 Object Set，并且有对象载入量和聚合分组数的上限（[overview](https://www.palantir.com/docs/foundry/functions/overview/)、[performance](https://www.palantir.com/docs/foundry/functions/optimize-performance/)）。
+
+| 导入 | 参数 | 结果 | 运行时执行 |
+| --- | --- | --- | --- |
+| `get` | 类型、ID | `{ref, revision, properties}`，不存在或不可见时为 none | `Objects.read` |
+| `follow` | `{type, id}` 的 JSON、Link 名 | 对象数组 | `Objects.follow` |
+| `query` | 对象查询 | 一页结果 | `Objects.query` |
+| `evaluate` | `{set, view?, limit?, cursor?}` | 一页成员 | `ObjectSets.evaluate` |
+| `aggregate` | `{set, groupBy?, metrics}` | 聚合结果 | `ObjectSets.aggregate` |
+
+- **回调：** 运行时为每次调用开一个回调会话：只监听 127.0.0.1，并用一个随机令牌标识这次调用。宿主执行到导入时，把操作发给这个会话，调用结束后令牌即失效。
+- **权限：** 会话用这次调用自己的 `Objects` 和 `Access` 执行操作，所以权限、遮罩、记录的依赖和出口分级都与调用者直接读取相同。宿主自己不做任何判断。经查询内核的读取照常经过内核。
+- **上限：** 每次调用最多回调 1000 次，返回的对象合计最多 10 万个，单个结果最多 4 MB。超出时导入返回 `failure`，函数可以自己处理。
+- **截止时间：** 宿主函数执行时无法被中断，所以等待回调的时长以这次调用剩下的截止时间为限。
+- **错误码：** `permission-denied`、`not-found`、`invalid`、`conflict`、`limit`、`unavailable`。函数把它原样返回时，调用方得到同样 `code` 的 `FunctionFailed`。
+- **协议：** 宿主协议 2 起支持回调。运行时只给协议 2 的宿主发回调；更早的宿主上，导入返回 `unavailable`。
+
+### 编辑
+
+| 导入 | 参数 | 运行时执行 |
+| --- | --- | --- |
+| `create` | 类型、ID、属性 | `Objects.create` |
+| `update` | `{type, id, revision?}`、要改的属性 | `Objects.edit` |
+| `delete` | `{type, id, revision?}` | `Objects.remove` |
+| `link`、`unlink` | Link 类型、起点和终点的 `{type, id}` | `Objects.link`、`unlink` |
+
+依据是 Palantir 的 [edits](https://www.palantir.com/docs/foundry/functions/edits-overview/) 和 [staged writes](https://www.palantir.com/docs/foundry/functions/typescript-v2-staged-writes/)。
+
+- **只经 Action 生效：** 编辑只在 Function-backed Action 中生效。`edits: true` 的组件函数在 Action 之外调用时被拒绝。只读函数调用编辑导入时，得到 `conflict`。
+- **写后读：** 编辑函数在它的 Action 的提交事务里运行，读取、Object Set 查询和聚合都走这个事务，所以在同一次调用内，之后的 `get`、`follow`、`query`、`evaluate`、`aggregate` 都看得到之前的编辑。这对应 Palantir 的 staged writes：“any Ontology data read will reflect all edits previously made in the function”。
+- **原子提交：** 函数正常返回时，它的编辑和 Action 一起提交；函数失败或 trap 时，事务回滚，什么也不留下。Action 的结果是函数返回的对象引用。
+- **版本号：** `revision` 缺省时取对象当前的版本。给出时必须一致，否则 `conflict`。
+- **上限：** 每次调用最多 1 万次编辑。
 
 ## 接口
 
