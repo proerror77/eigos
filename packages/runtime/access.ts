@@ -1,3 +1,4 @@
+import { isScenarioReviewAction } from '../ontology/scenario-definition.js';
 import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -432,6 +433,10 @@ export class Access {
     this.requireAvailable(model, 'action', name);
     const action = model.actions.get(name);
     this.useModelData(action?.classification);
+    if (!this.principal.memberAccess && action && isScenarioReviewAction(action)) {
+      this.require(model.document.id, 'view_definition', model.document.id);
+      return;
+    }
     this.definition(model, 'action', name);
     this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name), this.principal.memberAccess);
     if (this.principal.memberAccess && accountSearchActions.has(name) && (action?.function !== accountSearchActions.get(name) ||
@@ -554,7 +559,7 @@ export class Access {
         ontology: model.document.id, permission: 'dispatch_source', resource: resource(model.document.id, 'source', source),
       }));
     });
-    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && webhookVisible(action) && modelVisible(action));
+    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || !this.principal.memberAccess && isScenarioReviewAction(action) || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && webhookVisible(action) && modelVisible(action));
     const actions = new Set(document.actionTypes.map(action => action.apiName));
     document.dataSources = document.dataSources.filter(source => include('datasource', source.apiName) && this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
     if (limited) {

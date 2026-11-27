@@ -11,6 +11,8 @@ import { viewTables } from './scenario-store.js';
 export const scenarioMetadataType = 'OntologyScenario';
 
 function asObject(model: PublishedOntology, row: Record<string, any>): ObjectData {
+  // Merging advances the proposal revision after the approved changes have committed.
+  const reviewRevision = Number(row.revision) - Number(row.state === 'merged');
   return {
     ref: { type: scenarioMetadataType, id: String(row.id) },
     revision: Number(row.revision),
@@ -19,6 +21,10 @@ function asObject(model: PublishedOntology, row: Record<string, any>): ObjectDat
       name: String(row.name),
       owner: String(row.owner),
       state: String(row.state),
+      ...(model.object(scenarioMetadataType).properties.reviewStatus ? {
+        reviewStatus: Number(row.reviewed_revision) === reviewRevision && row.review_status
+          ? row.review_status : row.reviewers?.length ? 'in-review' : 'draft',
+      } : {}),
       release: String(row.release),
       revision: Number(row.revision),
       expiresAt: new Date(row.expires_at).toISOString(),

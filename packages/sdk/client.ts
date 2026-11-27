@@ -274,6 +274,11 @@ export class ScenarioClient {
       'approve_scenario_review', { id: this.id, revision, snapshot, decision: review.decision }, review.signal,
     );
   }
+  rejectReview(revision: number, snapshot: string, signal?: AbortSignal) {
+    return this.client.service<{ id: string; revision: number; reviewer: string; rejected: true }>(
+      'reject_scenario_review', { id: this.id, revision, snapshot }, signal,
+    );
+  }
   /** Merge Actions conventionally bind scenarioId and the explicitly reviewed revision. */
   merge(
     action: string,

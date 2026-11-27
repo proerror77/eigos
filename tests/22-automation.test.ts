@@ -1017,6 +1017,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   const persistedScenario = v9Definition.objectTypes.find(type => type.apiName === 'OntologyScenario')!;
   delete persistedScenario.interfaces.Scenario;
   delete persistedScenario.properties.syncConflict;
+  delete persistedScenario.properties.reviewStatus;
+  v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !action.rules?.some(rule => rule.op === 'reviewScenario'));
   v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'Scenario');
 
   // Historical DiDi contracts predate PA-reported observations.
