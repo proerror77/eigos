@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Conflict, SourceReadFailure, digest } from '../../core/identity.js';
 import { json } from '../../ontology/service-contracts.js';
 import { ActionPARequestRequired, PARequestRequired, type ActionInputPurpose } from '../../runtime/clarification.js';
-import { PARequests } from '../../runtime/pa.js';
+import { PARequests, type PADispatch } from '../../runtime/pa.js';
 import { currentTaskExecution, type Task, type Tasks } from '../../runtime/tasks.js';
 import type { Sql } from '../../runtime/database.js';
 import type { DidiConnector } from './connector.js';
@@ -26,9 +26,11 @@ export const didiPAReceipt = didiReceiptSchema.omit({ bindingId: true, environme
 export async function askDidiPA<T extends z.ZodType>(
   tasks: Tasks, task: Task, operation: string, capability: string, input: Record<string, unknown>, schema: T,
   beforeDispatch?: (client: Sql) => Promise<void>, purpose: ActionInputPurpose = 'observation',
+  dispatch?: { actionRequestId: string; grant: PADispatch },
 ) {
   try {
-    const reply = await new PARequests(tasks).requestWithId(task, operation, capability, input, json(schema), undefined, beforeDispatch);
+    const reply = await new PARequests(tasks).requestWithId(task, operation, capability, input, json(schema), undefined, beforeDispatch,
+      dispatch ? { actionRequestId: dispatch.actionRequestId, purpose, dispatch: dispatch.grant } : undefined);
     return { ...reply, response: schema.parse(reply.response) };
   } catch (error) {
     if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions, purpose);
