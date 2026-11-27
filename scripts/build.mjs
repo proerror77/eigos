@@ -6,4 +6,5 @@ mkdirSync('dist/packages/ontology/definitions', { recursive: true });
 for (const name of ['ride', 'scheduling']) copyFileSync(`packages/ontology/definitions/${name}.json`, `dist/packages/ontology/definitions/${name}.json`);
 cpSync('apps/workbench','dist/apps/workbench',{recursive:true});
 const { implementationDigest } = await import('../dist/packages/runtime/implementation.js');
+await import('./build-engine.mjs');
 writeFileSync('dist/implementation.json', JSON.stringify({ digest: implementationDigest() }) + '\n');

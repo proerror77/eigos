@@ -10,6 +10,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "node scripts/build.mjs",
+    "build:function-test": "node scripts/package-function-test.mjs",
     "test": "node scripts/test.mjs",
     "test:changed": "node scripts/test.mjs",
     "test:e2e:run": "node scripts/test.mjs --e2e",
@@ -33,7 +34,9 @@
     "access:configure": "node --env-file-if-exists=.env --import tsx scripts/ontology.ts permissions",
     "start:indexer": "node --env-file-if-exists=.env dist/apps/indexer/main.js",
     "dev:indexer": "node --env-file-if-exists=.env --import tsx apps/indexer/main.ts",
-    "embeddings:warm": "node --env-file-if-exists=.env --import tsx scripts/warm-embeddings.ts"
+    "embeddings:warm": "node --env-file-if-exists=.env --import tsx scripts/warm-embeddings.ts",
+    "package:vm": "node scripts/package-vm.mjs",
+    "build:engine": "node scripts/build-engine.mjs"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.3.0",

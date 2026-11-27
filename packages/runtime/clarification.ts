@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { actionResultReadSchema } from '../ontology/invocation.js';
-import { pickupCoordinateEvidence, placeDetailInput } from '../ontology/maps.js';
+import { pickupCoordinateEvidence, placeDetailInput } from '../ontology/pickup-evidence.js';
 import { objectRefSchema } from '../ontology/schema.js';
 import type { Requirement } from './access.js';
 

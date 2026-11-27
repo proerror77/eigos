@@ -1,3 +1,4 @@
+import { initializeResourceReservations } from './resource-reservations.js';
 import {initializeObservationInterests} from './observation-interests.js';
 import { developmentSandboxEnabled } from '../core/sandbox-mode.js';
 import { initializeReleaseEvaluation } from './release-evaluation.js';
@@ -15,6 +16,8 @@ import { initializeLogArchives } from './log-retention.js';
 import { initializeProviderBudgets } from './provider-budgets.js';
 import { initializeProcessNotifications } from './process-notifications.js';
 import { initializeFunctionArtifacts } from './component-functions.js';
+import { initializeComponentOAuthGrants } from './component-source-oauth.js';
+import { flushFunctionInvocations, initializeFunctionInvocations } from './function-invocations.js';
 import { initializeGovernance } from './governance.js';
 import { initializeEffects } from './effects.js';
 import { initializeIndexing } from './indexing.js';
@@ -24,6 +27,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { activeProfiles, chargeProfiles, profileDatabase, type DatabaseProfile } from '../core/database-profile.js';
 import { recordOperationEvent } from '../core/operation-timing.js';
+import { digest } from '../core/identity.js';
 import pg, { type PoolClient, type QueryResultRow } from 'pg';
 import { initializeSecurity } from './security.js';
 import { implementationDigest } from './implementation.js';
@@ -60,6 +64,7 @@ export class Database {
   private readonly sharedEditLocks = new WeakSet<Sql>();
   private readonly objectScopes = new WeakMap<Sql, ObjectScope>();
   private readonly objectAccess = new AsyncLocalStorage<true>();
+  private readonly objectLockReportMs = Number(process.env.EIGOS_OBJECT_LOCK_REPORT_MS ?? 0);
   constructor(connectionString: string, schema = 'eigos', readonly runtimeId = implementationDigest(),
     queryConnectionString?: string, readonly ownerIsolation = process.env.EIGOS_ENFORCE_OWNER_RLS === 'true',
     readonly sandboxEnabled = developmentSandboxEnabled()) {
@@ -162,7 +167,21 @@ export class Database {
     if (scope.held.size + needed.filter(key => !scope.held.has(key)).length > objectLockBudget)
       this.requireExclusive(client, 'object lock budget');
     const lock = mode === 'exclusive' ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
-    await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
+    if (Number.isFinite(this.objectLockReportMs) && this.objectLockReportMs > 0) {
+      // The dependent CTEs place the timestamps on either side of one PostgreSQL lock acquisition.
+      // The lateral query follows the sorted inputs and keeps all of the locks in the original transaction.
+      const { rows } = await this.query<{ key: string; wait_ms: number }>(`SELECT key, wait_ms
+        FROM unnest($1::text[]) AS keys(key)
+        CROSS JOIN LATERAL (
+          WITH started AS MATERIALIZED (SELECT clock_timestamp() AS at, keys.key AS lock_key),
+               acquired AS MATERIALIZED (SELECT at, ${lock}(hashtextextended(lock_key,0)) FROM started)
+          SELECT 1000 * EXTRACT(EPOCH FROM clock_timestamp() - at)::double precision AS wait_ms FROM acquired
+        ) wait WHERE wait_ms >= $2`, [needed, this.objectLockReportMs], client);
+      for (const row of rows)
+        recordOperationEvent('object_lock_wait', { objectKey: digest(row.key), mode, waitMs: Math.round(row.wait_ms) });
+    } else {
+      await this.query(`SELECT ${lock}(hashtextextended(key,0)) FROM unnest($1::text[]) AS keys(key)`, [needed], client);
+    }
     for (const key of needed) scope.held.set(key, mode);
   }
   /**
@@ -272,7 +291,11 @@ export class Database {
     }
     return (await this.readTransaction<T>(this.pool,text,values))!;
   }
-  async close() { await this.queryPool?.end(); await this.pool.end(); }
+  async close() {
+    await flushFunctionInvocations(this);
+    await this.queryPool?.end();
+    await this.pool.end();
+  }
   async initialize() {
     const s = this.schema;
     await this.query(`CREATE SCHEMA IF NOT EXISTS ${s};
@@ -329,6 +352,28 @@ export class Database {
         received_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,request_id), UNIQUE(task_id,position));
       CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));
       ALTER TABLE ${s}.source_calls ADD COLUMN IF NOT EXISTS lease_token uuid;`);
+    // Existing tasks already pin a release. Derive ownership from that release for every producer,
+    // including cognitive and scheduled tasks, and backfill old inbox rows in the same transaction.
+    await this.query(`DO $migration$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='${s}.tasks'::regclass AND attname='ontology' AND NOT attisdropped) THEN
+        ALTER TABLE ${s}.tasks ADD COLUMN ontology text;
+        UPDATE ${s}.tasks t SET ontology=r.body->>'id' FROM ${s}.releases r WHERE r.digest=t.release;
+        ALTER TABLE ${s}.tasks ALTER COLUMN ontology SET NOT NULL;
+        CREATE FUNCTION ${s}.assign_task_ontology() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN
+          SELECT body->>'id' INTO STRICT NEW.ontology FROM ${s}.releases WHERE digest=NEW.release;
+          RETURN NEW;
+        END $fn$;
+        CREATE TRIGGER assign_task_ontology BEFORE INSERT OR UPDATE OF release,ontology ON ${s}.tasks
+          FOR EACH ROW EXECUTE FUNCTION ${s}.assign_task_ontology();
+        ALTER TABLE ${s}.task_inbox_events ADD COLUMN ontology text;
+        UPDATE ${s}.task_inbox_events e SET ontology=t.ontology FROM ${s}.tasks t WHERE t.id=e.task_id;
+        ALTER TABLE ${s}.task_inbox_events ALTER COLUMN ontology SET NOT NULL;
+        ALTER TABLE ${s}.task_inbox_events DROP CONSTRAINT task_inbox_events_pkey, ADD PRIMARY KEY(ontology,owner,request_id);
+        ALTER TABLE ${s}.tasks DROP CONSTRAINT IF EXISTS tasks_owner_request_id_key, ADD UNIQUE(ontology,owner,request_id);
+        DROP INDEX ${s}.tasks_conversation_batch;
+        CREATE UNIQUE INDEX tasks_conversation_batch ON ${s}.tasks(ontology,owner,conversation_id,conversation_batch) WHERE conversation_id IS NOT NULL;
+      END IF;
+    END $migration$`);
     await initializeAccounts(this);
     await this.query(`
       CREATE TABLE IF NOT EXISTS ${s}.scenarios (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, name text NOT NULL,
@@ -351,6 +396,8 @@ export class Database {
         requirements jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,operation_key));
       CREATE TABLE IF NOT EXISTS ${s}.scheduled_actions (id text NOT NULL,owner text NOT NULL,body jsonb NOT NULL,scopes jsonb NOT NULL,run_at timestamptz NOT NULL,deadline timestamptz NOT NULL,
         state text NOT NULL DEFAULT 'scheduled',task_id uuid UNIQUE REFERENCES ${s}.tasks(id),error text,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,id));
+      ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS machinery_retry_at timestamptz;
+      CREATE INDEX IF NOT EXISTS scheduled_actions_inputs ON ${s}.scheduled_actions USING gin(body jsonb_path_ops) WHERE state='scheduled';
       CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
     await this.query(`ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS workflow_trace jsonb NOT NULL DEFAULT '[]'`);
     await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
@@ -376,8 +423,11 @@ export class Database {
     await initializeChangeSubscriptions(this);
     await initializeLogArchives(this);
     await initializeProviderBudgets(this);
+    await initializeResourceReservations(this);
     await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
+    await initializeComponentOAuthGrants(this);
+    await initializeFunctionInvocations(this);
     await initializeExecutionTrace(this);
     await initializeIndexing(this);
     await initializeMaterializations(this);

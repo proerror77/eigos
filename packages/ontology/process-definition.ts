@@ -85,3 +85,78 @@ export function validateMachineryModel(model: Ontology, type: ObjectRef['type'],
     children.add(child.link);
   }
 }
+
+type Execution = NonNullable<MachineryModel['transitions'][number]['execution']>;
+export type ExecutableTransition = {
+  process: ProcessLogTarget;
+  action: string;
+  from: string;
+  to: string;
+  execution: Execution;
+};
+const executionPlans = new WeakMap<Ontology, {
+  byType: Map<string, ExecutableTransition[]>;
+  byAction: Map<string, ExecutableTransition[]>;
+}>();
+
+/** Compile the optional execution contracts once for each published Ontology definition. */
+export function compileMachineryExecution(model: Ontology) {
+  const existing = executionPlans.get(model);
+  if (existing) return existing;
+  const byType = new Map<string, ExecutableTransition[]>(), byAction = new Map<string, ExecutableTransition[]>();
+  const dependencies = new Map<string, Set<string>>();
+  for (const [type, definition] of model.objects) {
+    if (!definition.machinery) continue;
+    const process = processLogTarget(model, type)!;
+    for (const transition of definition.machinery.transitions) {
+      const { action, execution, from, to } = transition;
+      if (!execution) continue;
+      if (!action || from === null || to === null || definition.machinery.states.find(state => state.name === from)?.terminal)
+        throw new Error('An executable transition needs an Action and an existing nonterminal subject');
+      const operation = model.action(action);
+      const subjectType = operation.objectParameters[execution.subject];
+      if (!subjectType || !model.implements(process.objectType, subjectType))
+        throw new Error('An executable transition must bind its subject to an Action object parameter');
+      const properties = model.object(process.objectType).properties;
+      const input = operation.parameters.properties ?? {};
+      for (const [parameter, property] of Object.entries(execution.parameters ?? {})) {
+        if (parameter === execution.subject || !Object.hasOwn(input, parameter) || !Object.hasOwn(properties, property))
+          throw new Error('Invalid Machinery Action parameter binding');
+      }
+      for (const condition of execution.requires ?? []) {
+        const other = processLogTarget(model, condition.process);
+        const states = other && model.object(other.type).machinery?.states;
+        if (!other || !states || condition.states.some(name => !states.some(state => state.name === name)))
+          throw new Error('A Machinery guard must reference a published process and state');
+        const related = condition.link ? model.navigation(process.objectType, condition.link).target : process.objectType;
+        if (other.objectType !== related) throw new Error('A Machinery guard must use a Link to the target process object');
+        const pending = dependencies.get(type) ?? new Set();
+        pending.add(other.type);
+        dependencies.set(type, pending);
+      }
+      const compiled = { process, action, from, to, execution };
+      const operations = byAction.get(action) ?? [];
+      if (operations.some(edge => edge.process.objectType === process.objectType &&
+        (edge.process.type !== process.type || edge.execution.subject !== execution.subject)))
+        throw new Error('An Action must have one unambiguous Machinery subject and process per object type');
+      operations.push(compiled);
+      byAction.set(action, operations);
+      const transitions = byType.get(process.objectType) ?? [];
+      transitions.push(compiled);
+      byType.set(process.objectType, transitions);
+    }
+  }
+  const visited = new Set<string>(), visiting = new Set<string>();
+  function visit(process: string) {
+    if (visiting.has(process)) throw new Error('Machinery guard dependencies must be acyclic');
+    if (visited.has(process)) return;
+    visiting.add(process);
+    for (const dependency of dependencies.get(process) ?? []) visit(dependency);
+    visiting.delete(process);
+    visited.add(process);
+  }
+  for (const process of dependencies.keys()) visit(process);
+  const compiled = { byType, byAction };
+  executionPlans.set(model, compiled);
+  return compiled;
+}

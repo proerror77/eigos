@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PermissionDenied } from '../core/identity.js';
-import { businessAgentProfiles, type AgentProfile } from '../ontology/agent-profiles.js';
+type AgentProfile = NonNullable<OntologyDocument['agentProfiles']>[number];
 import { isSandboxResource } from '../ontology/sandbox.js';
 import type { Ontology } from '../ontology/model.js';
 import { resourceGroups } from '../ontology/resource-mapping.js';
@@ -56,10 +56,11 @@ const profileNames = (profile: AgentProfile) => [
 ];
 
 export function taskCatalogueScope(model: Ontology, access: Pick<Access, 'canDefine'>, input: Task['input'],
-  additional: { profiles: readonly string[]; resources: readonly string[] } = { profiles: [], resources: [] }) {
+  additional: { profiles: readonly string[]; resources: readonly string[] } = { profiles: [], resources: [] },
+  legacyProfiles: readonly AgentProfile[] = []) {
   // Releases 30 and 31 predate profile metadata. Keep their common routes discoverable.
   const profiles = model.resolvedDocument.agentProfiles ??
-    (model.document.id === 'Eigos' && ['30', '31'].includes(model.document.version) ? businessAgentProfiles : []);
+    (model.document.id === 'Eigos' && ['30', '31'].includes(model.document.version) ? legacyProfiles : []);
   const message = normalize(input.message);
   const matched = profiles.filter(profile =>
     access.canDefine(model, 'agentProfile', profile.apiName) &&

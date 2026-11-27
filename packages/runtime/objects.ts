@@ -394,7 +394,7 @@ export class Objects {
   }
   private shadowQuery(kernels: KernelUse, args: z.output<typeof querySchema>) {
     const offset = args.cursor ? referenceOffset(args.cursor) : 0;
-    return compareWithKernel(this.db, kernels.registry, this.access, this.model, args, async fork => {
+    return compareWithKernel(this.db, kernels.registry, this.access, this.model, 'query', args, async fork => {
       const page = await new Objects(this.db, this.model, fork).queryObjects(args);
       return { items: page.items, more: Boolean(page.cursor) };
     }, async (client, fork) => {
@@ -830,7 +830,7 @@ export class Objects {
       if (routed) return routed;
     }
     const targets = await this.followObjects(ref, link, view, maximum);
-    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, { follow: { ref, link, view, maximum } },
+    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, 'follow', { follow: { ref, link, view, maximum } },
       fork => new Objects(this.db, this.model, fork).followObjects(ref, link, view, maximum),
       (client, fork) => new Objects(this.db, this.model, fork).kernelFollow(client, ref, link, view, maximum));
     return targets;
@@ -844,6 +844,26 @@ export class Objects {
     this.access.adoptReads(fork);
     return targets;
   }
+  /** A mandatory relationship guard needs to distinguish a complete empty result from filtered targets. */
+  async readCompleteRelationship(ref: ObjectRef, link: string): Promise<{ items: ObjectData[]; complete: boolean }> {
+    if (this.client === this.db.pool) return this.db.transaction(async client => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
+      return new Objects(this.db, this.model, this.access, client).readCompleteRelationship(ref, link);
+    });
+    this.requireExclusive('complete relationship guard');
+    const nav = this.model.navigation(ref.type, link);
+    const items = await this.follow(ref, link);
+    const label = this.model.links.get(nav.link)?.classification;
+    if (!this.access.canSeeModelData(label)) return { items, complete: false };
+    const from = nav.forward ? 'from' : 'to';
+    const values: unknown[] = [this.owner, nav.link, ref.type, ref.id, this.model.projection];
+    const tables = viewTables(this.db, this.model, this.owner, values, [ref.type, nav.target]);
+    const count = await this.db.readQuery<{ count: string }>(`${tables.prefix}SELECT count(*)::text AS count
+      FROM ${tables.links} l WHERE l.owner=$1 AND l.type=$2 AND l.${from}_type=$3 AND l.${from}_id=$4 AND l.projection=$5`,
+    values, this.client);
+    return { items, complete: Number(count.rows[0]?.count) === items.length };
+  }
+
   private async followObjects(ref: ObjectRef, link: string, view: string, maximum: number): Promise<ObjectData[]> {
     if (view !== ref.type) this.access.definition(this.model, 'interface', view);
     const nav = this.model.navigation(ref.type, link, view);

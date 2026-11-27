@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "rootDir": "..",
+    "outDir": "../../dist/function-test-package"
+  },
+  "include": ["./index.ts", "../function-host/*.ts"]
+}
