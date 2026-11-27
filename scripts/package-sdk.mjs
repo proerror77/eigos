@@ -9,7 +9,8 @@ import { businessDefinition } from '../dist/packages/solutions/eigos/definition.
 const out = resolve(process.argv[2] ?? 'dist/sdk-packages');
 await mkdir(out, { recursive: true });
 const lock = JSON.parse(await readFile('vendor/mdn-foundry/manifest.json', 'utf8'));
-const client = 'mdn-foundry-sdk-' + lock.version + '.tgz';
+const client = Object.keys(lock.artifacts).find(file => file.startsWith('mdn-foundry-sdk-'));
+if (!client) throw new Error('Missing locked Foundry SDK');
 const bytes = await readFile('vendor/mdn-foundry/' + client);
 if (createHash('sha256').update(bytes).digest('hex') !== lock.artifacts[client])
   throw new Error('SDK release digest mismatch');

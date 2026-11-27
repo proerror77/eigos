@@ -251,7 +251,7 @@ export async function renderMachinery(body, ui) {
               }),
               button('保存到定义分支', async () => {
                 const draft = await service('machinery_propose_model', { type: input.type, release: result.release,
-                  name: '流程模型 ' + input.type, model: JSON.parse(editor.value) });
+                  name: '流程模型 ' + input.type, model: JSON.parse(editor.value), analysis: fixed });
                 document.querySelector('#editor').close();
                 await proposalDialog(draft);
               }, 'primary'),
