@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Conflict } from '../packages/core/identity.js';
+import { Conflict, digest } from '../packages/core/identity.js';
 import { profileDatabase, type DatabaseProfile } from '../packages/core/database-profile.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
@@ -292,6 +292,56 @@ test('each commit that needs the exclusive lock reports its fallback with the Ac
     assert(fallbacks.every(row => row.operation === 'ClaimSlot' && row.reason === 'set query' && row.mcpRequestId === 'synthetic-fallback-run'));
     assert(!JSON.stringify(fallbacks).includes('private-request'));
   } finally { await f.close(); }
+});
+
+test('object lock timing identifies only the contended key of a batched acquisition', async t => {
+  const saved = process.env.EIGOS_OBJECT_LOCK_REPORT_MS;
+  process.env.EIGOS_OBJECT_LOCK_REPORT_MS = '100';
+  const f = await fixture().finally(() => {
+    if (saved === undefined) delete process.env.EIGOS_OBJECT_LOCK_REPORT_MS;
+    else process.env.EIGOS_OBJECT_LOCK_REPORT_MS = saved;
+  });
+  const hot = f.db.lockKey('object', 'synthetic-private-hot'), cold = f.db.lockKey('object', 'synthetic-private-cold');
+  let ready!: () => void, release!: () => void, beganWaiting!: (pid: number) => void;
+  const holderReady = new Promise<void>(resolve => { ready = resolve; });
+  const unlocked = new Promise<void>(resolve => { release = resolve; });
+  const waiterPid = new Promise<number>(resolve => { beganWaiting = resolve; });
+  const logger = t.mock.method(console, 'info', (_line: string) => {});
+  const holder = f.db.objectScopedTransaction(async client => {
+    await f.db.lockObjects(client, [hot], 'exclusive');
+    ready();
+    await unlocked;
+  });
+  let waiter: Promise<void> | undefined;
+  try {
+    await Promise.race([holderReady, holder]);
+    waiter = f.db.objectScopedTransaction(async client => {
+      const { rows } = await f.db.query<{ pid: number }>('SELECT pg_backend_pid() AS pid', [], client);
+      beganWaiting(rows[0]!.pid);
+      await f.db.lockObjects(client, [hot, cold], 'shared');
+    });
+    const pid = await Promise.race([waiterPid, waiter.then(() => 0)]);
+    let blocked = false;
+    const deadline = Date.now() + 1000;
+    while (!blocked && Date.now() < deadline) {
+      const { rows } = await f.db.query<{ pending: boolean }>(`SELECT EXISTS(SELECT 1 FROM pg_locks
+        WHERE pid=$1 AND locktype='advisory' AND NOT granted) AS pending`, [pid]);
+      blocked = rows[0]!.pending;
+      if (!blocked) await delay(10);
+    }
+    assert(blocked, 'PostgreSQL waited for the hot object lock');
+    await delay(125);
+    release();
+    await waiter;
+    const events = logger.mock.calls.map(call => JSON.parse(call.arguments[0])).filter(row => row.event === 'object_lock_wait');
+    assert.deepEqual(events.map(row => [row.objectKey, row.mode]), [[digest(hot), 'shared']]);
+    assert(events[0]!.waitMs >= 100);
+    assert(!JSON.stringify(events).includes('synthetic-private'));
+  } finally {
+    release();
+    await Promise.allSettled([holder, waiter]);
+    await f.close();
+  }
 });
 
 test('reading one object\'s relationships uses endpoint indexes instead of scanning all of the owner\'s links', async () => {
