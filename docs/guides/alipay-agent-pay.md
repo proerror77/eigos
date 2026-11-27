@@ -1,29 +1,37 @@
 # 淘宝下单与支付宝 Agent Pay
 
-普通淘宝订单由淘宝在买家提交订单后生成。商家或平台提供的 MCP 工具只有在取得对应下单权限时才可代买家提交，最后拿到淘宝原订单号和该单的结账材料。用户也可在淘宝完成提交并将原单留在自己的 PA 环境。淘宝联盟提供商品搜索及导购链接。EIGOS 的淘宝购物交接到商品链接为止，普通买家下单和结账资格需要向供应商核验。 [淘宝订单生命周期](https://developer.alibaba.com/docs/doc.htm?articleId=1029&docType=1&treeId=796) · [淘宝联盟商品搜索](https://developer.alibaba.com/docs/api.htm?apiId=64759) · [EIGOS 购物交接](https://github.com/proerror77/eigos/pull/167)
+普通淘宝订单由淘宝在买家提交订单后生成。取得对应下单权限的供应商工具可代买家提交。淘宝联盟提供商品搜索和导购链接。EIGOS 的普通淘宝购物交接到商品链接为止，买家下单、原单查询和结账材料的权限需要向供应商核验。 [淘宝订单生命周期](https://developer.alibaba.com/docs/doc.htm?articleId=1029&docType=1&treeId=796) · [淘宝联盟商品搜索](https://developer.alibaba.com/docs/api.htm?apiId=64759)
+
+## Ontology 付款 Action
+
+付款由 Ontology 的 Function-backed Action 调用已绑定的支付连接器。Action 校验原订单、规格、数量、收款方、应付金额、币种和结账摘要。需要用户确认时，原任务接收绑定这些条款的同意。Worker 继续同一个 Action 请求并登记外部操作，再调用连接器。用户界面或 PA 只呈现条款并回传确认。外部支付凭据和收银台材料保留在已授权的连接器中。 [Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [外部连接](https://www.palantir.com/docs/foundry/data-connection/external-functions)
 
 ```mermaid
 sequenceDiagram
-    participant P as 用户的 PA
-    participant T as 淘宝或获权的供应商工具
-    participant E as EIGOS Action
-    participant A as 支付宝 Agent Pay
-    P->>T: 经授权提交所选商品、规格与数量
-    T-->>P: 原订单号、待付金额和本单结账材料
-    E->>T: 回查原订单和结账摘要
-    E->>P: 原任务的付款请求
-    P->>A: 用户授权后提交该订单的结账材料
-    A-->>P: 支付查询标识及结果
-    P-->>E: 原任务回传并请求回查
+    participant U as 用户或 PA 界面
+    participant E as Ontology Action
+    participant T as 原订单连接器
+    participant A as 支付连接器
+    E->>T: 回查原订单和结账条款
+    E->>U: 显示这笔付款及条款摘要
+    U-->>E: 回传用户确认
+    E->>T: 复核同一笔订单
+    Note over E: 持久化外部操作以防重复提交
+    E->>A: 发起原订单付款
+    A-->>E: 受理或待核验
     E->>T: 回查原订单
-    E->>P: 经受信通道核验支付宝原笔回执
-    E->>E: 写回付款状态
+    E->>A: 独立核对付款回执
+    E->>E: 写回可验证的付款状态
 ```
 
-EIGOS 的付款请求标识和任务 ID 负责关联及重试，真实款项由支付宝处理，并由支付宝产生支付交易号。发起请求前绑定原订单、商品规格、数量、收款方、实付金额、币种和结账摘要。原始收银台、钱包和凭据留在 PA。支付宝返回处理中或结果暂时未知时，PA 保留原入口及原查询材料，继续查原笔付款。供应商订单状态和支付宝付款状态分别回查。 [支付宝商户接入文档](https://aipay.alipay.com/docs/agent-pay/skillpay.html) · [支付宝收银台流程](https://github.com/alipay/payment-skills/blob/main/alipay-payment-skill/references/cashier-payment.md)
+支付提交和结算分别记录。提交响应丢失时保留原操作，后续查询原订单和原笔付款。只有两边的证据匹配才记录已付款。 [Action 事务一致性](https://www.palantir.com/docs/foundry/action-types/consistency-guarantees)
 
-## 合成联调
+## 合成验收
 
-`alipayAgentPayRehearsal` 提供可选的 Ontology 定义片段，通过已有版本化 Function 扩展注册运行，不改变默认发布定义。演练 Action 沿用准备、交接和回查的分工，并复用原任务的 PA 请求和响应。一个已登记的订单只对应一个付款请求，从原任务交给同一 PA。PA 响应可请求回查或保留未付，确认支付宝付款时，读取器分别取得原订单和独立交易回执，并校验订单号、实付、币种及结账摘要。 [Palantir Action 规则](https://www.palantir.com/docs/foundry/action-types/rules) · [Action 事务一致性](https://www.palantir.com/docs/foundry/action-types/consistency-guarantees)
+`alipayAgentPayRehearsal` 是可选的 Ontology 定义片段，通过版本化 Function 注册。登记原单后用 `PrepareAlipayAgentPayRehearsal` 绑定付款和原任务。调用 `AgentPay.submit`，通过 `readAlipayAgentPayRehearsal` 查看提交和结算状态。需要刷新时调用 `AgentPay.refresh`，读取供应商原单与独立交易回执。
 
-`npm test -- --suite=24` 中的支付宝用例发布该片段，使用本机模拟供应商 MCP 产生合成原单及结账材料，并模拟 PA 付款受理和结算。测试验证原订单与金额一致、同一订单绑定一项任务、跨账号响应拒绝、支付响应重试、处理中状态以及独立回查后的写回。该扩展接收 `synthetic` 证据与 `sim-` 订单标识，适用范围是隔离联调。正式启用需要供应商提供获权的下单、结账和原单查询接口，PA 接入官方支付工具，以及可独立核验的正式付款回执。
+`npm test -- --suite=24` 使用本机合成 MCP 验证用户确认后同一 Action 直接调用连接器、回执丢失后只读原单，以及错误金额回执被拒绝。该定义只接受 `synthetic` 证据和 `sim-` 订单，独立于默认生产发布。
+
+## 正式通道
+
+正式上线需要可授权的订单和结账来源，以及对应的支付宝连接。办公收银台由获权连接器取得原单支付材料，支付宝要求用户确认时在支付宝界面完成。若采用支付宝服务端委托支付，平台必须先签约并取得用户委托授权，商户也必须提供该笔订单的 `prepay_id`。平台调用 `alipay.trade.agent.delegation.pay` 时提交同一授权的协议号和委托 ID，并核对支付宝签名结果及原订单。淘宝订单号不能替代 `prepay_id`。 [办公收银台](https://aipay.alipay.com/merchant-guide) · [支付宝委托支付](https://aipay.alipay.com/docs/agent-pay/delegation-pay.html)
