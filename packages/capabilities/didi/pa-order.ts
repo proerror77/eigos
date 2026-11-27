@@ -16,6 +16,7 @@ export const didiPAReconcileCapability = 'didi.reconcile_order';
 export const didiPAOrderTools = ['maps_textsearch', 'taxi_estimate', 'taxi_create_order', 'taxi_query_order'] as const;
 export const didiPAOrderInput = z.strictObject({
   reference: didiPAConnectionRef, connectionRef: didiPAConnectionRef, quoteDigest: didiPAConnectionRef,
+  dispatchProtocol: z.literal('server-claim-v1').optional(),
   pickup: immediateRideTerms.shape.pickup, destination: immediateRideTerms.shape.destination,
   fare: immediateFare, expiresAt: z.iso.datetime(), arguments: didiToolInputs.taxi_estimate,
   endpoints: resolvedRideEndpoints.optional(),
@@ -67,7 +68,12 @@ export async function completeDidiPAOrder(
       await guard(client);
       await operation.claimDispatch(client, task.owner, input.reference, scope, context.objects,
         { taskId: task.id, requestId: context.operationId });
-    }, 'execution-result');
+    }, 'execution-result', input.dispatchProtocol && context.operationId ? {
+      actionRequestId: context.operationId,
+      grant: { expiresAt: input.expiresAt, operationKey: input.reference,
+        responseWithoutDispatch: { type: 'object', required: ['status'],
+          properties: { status: { enum: ['price_changed', 'expired', 'unavailable'] } } } },
+    } : undefined);
   if (response.reference !== input.reference || response.quoteDigest !== input.quoteDigest || response.connectionRef !== input.connectionRef)
     throw new Conflict('DiDi order proof does not match the original approval and connection');
   const bindingId = digest(['didi-pa-order', task.owner, input.connectionRef]);

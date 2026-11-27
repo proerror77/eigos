@@ -6,7 +6,7 @@ import { actionParametersCompatible } from './action-compatibility.js';
 import { schemaSubset } from './schema-compatibility.js';
 import { validateDerivedProperties } from './derived-validation.js';
 import { fieldSchema, propertyPathSchema } from './property-path.js';
-import { processLogTarget, validateMachineryModel } from './process-definition.js';
+import { compileMachineryExecution, processLogTarget, validateMachineryModel } from './process-definition.js';
 import { digest, InvalidInput, NotFound } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
@@ -182,6 +182,7 @@ export class Ontology {
       processLogTarget(this, type);
       if (definition.machinery) validateMachineryModel(this, type, definition.machinery);
     }
+    compileMachineryExecution(this);
     // Process containers nest through subprocesses; a container cannot contain itself. Releases published before this
     // check load as they are, like derived properties.
     if (!options.published) {

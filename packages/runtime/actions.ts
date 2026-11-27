@@ -1,3 +1,4 @@
+import { requireMachineryTransition } from './machinery-execution.js';
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
 import { validator } from '../ontology/model.js';
@@ -55,6 +56,7 @@ export class Actions {
       if (!model.implements(ref.type, type)) throw new InvalidInput('Action input type does not satisfy its contract');
       await objects.read(ref);
     }
+    await requireMachineryTransition(objects, name, input);
     await this.checkSubmission(objects, name, input, signal, scenarioEvaluation, context);
   }
   resolve(access: Access, model: PublishedOntology, call: ActionCall) {

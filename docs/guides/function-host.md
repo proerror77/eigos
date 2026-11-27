@@ -389,3 +389,16 @@ Scenario 执行只记录拟议编辑。Worker 执行副作用时重新检查授�
 读取外部源要求协议 3 宿主。旧组件继续使用原有导入。带外部源的组件与
 Scenario 离线求值保持隔离。需要外部写入的业务流使用经授权的 Action 和
 提交后的副作用。 [Foundry 函数的外部 API](https://www.palantir.com/docs/foundry/functions/api-calls/)
+
+## 调用记录
+
+工作台的「函数调用」按函数显示调用者最近 30 天的记录。表格列出版本、
+结果状态、总耗时、宿主执行耗时、fuel、Ontology 回调的次数和耗时。
+函数失败时记录错误码。记录只含运行元数据，输入、输出和 stderr 留在各自的调用路径。
+
+运行时在独立连接上写入 `function_invocations`，因此可查看后来随 Action
+事务回滚的 Function 尝试。记录写入与查询之间可能有短暂延迟。Indexer
+每小时清理超过 30 天的记录。
+
+上线时先完成 schema 升级。生产运行角色需要对 `function_invocations`
+执行 SELECT、INSERT、DELETE，并需要对该表的 identity sequence 有 USAGE。
