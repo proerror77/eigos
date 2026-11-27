@@ -117,3 +117,15 @@ Function-backed Action 执行。先在 Scenario 中覆盖输入属性，再对�
 Scenario 提交模型 Action，预测字段留在该 Scenario。调用
 `compare_scenarios` 可对同一指标读取正式数据基线和多个方案修订。
 [Vertex Scenario](https://www.palantir.com/docs/foundry/vertex/scenarios-overview/) · [Functions on models](https://www.palantir.com/docs/foundry/functions/functions-on-models/)
+
+## 正式排程的资源占用
+
+确认方案时，Action 在同一事务按计划的当前活动和必要资源更新
+`resource_reservations`。时间范围采用左闭右开区间。PostgreSQL 使用
+GiST 排他约束拒绝同一资源的重叠预留。若更新与其他持有人冲突，原预留
+和本次 Action 的状态一起回滚。排程使用本体和所有者作用域内的资源身份。
+
+数据库管理员在 schema 升级安装 PostgreSQL 自带的 `btree_gist` 扩展，
+并向执行排程的运行角色授予该表的 SELECT、INSERT 和 UPDATE。已有
+排程仍沿用已发布图中的冲突校验。预留表覆盖新确认或重新确认的计划。
+[Ontology 资源与排程约束](https://www.palantir.com/docs/foundry/dynamic-scheduling/scheduling-overview/)

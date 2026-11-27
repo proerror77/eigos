@@ -51,24 +51,24 @@ test('a standalone Ontology can publish, query, apply and read back with neutral
   const f = await fixture();
   try {
     const parameters = { type: 'object', properties: {}, additionalProperties: false };
-    const ref = { type: 'Shipment', id: 'synthetic-shipment' };
+    const ref = { type: 'TestRecord', id: 'test-record' };
     const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } },
       required: ['type', 'id'], additionalProperties: false };
     const definition = new Ontology({
-      id: 'Eigos', version: 'standalone-shipment', interfaceTypes: [], linkTypes: [], dataSources: [],
-      objectTypes: [{ apiName: ref.type, displayName: 'Shipment', description: 'Synthetic shipment',
+      id: 'Eigos', version: 'standalone-test', interfaceTypes: [], linkTypes: [], dataSources: [],
+      objectTypes: [{ apiName: ref.type, displayName: 'TestRecord', description: 'Synthetic test record',
         primaryKey: 'id', titleProperty: 'name', interfaces: {},
         properties: { id: { description: 'ID', required: true, schema: { type: 'string' } },
           name: { description: 'Name', required: true, schema: { type: 'string' } } } }],
-      functionTypes: [{ apiName: 'RegisterShipment', description: 'Register a shipment', edits: true, parameters, returns: reference }],
-      actionTypes: [{ apiName: 'RegisterShipment', description: 'Register a shipment', parameters,
-        objectParameters: {}, submissionCriteria: [], function: 'RegisterShipment' }],
+      functionTypes: [{ apiName: 'CreateTestRecord', description: 'Create a test record', edits: true, parameters, returns: reference }],
+      actionTypes: [{ apiName: 'CreateTestRecord', description: 'Create a test record', parameters,
+        objectParameters: {}, submissionCriteria: [], function: 'CreateTestRecord' }],
     });
     const capabilities = assembleRuntime(f.db, definition.document.functionTypes, new Map([
-      ['RegisterShipment', async (_input, context) => {
+      ['CreateTestRecord', async (_input, context) => {
         const execution = context.execution!;
         const { name } = await new PARequests(execution.tasks).requestActionInput(execution.task,
-          context.operationId!, 'shipment-name', 'shipment.complete_details', 'input', {}, {
+          context.operationId!, 'record-name', 'test_record.complete_details', 'input', {}, {
             type: 'object', required: ['name'], properties: { name: { type: 'string' } }, additionalProperties: false,
           }) as { name: string };
         return context.edit!(ref, graph => graph.create(ref, { id: ref.id, name }));
@@ -78,16 +78,16 @@ test('a standalone Ontology can publish, query, apply and read back with neutral
     await setGrants(f.db, principal.owner, businessGrants(model));
     const access = await Access.load(f.db, principal), graph = new Objects(f.db, model, access);
     assert.deepEqual((await graph.query({ type: ref.type })).items, []);
-    const submitted = await f.tasks.submit(principal, { requestId: 'register-shipment', message: 'Register a shipment' });
+    const submitted = await f.tasks.submit(principal, { requestId: 'create-test-record', message: 'Create a test record' });
     const original = (await f.tasks.claim())!;
     assert.equal(original.id, submitted.id);
-    const call = { action: 'RegisterShipment', input: {} };
+    const call = { action: 'CreateTestRecord', input: {} };
     const signal = AbortSignal.timeout(10000);
     let seenRequestId = '';
     try {
-      await capabilities.actions.complete(access, model, call, 'original-shipment-action', undefined,
+      await capabilities.actions.complete(access, model, call, 'original-test record-action', undefined,
         { task: original, tasks: f.tasks }, signal, { allowPause: true });
-      assert.fail('The Action must wait for the missing shipment name');
+      assert.fail('The Action must wait for the missing test record name');
     } catch (error) {
       assert(error instanceof Clarification && error.continuation);
       seenRequestId = error.continuation.pending!.id;
@@ -96,14 +96,14 @@ test('a standalone Ontology can publish, query, apply and read back with neutral
     }
     const pa = new PARequests(f.tasks);
     await assert.rejects(pa.respond(principal, submitted.id, { requestId: seenRequestId, response: { approved: true } }));
-    const answer = { requestId: seenRequestId, response: { name: 'Shipment' } };
+    const answer = { requestId: seenRequestId, response: { name: 'TestRecord' } };
     await pa.respond(principal, submitted.id, answer);
     await pa.respond(principal, submitted.id, answer);
     const resumed = (await f.tasks.claim())!;
     assert.equal(resumed.id, original.id);
     assert.deepEqual(await capabilities.actions.resume(access, model, { task: resumed, tasks: f.tasks }, signal), ref);
     await f.tasks.finish(resumed, 'completed', ref);
-    assert.equal((await graph.read(ref)).properties.name, 'Shipment');
+    assert.equal((await graph.read(ref)).properties.name, 'TestRecord');
     assert.equal(f.provider.calls.length, 0);
   } finally { await f.close(); }
 });

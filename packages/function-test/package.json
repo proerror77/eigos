@@ -1,0 +1,13 @@
+{
+  "name": "@eigos/function-test",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./function-test/index.d.ts",
+      "default": "./function-test/index.js"
+    }
+  },
+  "files": ["function-host", "function-test", "README.md"],
+  "engines": { "node": ">=22.13.0" }
+}

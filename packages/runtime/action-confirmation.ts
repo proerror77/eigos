@@ -63,12 +63,12 @@ export async function recordActionConfirmation(
   await recordObjectEdit(graph, ref, row.properties, next, fields);
 }
 
-export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: ActionContinuation) {
+export async function assertActionConfirmed(db: Database, model: PublishedOntology, task: Task, continuation: ActionContinuation, client?: Sql) {
   if (!model.objects.has('ActionConfirmation')) return;
   const ref = actionConfirmationRef(continuation.requestId);
   const proof = await db.query(`SELECT 1 FROM ${db.schema}.objects
     WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4 AND properties->>'taskId'=$5
       AND properties->>'state'='confirmed' AND properties->>'name'=$6`,
-    [model.projection, task.owner, ref.type, ref.id, task.id, continuation.action]);
+    [model.projection, task.owner, ref.type, ref.id, task.id, continuation.action], client);
   if (!proof.rowCount) throw new Conflict('Original Action confirmation is unavailable');
 }

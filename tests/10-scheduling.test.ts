@@ -126,6 +126,8 @@ test('concurrent scenario merges cannot reserve the same resource twice',async()
   const outcomes=await Promise.allSettled([aDiff,bDiff].map((d,i)=>f.capabilities.actions.apply(f.access,f.model,'CommitSchedulePlan',{plan:p.result.plan.ref,scenarioId:d.id,revision:d.revision},'competing-merge-'+i)));
   assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);assert.equal(outcomes.filter(r=>r.status==='rejected').length,1);
   assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ScheduledActivity'})).items.length,1);
+  const occupied=await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.resource_reservations WHERE state='committed'`);
+  assert.equal(occupied.rows[0]!.n,1);
  }finally{await f.close();}
 });
 
@@ -150,7 +152,7 @@ test('the restricted database role completes PA handoff and merge without metada
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.objects,${f.db.schema}.links TO "${role}";
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
     GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
-      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns,${f.db.schema}.resource_reservations TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.link_history,${f.db.schema}.change_commits TO "${role}";

@@ -10,7 +10,17 @@ import { Access, type Requirement } from './access.js';
 import { observePAResponse } from './decision-evidence.js';
 import type { Sql } from './database.js';
 
-export const paResponseSchema = z.strictObject({ requestId: z.uuid(), response: z.record(z.string(), z.unknown()) });
+export const paDispatchClaimSchema = z.strictObject({ requestId: z.uuid() });
+export const paResponseSchema = paDispatchClaimSchema.extend({
+  response: z.record(z.string(), z.unknown()), dispatchToken: z.uuid().optional(),
+});
+
+export type PADispatch = {
+  expiresAt: string;
+  operationKey: string;
+  responseWithoutDispatch: Record<string, unknown>;
+};
+type ActionInput = { actionRequestId: string; purpose: ActionInputPurpose; dispatch?: PADispatch };
 export const paInboxSchema=z.strictObject({cursor:z.uuid().optional(),limit:z.number().int().min(1).max(50).default(20)});
 
 /** The authenticated original PA supplies requested context; the model cannot impersonate it. */
@@ -49,7 +59,7 @@ export class PARequests {
   }
   async requestWithId(task: Task, operation: string, capability: string, input: Record<string, unknown>, responseSchema: Record<string, unknown>,
     dataScope?: Record<string, unknown>, beforeDispatch?: (client: Sql) => Promise<void>,
-    actionInput?: { actionRequestId: string; purpose: ActionInputPurpose }) {
+    actionInput?: ActionInput) {
     if (task.cognitive_context && capability !== 'calendar.freebusy')
       throw new Conflict('Workflow proposals may request PA calendar availability only');
     const { db } = this.tasks, request = { capability, input, responseSchema, ...actionInput };
@@ -66,8 +76,68 @@ export class PARequests {
       observePAResponse(db, task, String(row.id), digest(row.response));
       return { requestId: String(row.id), requestedAt: row.created_at as Date, response };
     }
+    const { dispatch: _dispatch, ...publicRequest } = request;
     throw new PARequestRequired('Please ask the user’s PA to provide the requested authorized information.', {
-      kind: 'pa-request', taskId: task.id, requestId: row.id, ...request,
+      kind: 'pa-request', taskId: task.id, requestId: row.id, ...publicRequest,
+    });
+  }
+  private async lockTask(principal: Principal, taskId: string, client: Sql) {
+    const { db } = this.tasks;
+    const task = (await db.query<Task>(`SELECT * FROM ${db.schema}.tasks
+      WHERE owner=$1 AND id=$2 FOR UPDATE`, [principal.owner, taskId], client)).rows[0];
+    if (!task) throw new NotFound('Task is unavailable');
+    if (task.input.paClient && principal.clientId !== task.input.paClient)
+      throw new NotFound('The PA request belongs to the original client');
+    return task;
+  }
+  private async lockRequest(principal: Principal, taskId: string, requestId: string, client: Sql) {
+    const { db } = this.tasks;
+    const row = (await db.query(`SELECT * FROM ${db.schema}.pa_requests
+      WHERE owner=$1 AND task_id=$2 AND id=$3 FOR UPDATE`, [principal.owner, taskId, requestId], client)).rows[0];
+    if (!row) throw new NotFound('PA request is unavailable');
+    return row;
+  }
+  private async responseAccess(principal: Principal, task: Task, client: Sql) {
+    const access = await Access.load(this.tasks.db, principal, client);
+    if (!task.result_permissions || !await access.canReturn(task.result_permissions, client))
+      throw new Conflict('The original PA request is no longer authorized');
+    return access;
+  }
+
+  /** One successful transaction grants dispatch for one pending authorized request. A lost claim is never reissued. */
+  async claimDispatch(principal: Principal, taskId: string, raw: unknown, authorize?: (client: Sql) => Promise<void>) {
+    requireScope(principal, 'tasks:write'); requireScope(principal, 'tasks:read'); z.uuid().parse(taskId);
+    const { requestId } = paDispatchClaimSchema.parse(raw), { db } = this.tasks;
+    return db.transaction(async client => {
+      await authorize?.(client);
+      const task = await this.lockTask(principal, taskId, client);
+      const row = await this.lockRequest(principal, taskId, requestId, client);
+      const result = task.result as { kind?: string; requestId?: string } | null;
+      const wait = task.input.placeContinuation, dispatch = row.request.dispatch as PADispatch | undefined;
+      if (!dispatch || task.state !== 'input-required' || result?.kind !== 'pa-request' ||
+          result.requestId !== requestId || row.response_digest ||
+          wait?.waitingFor !== 'pa-request' || wait.pending?.id !== requestId ||
+          wait.requestId !== row.request.actionRequestId || wait.pending.capability !== row.request.capability ||
+          wait.pending.purpose !== 'execution-result' || row.request.purpose !== wait.pending.purpose)
+        throw new Conflict('The original Action has no pending dispatch to claim');
+      if (row.request.dispatchClaim) throw new Conflict('The original PA dispatch has already been claimed');
+      const access = await this.responseAccess(principal, task, client);
+      const metadata = new Metadata(db);
+      const model = await metadata.get(task.release, client);
+      if ((await metadata.active(model.document.id, client)).release !== task.release)
+        throw new Conflict('The original Action publication changed');
+      access.action(model, wait.action);
+      const dispatchToken = randomUUID();
+      const claimed = await db.query(`UPDATE ${db.schema}.pa_requests
+        SET request=jsonb_set(request,'{dispatchClaim}',jsonb_build_object(
+          'tokenHash',$2::text,'claimedAt',clock_timestamp()),true)
+        WHERE id=$1 AND NOT(request ? 'dispatchClaim') AND clock_timestamp() < $3::timestamptz
+          AND EXISTS (SELECT 1 FROM ${db.schema}.external_operations op
+            WHERE op.owner=$4 AND op.task_id=$5 AND op.request_id=$6 AND op.operation_key=$7
+              AND op.state='dispatched')`,
+        [requestId, digest(dispatchToken), dispatch.expiresAt, principal.owner, taskId, wait.requestId, dispatch.operationKey], client);
+      if (!claimed.rowCount) throw new Conflict('The original PA dispatch is no longer available');
+      return { dispatchToken };
     });
   }
   async respond(principal: Principal, taskId: string, raw: unknown, conversationId?: string, authorize?: (client: Sql) => Promise<void>) {
@@ -75,35 +145,35 @@ export class PARequests {
     const input = paResponseSchema.parse(raw), { db } = this.tasks;
     await db.transaction(async client => {
       await authorize?.(client);
-      const task = (await db.query(`SELECT * FROM ${db.schema}.tasks WHERE owner=$1 AND id=$2 FOR UPDATE`, [principal.owner, taskId], client)).rows[0];
-      if (!task) throw new NotFound('Task is unavailable');
-      if (task.input.paClient && principal.clientId !== task.input.paClient)
-        throw new NotFound('The PA request belongs to the original client');
+      const task = await this.lockTask(principal, taskId, client);
       if (conversationId !== undefined && conversationId !== (task.conversation_id ?? taskId)) throw new Conflict('Conversation does not match the original task');
-      const row = (await db.query(`SELECT * FROM ${db.schema}.pa_requests WHERE owner=$1 AND task_id=$2 AND id=$3 FOR UPDATE`, [principal.owner, taskId, input.requestId], client)).rows[0];
-      if (!row) throw new NotFound('PA request is unavailable');
+      const row = await this.lockRequest(principal, taskId, input.requestId, client);
       const response = validator(row.request.responseSchema).parse(input.response), fingerprint = digest(response);
+      const dispatch = row.request.dispatch as PADispatch | undefined;
+      const claim = row.request.dispatchClaim;
+      if (claim ? !input.dispatchToken || digest(input.dispatchToken) !== claim.tokenHash
+        : input.dispatchToken || dispatch && !validator(dispatch.responseWithoutDispatch).safeParse(response).success)
+        throw new Conflict('The PA response requires the original dispatch claim');
       if (row.response_digest) {
         if (row.response_digest !== fingerprint) throw new Conflict('PA response was already supplied with different content');
         return;
       }
-      const wait = (task as Task).input.placeContinuation;
+      const wait = task.input.placeContinuation;
       if (row.request.legacy === true) {
         if (task.state !== 'input-required' || wait?.pending?.id !== input.requestId ||
             wait.requestId !== row.request.actionRequestId || wait.pending.capability !== row.request.capability ||
             wait.pending.purpose !== row.request.purpose)
           throw new Conflict('The original Action is not waiting for this input');
-        await this.tasks.resumeInput(principal, task as Task, response, client);
+        await this.tasks.resumeInput(principal, task, response, client);
         await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`,
           [input.requestId, response, fingerprint], client);
         return;
       }
-      if (task.state !== 'input-required' || task.result?.kind !== 'pa-request' || task.result?.requestId !== input.requestId) throw new Conflict('The original task is not waiting for this PA response');
-      const permissions = task.result_permissions as Requirement[] | null;
-      const access = await Access.load(db, principal, client);
-      if (!permissions || !await access.canReturn(permissions, client))
-        throw new Conflict('The original PA request is no longer authorized');
-      const continuation = (task as Task).input.placeContinuation;
+      const result = task.result as { kind?: string; requestId?: string } | null;
+      if (task.state !== 'input-required' || result?.kind !== 'pa-request' || result.requestId !== input.requestId)
+        throw new Conflict('The original task is not waiting for this PA response');
+      const access = await this.responseAccess(principal, task, client);
+      const continuation = task.input.placeContinuation;
       if (continuation?.waitingFor === 'pa-request') {
         if (continuation.pending && (continuation.pending.id !== input.requestId ||
             continuation.pending.capability !== row.request.capability) ||
@@ -111,7 +181,7 @@ export class PARequests {
               row.request.purpose !== continuation.pending?.purpose))
           throw new Conflict('PA response does not match the original Action and purpose');
         const model = await new Metadata(db).get(task.release, client);
-        await recordActionConfirmation(db, model, access, task as Task, client, continuation, 'confirmed');
+        await recordActionConfirmation(db, model, access, task, client, continuation, 'confirmed');
       }
       await db.query(`UPDATE ${db.schema}.pa_requests SET response=$2,response_digest=$3 WHERE id=$1`, [input.requestId, response, fingerprint], client);
       await db.query(`UPDATE ${db.schema}.tasks SET state='submitted',result=NULL,error=NULL,updated_at=now() WHERE id=$1`, [taskId], client);

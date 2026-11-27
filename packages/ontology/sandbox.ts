@@ -1,6 +1,14 @@
-import { historicalAgentSandboxResources, sandboxAgentCapability } from './agent-profiles.js';
 import type { Ontology } from './model.js';
 
+export const sandboxAgentCapability = { kind: 'agent-capability', name: 'sandbox' } as const;
+
+// Releases before the capability tag use these same published API names.
+export const historicalAgentSandboxResources = {
+  actions: ['CreateStripeSandboxOrder', 'RecoverStripeSandboxOrder', 'PrepareStripeLinkPayment',
+    'HandoffStripeLinkPayment', 'RefreshStripeLinkPayment', 'PrepareDiningTestReservation',
+    'PrepareDiningMiniProgramTestReservation', 'SubmitDiningTestReservation', 'RefreshDiningTestReservation'],
+  objects: ['StripeSandboxOrder', 'StripeLinkPayment', 'DiningReservation'],
+};
 const sandboxActions = new Set(historicalAgentSandboxResources.actions);
 const sandboxFunctions = new Set(historicalAgentSandboxResources.actions.map(name => name[0]!.toLowerCase() + name.slice(1)));
 sandboxFunctions.add('readDiningReservation');

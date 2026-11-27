@@ -1,0 +1,19 @@
+{
+  "format": "ontology-installation-v1",
+  "definition": "ontology.json",
+  "definitionDigest": "1c77411bc4431fd0d42ac758e9c0291b6bd977bd38dcd2f81184b2473a4d6dd6",
+  "implementation": {
+    "file": "implementation.mjs",
+    "sha256": "73a53c30f3b440b7a463903976d26ddba71ea52695a336e43d77e27fe2a256be"
+  },
+  "publicSkills": [
+    {
+      "id": "createRecord",
+      "name": "Create test record",
+      "description": "Create a synthetic test record and read its confirmed name.",
+      "tags": [
+        "fixture"
+      ]
+    }
+  ]
+}

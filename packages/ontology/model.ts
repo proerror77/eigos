@@ -7,7 +7,7 @@ import { actionParametersCompatible } from './action-compatibility.js';
 import { schemaSubset } from './schema-compatibility.js';
 import { validateDerivedProperties } from './derived-validation.js';
 import { fieldSchema, propertyPathSchema } from './property-path.js';
-import { processLogTarget, validateMachineryModel } from './process-definition.js';
+import { compileMachineryExecution, processLogTarget, validateMachineryModel } from './process-definition.js';
 import { digest, InvalidInput, NotFound } from '../core/identity.js';
 import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.js';
 
@@ -147,6 +147,12 @@ export class Ontology {
     if (!options.published) validateDerivedProperties(this, validator);
     for (const action of this.actions.values()) {
       if (new Set(action.effects?.map(effect => effect.name)).size !== (action.effects?.length ?? 0)) throw new Error('Duplicate Action effect name');
+      for (const effect of action.effects ?? []) {
+        if (!('webhook' in effect) || !effect.webhook.function) continue;
+        const fn = required(this.functions, effect.webhook.function);
+        if (!fn.implementation || fn.source || fn.edits)
+          throw new Error('A webhook formatter requires a component Function without Source access or edits');
+      }
       validator(action.parameters);
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) acceptedVersion(action.apiName, required(this.functions, criterion.function), criterion.functionVersion);
@@ -181,6 +187,7 @@ export class Ontology {
       processLogTarget(this, type);
       if (definition.machinery) validateMachineryModel(this, type, definition.machinery);
     }
+    compileMachineryExecution(this);
     // Process containers nest through subprocesses; a container cannot contain itself. Releases published before this
     // check load as they are, like derived properties.
     if (!options.published) {

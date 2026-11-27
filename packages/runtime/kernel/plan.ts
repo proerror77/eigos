@@ -142,12 +142,13 @@ class Scope {
   private readonly rules = new Map<string, RowRule>();
   constructor(readonly model: Ontology, readonly access: Access) {}
   /** The row rule of a type, or undefined when only the reference can evaluate it or it has no kernel equivalent. */
-  rule(type: string): RowRule | undefined {
+  rule(type: string, hydratedProperties = false): RowRule | undefined {
     const { model, access } = this;
     if (!model.objects.has(type) || type === scenarioMetadataType || processLogTarget(model, type)) return undefined;
-    // The reference observes a property's own label on each row it reads that holds the property. The kernel does not
-    // track which properties a row holds, so types with labelled properties stay on the reference path.
-    if (Object.values(model.object(type).properties).some(property => property.classification)) return undefined;
+    // When a plan observes rows without hydrating all of them, the kernel cannot tell which property labels to record.
+    // A single relationship hydrates its source and every returned target through the authorized runtime reads.
+    if (!hydratedProperties && Object.values(model.object(type).properties).some(property => property.classification))
+      return undefined;
     let rule = this.rules.get(type);
     if (!rule) {
       rule = access.rowRule(model, type);
@@ -169,8 +170,8 @@ class Scope {
    * Whether the type's rows are readable at all; a denied type contributes no rows, as `FALSE` does in the reference.
    * Like the reference's selection, it requires `view_objects` on the type before applying the row rule.
    */
-  readable(type: string) {
-    const rule = this.rule(type);
+  readable(type: string, hydratedProperties = false) {
+    const rule = this.rule(type, hydratedProperties);
     if (!rule) return undefined;
     this.access.read(this.model, type);
     this.describe(type, rule);
@@ -506,7 +507,7 @@ export async function compileFollow(model: Ontology, access: Access, graph: Obje
   try {
     if (view !== ref.type) access.definition(model, 'interface', view);
     const navigation = model.navigation(ref.type, link, view);
-    if (scope.readable(ref.type) === undefined) return undefined;
+    if (scope.readable(ref.type, true) === undefined) return undefined;
     await graph.read(ref);
     access.read(model, navigation.target);
     access.definition(model, 'link', navigation.link);
@@ -515,7 +516,7 @@ export async function compileFollow(model: Ontology, access: Access, graph: Obje
     if (access.canSeeModelData(label)) {
       access.observeClassification(label);
       const target = navigation.target;
-      const readable = scope.readable(target);
+      const readable = scope.readable(target, true);
       if (readable === undefined) return undefined;
       if (readable) {
         if (!scope.enrich(target)) return undefined;

@@ -140,13 +140,15 @@ export async function footprintChanged(db: Database, owner: string, footprint: C
  * window reached it.
  */
 export async function footprintChanges(db: Database, owner: string, footprint: ChangeFootprint, client: Sql,
-  after: string, through: string, commits = 500) {
+  after: string, through: string, ontology: string, commits = 500) {
   const { rows: [row] } = await db.query<{ windowEnd: string | null; commitCount: number; types: string[]; links: string[] }>(`WITH commits AS (${window(db)})
     SELECT (SELECT max(commit_seq) FROM commits)::text AS "windowEnd", (SELECT count(*) FROM commits)::int AS "commitCount",
       ARRAY(SELECT DISTINCT h.type FROM commits c JOIN ${db.schema}.edit_history h ON h.xact=c.xact AND h.owner=$1
+        JOIN ${db.schema}.releases r ON r.digest=h.release AND r.body->>'id'=$7
         WHERE h.xact IS NOT NULL AND h.type=ANY($5::text[]) ORDER BY 1) AS types,
       ARRAY(SELECT DISTINCT l.type FROM commits c JOIN ${db.schema}.link_history l ON l.xact=c.xact AND l.owner=$1
+        JOIN ${db.schema}.releases r ON r.digest=l.release AND r.body->>'id'=$7
         WHERE l.type=ANY($6::text[]) ORDER BY 1) AS links`,
-    [owner, after, through, commits, footprint.types, footprint.links], client);
+    [owner, after, through, commits, footprint.types, footprint.links, ontology], client);
   return { types: row!.types, links: row!.links, end: row!.commitCount < commits ? through : String(row!.windowEnd ?? through) };
 }
