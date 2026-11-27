@@ -3,7 +3,8 @@ import { restaurantFunctions } from './dining/restaurant-services.js';
 import { scheduleJourneyFunctions } from './scheduling/schedule-journey.js';
 import { itineraryContinuityFunctions } from './scheduling/itinerary-continuity.js';
 import { fliggyHandoffFunctions } from './fliggy/travel-handoff.js';
-import { configuredSource, type ConnectionConfig } from '../core/config.js';
+import type { ConnectionConfig } from '../core/config.js';
+import { configuredSource } from './didi/config.js';
 import { evaluateCalendarJourneyRelease } from './journey/release-checks.js';
 import { registerDocumentFunction } from '../ontology/documents.js';
 import { registerSchedulePlanDocument } from './documents.js';
@@ -47,7 +48,8 @@ import type { SourceResolver } from './didi/functions.js';
 import { closeRideWatchSchedule } from './didi/watch-schedule-status.js';
 import { didiRideWatchFunctions } from './didi/ride-watch.js';
 import { petRideFunctions } from './didi/pet-ride.js';
-import { rideCapabilities } from './didi/pipeline.js';
+import { didiCapabilities } from './didi/pipeline.js';
+import { assembleRuntime } from '../runtime/assembly.js';
 import { schedulingFunctions } from './scheduling/functions.js';
 import { transferDecisionFunctions, transferDecisionSupport, transferObservationProjection } from './scheduling/transfer-decisions.js';
 import { transferObservationSource } from '../ontology/hotel-transfer-decisions.js';
@@ -155,10 +157,13 @@ export function createCapabilities(
     ...luckinFunctions(),
     ['resolveTaskLocation', resolveTaskLocation],
   ]);
-  const capabilities = rideCapabilities(db, source, handlers, new Ontology(businessDefinition).resolvedDocument.functionTypes,
+  const didi = didiCapabilities(db, source, () => sources, getFunctions);
+  const capabilities = assembleRuntime(db, new Ontology(businessDefinition).resolvedDocument.functionTypes,
+    new Map([...handlers, ...didi.handlers]),
+    new Map([...didi.projections, ...serviceProjections(services), [transferObservationSource, transferObservationProjection]]),
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources },
-    new Map([...serviceProjections(services), [transferObservationSource, transferObservationProjection]]), notifications.committed);
+    notifications.committed);
   sources = capabilities.sources;
   return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
     scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,

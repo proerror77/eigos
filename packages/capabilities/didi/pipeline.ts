@@ -1,36 +1,28 @@
-import { ComponentFunctions } from '../../runtime/component-functions.js';
+import type { FunctionHandler, Functions } from '../../runtime/functions.js';
 import {EntityResolution} from '../../runtime/entity-resolution.js';
-import type { RuntimeExtensions } from '../../runtime/extensions.js';
-import { Effects } from '../../runtime/effects.js';
 import { privateLocation } from '../../ontology/personal-places.js';
 import { digest } from '../../core/identity.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/schema.js';
-import { Database } from '../../runtime/database.js';
-import { Actions, type CommittedEffects } from '../../runtime/actions.js';
+import type { Database } from '../../runtime/database.js';
 import { ingest } from '../../runtime/ingestion.js';
-import { Sources, type SourceProjection } from '../../runtime/sources.js';
+import type { Sources, SourceProjection } from '../../runtime/sources.js';
 import { rideFunctions, sourceResultSchema, type SourceResolver } from './functions.js';
 import { immediateDidiRideFunctions } from './immediate-ride.js';
 import { prepareWithEndpoints } from '../../ontology/didi-ride-endpoints.js';
 import { prepareRideInquiry, resolveRideLocations } from './inquiry.js';
-import type { Ontology } from '../../ontology/model.js';
-import type { OntologyDocument } from '../../ontology/schema.js';
-import type { FunctionHandler } from '../../runtime/functions.js';
 
 /** DiDi's source normalization and Object Data Funnel. It does not choose an operation. */
-export function rideCapabilities(db: Database, resolve: SourceResolver, additional: ReadonlyMap<string, FunctionHandler> = new Map(), definitions?: OntologyDocument['functionTypes'], extensions: RuntimeExtensions = {}, additionalSources: ReadonlyMap<string, SourceProjection> = new Map(), committedEffects?: CommittedEffects) {
-  let sources: Sources;
-  const effects=new Effects(db,extensions.effects??new Map());
-  const prepare = prepareRideInquiry(() => sources, () => functions, resolve);
-  const prepareInteractive = prepareRideInquiry(() => sources, () => functions, resolve, true);
-  const functions = rideFunctions(resolve, new Map([
-    ...additional,
-    ...immediateDidiRideFunctions(db, resolve, () => sources, () => functions),
+export function didiCapabilities(db: Database, resolve: SourceResolver, sources: () => Sources, functions: () => Functions) {
+  const prepare = prepareRideInquiry(sources, functions, resolve);
+  const prepareInteractive = prepareRideInquiry(sources, functions, resolve, true);
+  const handlers = new Map<string, FunctionHandler>([
+    ...rideFunctions(resolve),
+    ...immediateDidiRideFunctions(db, resolve, sources, functions),
     ['resolveRideLocations', resolveRideLocations],
     ['prepareRideInquiry', prepare],
     ['prepareRideInquiryWithPlaceClues', prepareInteractive],
     [prepareWithEndpoints, prepareInteractive],
-  ]), definitions, extensions.functions, new ComponentFunctions(db));
+  ]);
   const projection: SourceProjection = {
     async assertCurrent(owner) { await (await resolve(owner)).assertCurrent(); },
     async apply(graph, source, input, raw) {
@@ -91,14 +83,5 @@ export function rideCapabilities(db: Database, resolve: SourceResolver, addition
       return { receipt, objects, request };
     },
   };
-  const projections = new Map([...['DidiPlaces', 'DidiEstimates'].map(name => [name, projection] as const), ...additionalSources]);
-  for (const [name, extension] of extensions.sources ?? []) {
-    if (projections.has(name)) throw new Error('Source projection is already registered: ' + name);
-    projections.set(name, extension);
-  }
-  sources = new Sources(db, functions, projections);
-  return { functions, actions: new Actions(db, functions, effects, committedEffects), effects, sources, describe: (model: Ontology) => {
-    effects.check(model.resolvedDocument.actionTypes.flatMap(action=>action.effects?.map(effect=>effect.handler)??[]));
-    return {functions:functions.bindings(model),sources:sources.bindings(model)};
-  }, checkRelease: (model: Ontology) => functions.checkRelease(model) };
+  return { handlers, projections: new Map(['DidiPlaces', 'DidiEstimates'].map(name => [name, projection])) };
 }

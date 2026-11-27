@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { DidiOperations } from '../packages/capabilities/didi/operations.js';
 import { digest } from '../packages/core/identity.js';
-import { configuredSource } from '../packages/core/config.js';
+import { configuredSource } from '../packages/capabilities/didi/config.js';
 import type { ObjectRef } from '../packages/ontology/schema.js';
 import { rideWatchRead, rideWatchType } from '../packages/ontology/ride-watch.js';
 import { Objects } from '../packages/runtime/objects.js';

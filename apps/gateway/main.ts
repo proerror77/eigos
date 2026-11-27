@@ -1,5 +1,6 @@
 import { loadExtensions } from '../../packages/runtime/extensions.js';
-import { readConfig, configuredSource } from '../../packages/core/config.js';
+import { readConfig } from '../../packages/core/config.js';
+import { configuredSource } from '../../packages/capabilities/didi/config.js';
 import { Database } from '../../packages/runtime/database.js';
 import { createApp } from './app.js';
 import { assertOwnerIsolation } from '../../packages/runtime/owner-isolation.js';
