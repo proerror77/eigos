@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { withScenarioEvaluation, withScenarioPARead, type FunctionContext, type FunctionHandler } from '../../runtime/functions.js';
 import type { Database } from '../../runtime/database.js';
 import { Scenarios } from '../../runtime/scenarios.js';
+import { ResourceReservations } from '../../runtime/resource-reservations.js';
 import { PARequests } from '../../runtime/pa.js';
 import { Objects } from '../../runtime/objects.js';
 import { optimizeSchedule, type OptimizationActivity } from './optimizer.js';
@@ -384,6 +385,16 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
         }});
         const result=await validate(graph,input.plan);
         if (!result.valid) throw new Conflict('Current calendar or schedule constraints reject this scenario');
+        const activities = await graph.follow(input.plan,'activities');
+        const resources = await graph.follow(input.plan,'resources');
+        // Successful validation established that every activity has exactly the plan's required resources.
+        const allocations = activities.flatMap(activity => {
+          const span = interval(activity.properties.start,activity.properties.end);
+          return resources.map(resource => ({ ...span, allocation: activity.ref.id,
+            resource: JSON.stringify([graph.owner, graph.model.document.id, resource.ref.type, resource.ref.id]) }));
+        });
+        await new ResourceReservations(db).replace(graph.owner,
+          JSON.stringify([graph.model.document.id, input.plan.type, input.plan.id]), allocations, 'committed', graph.client);
         if(graph.model.object('SchedulePlan').properties.state){const plan=await graph.read(input.plan);if(plan.properties.state!=='confirmed')await graph.edit(input.plan,plan.revision,{state:'confirmed'});}
       });
     }],

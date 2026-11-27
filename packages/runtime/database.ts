@@ -1,3 +1,4 @@
+import { initializeResourceReservations } from './resource-reservations.js';
 import {initializeObservationInterests} from './observation-interests.js';
 import { developmentSandboxEnabled } from '../core/sandbox-mode.js';
 import { initializeReleaseEvaluation } from './release-evaluation.js';
@@ -376,6 +377,7 @@ export class Database {
     await initializeChangeSubscriptions(this);
     await initializeLogArchives(this);
     await initializeProviderBudgets(this);
+    await initializeResourceReservations(this);
     await initializeProcessNotifications(this);
     await initializeFunctionArtifacts(this);
     await initializeExecutionTrace(this);

@@ -100,3 +100,15 @@ OAuth 的任务读写权限用于原任务及 PA 回传；直接 Scenario 操作
 ## 验证范围
 
 工程测试覆盖真实 PostgreSQL 事务、权限隔离、时效、原任务恢复、Scenario 冲突与并发合并。进程 E2E 使用独立 Gateway/Worker，MCP 提交、A2A 回传、MCP 检查及显式合并。模型决策和 PA Calendar 都是明确标注的合成夹具。真实用户 PA 的 Calendar 适配、生产部署和真实日历联调需要对应环境验收。
+
+## 正式排程的资源占用
+
+确认方案时，Action 在同一事务按计划的当前活动和必要资源更新
+`resource_reservations`。时间范围采用左闭右开区间。PostgreSQL 使用
+GiST 排他约束拒绝同一资源的重叠预留。若更新与其他持有人冲突，原预留
+和本次 Action 的状态一起回滚。排程使用本体和所有者作用域内的资源身份。
+
+数据库管理员在 schema 升级安装 PostgreSQL 自带的 `btree_gist` 扩展，
+并向执行排程的运行角色授予该表的 SELECT、INSERT 和 UPDATE。已有
+排程仍沿用已发布图中的冲突校验。预留表覆盖新确认或重新确认的计划。
+[Ontology 资源与排程约束](https://www.palantir.com/docs/foundry/dynamic-scheduling/scheduling-overview/)
