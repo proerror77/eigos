@@ -51,6 +51,34 @@ test('a contended object batches compatible edits and keeps each authorization, 
     ]);
     assert.deepEqual(mixed.map(r=>r.status),['fulfilled','rejected','fulfilled']);
     assert.equal((await graph.read(ref)).revision,19);
+    const held = {...ref,id:'guarded'};
+    await graph.create(held,{...data,id:held.id});
+    const release = Promise.withResolvers<void>(), started = Promise.withResolvers<void>();
+    const input = {record:held,before:0,after:1,revision:1};
+    const first = f.capabilities.actions.apply(access,model,'Editfield0',input,'guard-first',async()=>{
+      started.resolve(); await release.promise;
+    });
+    await started.promise;
+    const controller = new AbortController();
+    const canceled = f.capabilities.actions.apply(access,model,'Editfield1',input,'guard-canceled',undefined,undefined,controller.signal);
+    const rejected = assert.rejects(canceled,/cancel queued edit/);
+    controller.abort(new Error('cancel queued edit'));
+    let checks = 0;
+    const lost = f.capabilities.actions.apply(access,model,'Editfield2',input,'guard-lost',async()=>{
+      if (++checks >= 3) throw new Error('synthetic lease expired');
+    });
+    const deniedCommit = assert.rejects(lost,/synthetic lease expired/);
+    const valid = f.capabilities.actions.apply(access,model,'Editfield3',input,'guard-valid');
+    let timedOut = false;
+    const watchdog = setTimeout(()=>{ timedOut = true; release.resolve(); },3000);
+    try { await rejected; assert.equal(timedOut,false,'canceling a queued edit must not wait for the in-flight commit'); }
+    finally { clearTimeout(watchdog); release.resolve(); }
+    await Promise.all([first,deniedCommit,valid]);
+    const retained = await graph.read(held);
+    assert.equal(retained.revision,3);
+    assert.equal(retained.properties.field1,0);
+    assert.equal(retained.properties.field2,0);
+    assert.equal(retained.properties.field3,1);
     if (process.env.EIGOS_BENCH_HOT_EDITS === '1') {
       const values: number[] = fields.map(field => field === 'field2' || field === 'field4' ? 2 : 1);
       for (const concurrency of [16,1,4,4,16,1,1,4,16]) {
