@@ -243,7 +243,7 @@ export class Actions {
         await this.checkInput(new Objects(this.db, model, access, client), actionName, input, signal, scenarioEvaluation);
       });
     }
-    let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void> } | undefined;
+    let staged: { result: ObjectRef; write: (objects: Objects) => Promise<void | ObjectRef> } | undefined;
     const result = await this.functions.invoke(model, action.function, input, {
       principal, objects: new Objects(this.db, model, access, scenarioEvaluation?.client), signal, scenarioEvaluation, operationId: requestId, taskId: execution?.task.id, execution,
       directAction: !beforeCommit && !execution,
@@ -273,7 +273,7 @@ export class Actions {
     });
     if (!staged || digest(result) !== digest(staged.result)) throw new Error('Edit Function did not return its staged Action result');
     const edits = staged;
-    return commit(async objects => { await edits.write(objects); return edits.result; });
+    return commit(async objects => (await edits.write(objects)) ?? edits.result);
   }
   /** Complete an MCP invocation, with a durable pause only for task execution. */
   async complete(access: Access, model: PublishedOntology, selected: { action: string; input: Record<string, unknown> },
