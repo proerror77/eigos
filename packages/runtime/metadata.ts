@@ -12,7 +12,7 @@ import { Database, type Sql } from './database.js';
 import { Access } from './access.js';
 import { machineryStateContract } from './machinery-state.js';
 
-export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
+export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string>; webhooks?: Record<string, string> }
 export interface Bindings {
   describe(model: Ontology): BindingManifest;
   /** Checks what `describe` cannot check offline, such as the components of component Functions, before a release is prepared. */
@@ -37,7 +37,7 @@ export type ProjectionTransform = (ref: ObjectRef, properties: Record<string, un
 export class Metadata {
   private readonly models = new Map<string, PublishedOntology>();
   private readonly transforms = new Map<string, ProjectionTransform>();
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, readonly ontologyId = 'Eigos') {}
   async fingerprint(projection: string, client: Sql = this.db.pool, ontology?: string): Promise<string> {
     const row = (await this.db.query(`SELECT
       (SELECT md5(coalesce(string_agg(md5(row(owner,type,id,revision,properties)::text),'' ORDER BY owner,type,id),'')) FROM ${this.db.schema}.objects WHERE projection=$1) AS objects,
@@ -228,7 +228,7 @@ export class Metadata {
   checkBindings(model: PublishedOntology, bindings: Bindings) {
     if (model.runtimeId !== this.db.runtimeId || digest(model.bindings) !== digest(bindings.describe(model))) throw new Conflict('The publication does not match this runtime implementation');
   }
-  async active(id = 'Eigos', client?: Sql, lock = false): Promise<PublishedOntology> {
+  async active(id = this.ontologyId, client?: Sql, lock = false): Promise<PublishedOntology> {
     if (lock) await this.db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [this.db.lockKey('publication', id)], client);
     const result = await this.db.query(`SELECT release FROM ${this.db.schema}.ontology WHERE id=$1`, [id], client);
     if (!result.rows[0]) throw new NotFound('Published Ontology is unavailable');

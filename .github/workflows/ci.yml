@@ -121,6 +121,18 @@ jobs:
           (cd templates/function-ts && npm ci --no-audit --no-fund && npm run build)
           cp templates/function-ts/function.wasm "$out/ts.wasm"
           echo "EIGOS_FUNCTION_TEMPLATES=$out" >> "$GITHUB_ENV"
+      - if: matrix.suite == '49'
+        name: Test both packaged Function templates offline
+        run: |
+          npm run build:function-test
+          npm pack ./dist/function-test-package --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          for language in rust ts; do
+            project="$RUNNER_TEMP/function-test-$language"
+            mkdir -p "$project"
+            cp "templates/function-$language/tests/offline.test.mjs" "$project/"
+            npm install --prefix "$project" --offline --no-audit --no-fund "$RUNNER_TEMP/eigos-function-test-0.1.0.tgz"
+            EIGOS_COMPONENT="$EIGOS_FUNCTION_TEMPLATES/$language.wasm" node --test "$project/offline.test.mjs"
+          done
       - if: matrix.suite != 'vector'
         run: npm test -- --suite=${{ matrix.suite }}
       - if: matrix.suite == 'vector'
@@ -140,10 +152,51 @@ jobs:
           docker build --target runtime --tag eigos-ci:runtime .
           docker build --target worker --tag eigos-ci:worker .
       - run: scripts/container-smoke.sh eigos-ci:runtime eigos-ci:worker
+  installed-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-only
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      EIGOS_TEST_DATABASE_URL: postgres://postgres:synthetic-only@127.0.0.1:5432/postgres
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - run: npm ci --no-audit --no-fund && npm run build
+      - name: Install and verify two isolated EIGOS environments with the native executors
+        run: |
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/engines"
+          cargo build --locked --manifest-path kernel/Cargo.toml --bin eigos-kernel
+          cargo build --locked --manifest-path function-host/Cargo.toml
+          strip "$CARGO_TARGET_DIR/debug/eigos-kernel" "$CARGO_TARGET_DIR/debug/eigos-function-host"
+          export EIGOS_KERNEL_BIN="$CARGO_TARGET_DIR/debug/eigos-kernel"
+          export EIGOS_FUNCTION_HOST_BIN="$CARGO_TARGET_DIR/debug/eigos-function-host"
+          npm run package:vm
+          EIGOS_TEST_VM_BUNDLE="$PWD/dist/vm" node --test dist/tests/e2e/vm-isolation.test.js
+          tar -C dist/vm -czf "$RUNNER_TEMP/eigos-vm-linux-x64.tar.gz" .
+          (cd "$RUNNER_TEMP" && sha256sum eigos-vm-linux-x64.tar.gz > eigos-vm-linux-x64.tar.gz.sha256)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: eigos-vm-linux-x64
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/eigos-vm-linux-x64.tar.gz
+            ${{ runner.temp }}/eigos-vm-linux-x64.tar.gz.sha256
   result:
     name: CI result
     if: always()
-    needs: [verify, suites, tests, container]
+    needs: [verify, suites, tests, container, installed-vm]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

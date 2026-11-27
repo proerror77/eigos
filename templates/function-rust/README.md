@@ -42,3 +42,13 @@ cargo build --release --target wasm32-wasip2
 - **读取 Ontology：** 调用 `eigos::function::ontology::get(type, id)`、`follow`、`query`、`evaluate` 或 `aggregate`。参数和结果都是 JSON 文本，见 [Ontology 接口](../../docs/guides/function-host.md#ontology-接口)。读取按调用者的权限执行。
 - **能读到什么：** 函数能读到输入和 Ontology（经上面的接口），既没有网络，也打不开文件。
 - **规模：** 模板编出的组件约 90 KB。调用一次约 0.3 ms，用约 4 万 fuel。
+
+## 离线测试
+
+先构建组件，然后从 EIGOS 仓库打包并安装本地测试工具。见
+[@eigos/function-test](../../packages/function-test/README.md)。
+在模板目录运行以下测试。
+
+```bash
+EIGOS_FUNCTION_HOST_BIN=/path/to/eigos-function-host EIGOS_COMPONENT=target/wasm32-wasip2/release/eigos_function.wasm node --test tests/offline.test.mjs
+```
