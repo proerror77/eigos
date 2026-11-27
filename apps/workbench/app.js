@@ -863,6 +863,42 @@ function actionDialog(object, options = {}) {
   modal('对象操作', element('div', {}, picker, holder));
 }
 
+async function renderFunctionInvocations() {
+  const ontology = state.ontology;
+  const functions = [...new Set(state.model.functionTypes.map(item => item.apiName))].sort();
+  if (!functions.length) {
+    $('#main').replaceChildren(heading('函数调用'), empty('当前没有可查看的函数。'));
+    return;
+  }
+  const picker = select(functions, functions[0]);
+  const results = element('div');
+  let generation = 0;
+  async function load(cursor) {
+    const sequence = ++generation;
+    const query = new URLSearchParams({ ontology, function: picker.value });
+    if (cursor) query.set('before', cursor);
+    const data = await request('/ontology/function-invocations?' + query);
+    if (sequence !== generation || !results.isConnected) return;
+    const callbackText = callbacks => Object.entries(callbacks)
+      .map(([operation, values]) => `${operation} ×${values.count} · ${values.durationMs.toFixed(1)} ms`).join(' / ');
+    results.replaceChildren(
+      data.items.length ? table(
+        ['时间', '版本', '调用者', '状态', '耗时', '宿主耗时', 'Fuel', 'Ontology 回调'],
+        data.items.map(item => [
+          new Date(item.startedAt).toLocaleString(), item.version ?? '内置', item.owner,
+          item.status === 'returned' ? '成功' : item.errorCode,
+          item.durationMs + ' ms', item.hostMs === null ? null : item.hostMs + ' ms',
+          item.fuelUsed?.toLocaleString(), callbackText(item.callbacks),
+        ]),
+      ) : empty('过去 30 天没有此函数的调用记录。'),
+      ...(data.cursor ? [button('更早的调用', () => load(data.cursor))] : []),
+    );
+  }
+  picker.onchange = () => { results.replaceChildren(); void load().catch(error => notice(error.message, true)); };
+  $('#main').replaceChildren(heading('函数调用'), surface(field('函数', picker), button('刷新', () => load()), results));
+  await load();
+}
+
 async function renderModel() {
   state.raw ??= await service('raw_definition');
   const draft = structuredClone(state.raw),
@@ -3199,6 +3235,7 @@ const pages = {
   published: renderPublishedWorkflows,
   objects: renderObjects,
   model: renderModel,
+  functionInvocations: renderFunctionInvocations,
   scenarios: renderScenarios,
   graph: renderGraph,
   schedule: renderSchedule,

@@ -7,6 +7,7 @@ import type { Database } from './database.js';
 import { functionCallbacks } from './function-callbacks.js';
 import { defaultFunctionHost, FunctionHostError, lostFunctionHost, type FunctionHostClient, type FunctionOutcome } from './function-host.js';
 import type { FunctionContext } from './functions.js';
+import type { FunctionInvocationMetrics } from './function-invocations.js';
 import type { Objects } from './objects.js';
 
 export type ComponentImplementation = z.infer<typeof componentImplementationSchema>;
@@ -68,13 +69,13 @@ export class ComponentFunctions {
    * Function reads the Ontology as that call's caller, through a callback session that ends with the call.
    */
   async invoke(name: string, implementation: ComponentImplementation, parameters: Record<string, unknown>, signal: AbortSignal,
-    context?: FunctionContext, options: { writer?: Objects } = {}) {
+    context?: FunctionContext, options: { writer?: Objects; metrics?: FunctionInvocationMetrics } = {}) {
     const input = JSON.stringify(parameters), limits = implementation.limits;
     const inputBytes = limits.inputBytes ?? maxInputBytes;
     if (Buffer.byteLength(input) > inputBytes) throw new InvalidInput(`The input of ${name} exceeds ${inputBytes} bytes`);
     const host = await this.connect();
     // A host before protocol 2 would refuse the callback; its Functions then find no Ontology to read.
-    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer) : undefined;
+    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer, undefined, options.metrics?.callbacks) : undefined;
     let outcome: FunctionOutcome;
     try {
       try { outcome = await host.invoke(implementation.sha256, input, limits, signal, session?.callback); }
@@ -89,6 +90,10 @@ export class ComponentFunctions {
       throw this.refusal(host, error);
     } finally {
       session?.close();
+    }
+    if (options.metrics) {
+      options.metrics.fuelUsed = outcome.fuelUsed;
+      options.metrics.hostMs = Math.round(outcome.ms);
     }
     const detail = { fuelUsed: outcome.fuelUsed, ms: outcome.ms, ...(outcome.stderr ? { stderr: outcome.stderr } : {}) };
     if (outcome.error) {

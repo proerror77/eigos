@@ -1,5 +1,6 @@
 import { SHOPIFY_AGENT_PROFILE_PATH, shopifyCatalogProfile } from '../../packages/capabilities/shopify/read-only.js';
 import { ComponentFunctions } from '../../packages/runtime/component-functions.js';
+import { FunctionInvocations, functionInvocationsQuery } from '../../packages/runtime/function-invocations.js';
 import {mountWorkbench} from './workbench.js';
 import {Applications} from '../../packages/runtime/applications.js';
 import type { RuntimeExtensions } from '../../packages/runtime/extensions.js';
@@ -294,6 +295,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
   app.get('/ontology',async(req,res)=>{const p=principal(req);requireScope(p,'ontology:read');const ontology=typeof req.query.ontology==='string'?req.query.ontology:'Eigos';res.json((await Access.load(db,p)).describe(await metadata.active(ontology)));});
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
   app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
+  app.get('/ontology/function-invocations', async (req, res) => {
+    const p = principal(req);
+    requireScope(p, 'ontology:read');
+    const input = functionInvocationsQuery.parse(req.query);
+    const model = await metadata.active(input.ontology);
+    res.json(await new FunctionInvocations(db).list(await Access.load(db, p), model, input));
+  });
   app.post('/ontology/actions', async (req, res) => res.json(await apply(principal(req), req.body)));
   app.get('/mcp', (_req, res) => res.set('Allow', 'POST').sendStatus(405));
   app.post('/mcp', async (req, res) => {
