@@ -72,10 +72,10 @@ export class JournalObjects extends Objects {
     await this.remember(ref);
     return super.create(ref, properties);
   }
-  override async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>) {
+  override async edit(ref: ObjectRef, revision: number, fields: Record<string, unknown>, expected?: Record<string, unknown>) {
     await this.lockObjects([ref], 'exclusive');
     await this.remember(ref);
-    return super.edit(ref, revision, fields);
+    return super.edit(ref, revision, fields, expected);
   }
   override async remove(ref: ObjectRef, revision: number) {
     await this.lockObjects([ref], 'exclusive');

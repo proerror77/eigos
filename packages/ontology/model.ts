@@ -149,6 +149,11 @@ export class Ontology {
           throw new Error('A webhook formatter requires a component Function without Source access or edits');
       }
       validator(action.parameters);
+      for (const rule of action.rules ?? []) {
+        if (rule.op === 'editObject' && rule.expectedProperties &&
+            JSON.stringify(Object.keys(rule.expectedProperties).sort()) !== JSON.stringify(Object.keys(rule.properties).sort()))
+          throw new InvalidInput('An edit must compare every property it changes');
+      }
       for (const type of Object.values(action.objectParameters)) this.concreteTypes(type);
       for (const criterion of action.submissionCriteria) acceptedVersion(action.apiName, required(this.functions, criterion.function), criterion.functionVersion);
       if (action.function && !acceptedVersion(action.apiName, required(this.functions, action.function), action.functionVersion).edits)
