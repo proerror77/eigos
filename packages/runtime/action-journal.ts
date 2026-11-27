@@ -1,8 +1,8 @@
 import { Conflict, NotFound, digest } from '../core/identity.js';
 import type { LinkData, ObjectRef } from '../ontology/schema.js';
 import type { Database } from './database.js';
-import { Objects } from './objects.js';
-import { objectLinks } from './scenario-store.js';
+import { Objects, type ScenarioObjectWrite } from './objects.js';
+import { objectLinks, objectLinksBatch } from './scenario-store.js';
 
 type Snapshot = { revision: number; properties: Record<string, unknown> } | null;
 export interface ObjectChange {
@@ -82,6 +82,18 @@ export class JournalObjects extends Objects {
     await this.remember(ref);
     return super.remove(ref, revision);
   }
+  override async writeScenarioObjects(edits: readonly ScenarioObjectWrite[]) {
+    if (!edits.length) return;
+    this.requireExclusive('Scenario batch write');
+    await this.lockWrites();
+    const unseen = edits.map(edit => edit.ref).filter(ref => !this.beforeObjects.has(digest(ref)));
+    const snapshots = await this.liveSnapshots(unseen);
+    for (const ref of unseen) {
+      const key = digest(ref);
+      this.beforeObjects.set(key, { ref, before: snapshots.get(key) ?? null });
+    }
+    return super.writeScenarioObjects(edits);
+  }
   override async ingestBatch(
     rows: readonly { ref: ObjectRef; properties: Record<string, unknown> | null }[],
     source = 'default',
@@ -100,10 +112,40 @@ export class JournalObjects extends Objects {
     }
     return super.ingestBatch(rows, source, observedAt);
   }
-  override async linkBatch(edges: readonly LinkData[]) {
-    await this.lockObjects(edges.flatMap(edge => [edge.from, edge.to]), 'exclusive');
-    for (const edge of edges) await this.rememberLink(edge);
-    return super.linkBatch(edges);
+  private async liveLinks(edges: readonly LinkData[]) {
+    if (!edges.length) return new Set<string>();
+    const { rows } = await this.db.query<{ type: string; from_type: string; from_id: string; to_type: string; to_id: string }>(`
+      SELECT l.type,l.from_type,l.from_id,l.to_type,l.to_id FROM ${this.db.schema}.links l
+      JOIN jsonb_to_recordset($3::jsonb) AS e(type text,from_type text,from_id text,to_type text,to_id text)
+        ON (l.type,l.from_type,l.from_id,l.to_type,l.to_id)=(e.type,e.from_type,e.from_id,e.to_type,e.to_id)
+      WHERE l.projection=$1 AND l.owner=$2`, [this.model.projection, this.owner, JSON.stringify(edges.map(edge => ({
+        type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id,
+      })))], this.client);
+    return new Set(rows.map(row => digest({ type: row.type, from: { type: row.from_type, id: row.from_id },
+      to: { type: row.to_type, id: row.to_id } })));
+  }
+  private async rememberScenarioLinks(edges: readonly LinkData[]) {
+    if (!edges.length) return;
+    this.requireExclusive('Scenario link writes');
+    await this.lockWrites();
+    const unseen = edges.filter(edge => !this.beforeLinks.has(digest(edge)));
+    const before = await this.liveLinks(unseen);
+    for (const edge of unseen) {
+      const key = digest(edge);
+      this.beforeLinks.set(key, { edge, before: before.has(key) });
+    }
+  }
+  override async linkBatch(edges: readonly LinkData[], scenarioMerge = false) {
+    if (scenarioMerge) await this.rememberScenarioLinks(edges);
+    else {
+      await this.lockObjects(edges.flatMap(edge => [edge.from, edge.to]), 'exclusive');
+      for (const edge of edges) await this.rememberLink(edge);
+    }
+    return super.linkBatch(edges, scenarioMerge);
+  }
+  override async unlinkScenarioLinks(edges: readonly LinkData[]) {
+    await this.rememberScenarioLinks(edges);
+    return super.unlinkScenarioLinks(edges);
   }
   override async unlink(edge: LinkData) {
     await this.lockObjects([edge.from, edge.to], 'exclusive');
@@ -113,17 +155,16 @@ export class JournalObjects extends Objects {
   async changes() {
     const objects: ObjectChange[] = [],
       links: LinkChange[] = [];
-    for (const item of this.beforeObjects.values()) {
-      const after = await this.snapshot(item.ref);
-      if (digest(item.before) !== digest(after))
-        objects.push({
-          ...item,
-          after,
-          afterLinks: await objectLinks(this.db, this.model, this.owner, item.ref, this.client),
-        });
-    }
-    for (const item of this.beforeLinks.values()) {
-      const after = await this.linkPresent(item.edge);
+    const after = await this.liveSnapshots([...this.beforeObjects.values()].map(item => item.ref));
+    const changed = [...this.beforeObjects].flatMap(([key, item]) => {
+      const snapshot = after.get(key) ?? null;
+      return digest(item.before) === digest(snapshot) ? [] : [{ ...item, after: snapshot }];
+    });
+    const edges = await objectLinksBatch(this.db, this.model, this.owner, changed.map(item => item.ref), this.client);
+    for (const item of changed) objects.push({ ...item, afterLinks: edges.get(digest(item.ref)) ?? [] });
+    const present = await this.liveLinks([...this.beforeLinks.values()].map(item => item.edge));
+    for (const [key, item] of this.beforeLinks) {
+      const after = present.has(key);
       if (item.before !== after) links.push({ ...item, after });
     }
     return { objects, links };

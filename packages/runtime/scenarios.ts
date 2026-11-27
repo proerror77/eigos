@@ -1,3 +1,4 @@
+import { documentChunkType } from '../ontology/documents.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, type Principal } from '../core/identity.js';
@@ -6,7 +7,7 @@ import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scena
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { Metadata, PublishedOntology } from './metadata.js';
-import { Objects, querySchema } from './objects.js';
+import { Objects, type ScenarioObjectWrite, querySchema } from './objects.js';
 import { ObjectSets } from './object-sets.js';
 import { decisionEvidenceSchema, replayRead, type DecisionObservation } from './decision-evidence.js';
 import { bumpScenario, checkScenario, lockEdits, objectLinks, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
@@ -1190,19 +1191,26 @@ export class Scenarios {
       await validateWorkflow?.(candidate);
       await scope.validate?.(candidate, [...touched.values()], changes.links.map(edge));
     }, scope.validateAction, evidenceCheck?.check);
-    for (const item of changes.links) {
-      if (item.removed) await graph.unlink(edge(item));
-    }
+    await graph.unlinkScenarioLinks(changes.links.filter(item => item.removed).map(edge));
+    const batch: ScenarioObjectWrite[] = [];
     for (const item of changes.objects) {
       const ref: ObjectRef = { type: item.type, id: item.id };
-      if (item.properties === null) { if (item.base_revision !== null) await graph.remove(ref, currentRevisions.get(item)!); }
-      else if (item.base_revision === null) await graph.create(ref, item.properties);
-      else {
-        const fields = Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]]));
-        await graph.edit(ref, currentRevisions.get(item)!, fields);
+      if (item.properties === null || ref.type === documentChunkType) {
+        if (batch.length) await graph.writeScenarioObjects(batch.splice(0));
+        if (item.properties === null) {
+          if (item.base_revision !== null) await graph.remove(ref, currentRevisions.get(item)!);
+        } else if (item.base_revision === null) await graph.create(ref, item.properties);
+        else await graph.edit(ref, currentRevisions.get(item)!,
+          Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]])));
+        continue;
       }
+      batch.push(item.base_revision === null ? { ref, fields: item.properties } : {
+        ref, revision: currentRevisions.get(item)!,
+        fields: Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]])),
+      });
     }
-    for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
+    await graph.writeScenarioObjects(batch);
+    await graph.linkBatch(changes.links.filter(item => !item.removed).map(edge), true);
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);
     if (row.workflow_run_id && !(await this.db.query(
       `UPDATE ${this.db.schema}.workflow_runs SET state='completed',step=step+1,updated_at=now() WHERE id=$1 AND proposal_deadline>clock_timestamp()`,
