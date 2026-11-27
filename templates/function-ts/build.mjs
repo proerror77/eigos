@@ -8,7 +8,7 @@ import { _setPreopens } from '@bytecodealliance/preview2-shim/filesystem';
 _setPreopens({ [process.cwd()]: process.cwd(), '/tmp': '/tmp' });
 execFileSync('node_modules/.bin/tsc', ['-p', 'tsconfig.json'], { stdio: 'inherit' });
 const { component } = await componentize(await readFile('dist/function.js', 'utf8'), {
-  witPath: `${process.cwd()}/wit/handler.wit`,
+  witPath: `${process.cwd()}/wit`,
   worldName: 'handler',
   disableFeatures: ['http', 'fetch-event'],
 });

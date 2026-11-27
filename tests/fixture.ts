@@ -1,3 +1,4 @@
+import { flushFunctionInvocations } from '../packages/runtime/function-invocations.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -103,6 +104,12 @@ export async function fixture(driver: AgentDriver = new FixtureAgent(),services?
   const capabilities = createCapabilities(db, source, extensions, services, stripe, connections), model = await metadata.publish(definition, capabilities, publisher), agent = new OntologyAgent(db, metadata, tasks, capabilities, driver, agentOptions), worker = new Worker(tasks, agent,new ScheduledActions(db,metadata,capabilities.scheduledTerminals),new ScheduledActionRunner(db,metadata,tasks,capabilities.actions));
   return { db, schema, model, metadata, tasks, capabilities, access, publisher, agent, worker, source, provider: p,
     submit: () => tasks.submit(principal, { requestId: randomUUID(), message: '从青禾虚构园区到前滩太古里，只询价', route }),
-    async close() { worker.stop(); await db.query(`DROP SCHEMA ${db.schema} CASCADE`); await db.close(); await p.close(); },
+    async close() {
+      worker.stop();
+      await flushFunctionInvocations(db);
+      await db.query(`DROP SCHEMA ${db.schema} CASCADE`);
+      await db.close();
+      await p.close();
+    },
   };
 }

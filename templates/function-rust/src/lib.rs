@@ -1,5 +1,5 @@
 //! An EIGOS Function in Rust: JSON input in, JSON output out. See README.md for building and publishing it.
-wit_bindgen::generate!({ world: "handler", path: "wit" });
+wit_bindgen::generate!({ world: "handler", path: "wit", generate_all });
 
 use serde::{Deserialize, Serialize};
 

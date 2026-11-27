@@ -1,0 +1,11 @@
+package eigos:http@0.1.0;
+
+interface outgoing {
+  record failure {
+    code: string,
+    message: string,
+  }
+
+  /// Send a JSON request through the Function's declared Source. The runtime chooses the endpoint and credentials.
+  send: func(request: string) -> result<string, failure>;
+}

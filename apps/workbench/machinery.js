@@ -157,9 +157,23 @@ export async function renderMachinery(body, ui) {
                   focus: { parent: item.object, type: input.type, link: child.link } });
               },
             ));
-            const actions = (data.reference?.transitions ?? [])
-              .filter(edge => edge.from === entry.current && edge.action)
+            const transitions = data.reference?.transitions ?? [];
+            const next = current && transitions.some(edge => edge.execution)
+              ? await service('machinery_next_actions', { object: item.object, process: input.type })
+              : null;
+            const actions = transitions.filter(edge => edge.from === entry.current && edge.action && !edge.execution)
               .map(edge => edge.action);
+            const availability = { ready: '可提交', needs_input: '需补参数', needs_check: '待检查', blocked: '条件阻塞' };
+            const candidates = next?.items.length ? element('section', {}, element('h4', {}, '下一步操作'), table(
+              ['动作', '目标状态', '可用性', '缺少参数', ''],
+              next.items.map(action => [
+                action.action, action.to, availability[action.status], action.missing.join('、') || '—',
+                ['ready', 'needs_input'].includes(action.status) ? button('查看操作', () => {
+                  document.querySelector('#editor').close();
+                  openActions(item.object, [action.action], action.input);
+                }) : '—',
+              ]),
+            )) : null;
             modal('流程记录', element('div', { class: 'section' },
               element('p', {}, entry.states.join(' → ')),
               element('div', { class: 'toolbar' }, childButtons,
@@ -168,6 +182,7 @@ export async function renderMachinery(body, ui) {
                   openActions(item.object, actions);
                 })),
 
+              candidates,
               current && button('查看或登记跟进', () => showObjectInterests(ui,
                 processes.items.find(process => process.type === input.type), item.object)),
               current?.schedules?.length > 0 && element('section', {}, element('h4', {}, '该对象的后台操作'),
