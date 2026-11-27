@@ -2,8 +2,6 @@ import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInte
 import { ProcessNotifications, notificationsSchema, readNotificationSchema } from './process-notifications.js';
 import {digest} from '../core/identity.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
-import { PublicPlaceCatalogue } from '../capabilities/public-places/catalogue.js';
-import { listPublicPlacesSchema, publishPublicPlaceSchema, withdrawPublicPlaceSchema } from '../ontology/public-places.js';
 import {
   EntityResolution,
   bindEntitySchema,
@@ -71,14 +69,18 @@ import { Effects } from './effects.js';
 import type { Functions } from './functions.js';
 import type { Bindings } from './metadata.js';
 
+export type ServiceRegistration = <S extends z.ZodType>(name: string, description: string, schema: S, write: boolean,
+  run: (access: Access, input: z.output<S>) => Promise<unknown>) => void;
+export type RegisterServices = (register: ServiceRegistration, db: Database, metadata: Metadata, actions: Actions) => void;
+
 export function ontologyServices(
   db: Database,
   metadata: Metadata,
-  bindings: Bindings & { projectTaskResult: TaskResultProjection; scenarioDecisions?: ScenarioDecisionSupport },
+  bindings: Bindings & { registerServices?: RegisterServices; projectTaskResult: TaskResultProjection; scenarioDecisions?: ScenarioDecisionSupport },
   functions: Functions,
   effects: Effects,
   actions: Actions,
-  ontologyId = 'Eigos',
+  ontologyId = metadata.ontologyId,
 ) {
   const active = () => metadata.active(ontologyId);
   const applications = new Applications(db),
@@ -92,7 +94,7 @@ export function ontologyServices(
     materializations = new Materializations(db),
     governance = new Governance(db, metadata, bindings);
   const idSchema = z.strictObject({ id: z.uuid() }),
-    ontology = z.strictObject({ ontology: z.string().default('Eigos') });
+    ontology = z.strictObject({ ontology: z.string().default(ontologyId) });
   const services = new Map<
     string,
     {
@@ -291,15 +293,7 @@ export function ontologyServices(
     true,
     (a, input) => governance.project(a, input),
   );
-  if (ontologyId === 'Eigos') {
-    const publicPlaces = new PublicPlaceCatalogue(db, metadata, actions);
-    register('list_public_places', 'List explicitly published places in an authorized organization project.',
-      listPublicPlacesSchema, false, (access, input) => publicPlaces.list(access, input));
-    register('publish_public_place', 'Publish or revise reviewed public location fields in an organization project.',
-      publishPublicPlaceSchema, true, (access, input) => publicPlaces.publish(access, input));
-    register('withdraw_public_place', 'Withdraw a published location at its reviewed revision.',
-      withdrawPublicPlaceSchema, true, (access, input) => publicPlaces.withdraw(access, input));
-  }
+  if (ontologyId === metadata.ontologyId) bindings.registerServices?.(register, db, metadata, actions);
   register(
     'assign_project',
     'Assign published resources to a project.',
@@ -724,8 +718,8 @@ export function ontologyServices(
   );
   register('tasks', 'Read recent owned task runs.', z.strictObject({}), false, async (a) => {
     const rows = (
-      await db.query(`SELECT id FROM ${db.schema}.tasks WHERE owner=$1 ORDER BY created_at DESC LIMIT 100`, [
-        a.principal.owner,
+      await db.query(`SELECT id FROM ${db.schema}.tasks WHERE owner=$1 AND ontology=$2 ORDER BY created_at DESC LIMIT 100`, [
+        a.principal.owner, ontologyId,
       ])
     ).rows;
     const tasks = new Tasks(db, metadata);
