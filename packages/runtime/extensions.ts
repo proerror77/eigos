@@ -1,3 +1,5 @@
+import type { Database } from './database.js';
+import type { ComponentModels } from './component-models.js';
 import type { ConfiguredComponentSources } from './component-source-egress.js';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +12,7 @@ export interface RuntimeExtensions {
   effects?: ReadonlyMap<string, EffectHandler>;
   sources?: ReadonlyMap<string, SourceProjection>;
   componentSources?: ConfiguredComponentSources;
+  componentModels?: (db: Database) => ComponentModels;
 }
 /** Operator-configured, trusted deployment code. Never accepts a request-supplied module path. */
 export async function loadExtensions(path?: string): Promise<RuntimeExtensions> {

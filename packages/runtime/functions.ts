@@ -16,6 +16,7 @@ import type { ActionEffect } from './effects.js';
 export type ScenarioEvaluation = { client: Sql; evaluatedAt: number };
 
 export interface FunctionContext {
+  onChunk?: (text: string) => Promise<void>;
   scenarioEvaluation?: ScenarioEvaluation;
   principal: Principal; objects: Pick<Objects, 'model' | 'access' | 'read' | 'query' | 'follow' | 'matchesSource'>; signal: AbortSignal; taskId?: string;
   execution?: { task: Task; tasks: Tasks; executor?: ExecutionActor };
@@ -51,9 +52,9 @@ const key = (definition: Definition) => JSON.stringify([definition.apiName, defi
 /** The result an Action's component edit Function stages before it runs; its commit replaces it with the real one. */
 const pendingResult: ObjectRef = { type: 'PendingFunctionResult', id: 'pending' };
 /** A component Function's binding follows from its definition, so every runtime with a function host agrees on it. */
-const componentBinding = (definition: Definition, sourceBinding?: string) =>
+const componentBinding = (definition: Definition, sourceBinding?: string, modelBinding?: string) =>
   digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation,
-    ...(sourceBinding ? { sourceBinding } : {}) });
+    ...(sourceBinding ? { sourceBinding } : {}), ...(modelBinding ? { modelBinding } : {}) });
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
@@ -84,7 +85,7 @@ export class Functions {
     return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
       if (fn.implementation) {
         const sourceBinding = fn.source ? this.componentSourceBinding(fn.source) : undefined;
-        return [fn.apiName, componentBinding(fn, sourceBinding)];
+        return [fn.apiName, componentBinding(fn, sourceBinding, this.components?.modelBinding(fn.implementation.models))];
       }
       const entry = this.registered.get(key(fn));
       const reply = contract(fn);
@@ -173,7 +174,7 @@ export class Functions {
   private async invokeComponent(model: PublishedOntology, definition: Definition, input: Record<string, unknown>, context: FunctionContext) {
     const name = definition.apiName;
     const source = definition.source ? { name: definition.source, binding: this.componentSourceBinding(definition.source) } : undefined;
-    if (model.bindings.functions[name] !== componentBinding(definition, source?.binding))
+    if (model.bindings.functions[name] !== componentBinding(definition, source?.binding, this.components?.modelBinding(definition.implementation?.models)))
       throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
     if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');

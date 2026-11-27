@@ -44,7 +44,7 @@ use world::HandlerPre;
 use world::eigos::function::types::Failure;
 
 /// Protocol 1 runs components, 2 adds Ontology callbacks, and 3 adds the declared Source callback.
-const PROTOCOL: u32 = 3;
+const PROTOCOL: u32 = 4;
 const WORLD: &str = "eigos:function/handler@0.2.0";
 /// The most a callback answer may hold.
 const MAX_CALLBACK: usize = 16 << 20;
@@ -62,7 +62,7 @@ const STDERR_BYTES: usize = 64 << 10;
 /// How often the epoch advances, which is the granularity of deadlines.
 const EPOCH_MS: u64 = 10;
 /// The WASI interfaces a component may import, by package prefix.
-const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/", "eigos:function/", "eigos:http/outgoing@0.1.0"];
+const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/", "eigos:function/", "eigos:http/outgoing@0.1.0", "eigos:models/language-model@0.1.0"];
 
 type Refusal = (StatusCode, Json<Value>);
 fn refuse(status: StatusCode, message: impl ToString) -> Refusal { (status, Json(json!({ "error": message.to_string() }))) }
@@ -132,6 +132,31 @@ impl world::eigos::function::ontology::Host for Call {
     fn unlink(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
         let (from, to) = (argument("from", &from)?, argument("to", &to)?);
         self.ontology("unlink", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
+}
+
+impl world::eigos::function::streaming::Host for Call {
+    fn emit(&mut self, chunk: String) -> Result<(), Failure> {
+        self.ontology("emit", json!({"chunk":chunk})).map(|_| ())
+    }
+}
+
+type ModelFailure = world::eigos::models::language_model::Failure;
+fn model_failure(failure: Failure) -> ModelFailure {
+    ModelFailure { code: failure.code, message: failure.message }
+}
+
+impl world::eigos::models::language_model::Host for Call {
+    fn generate(&mut self, alias: String, messages: String) -> Result<(), ModelFailure> {
+        let messages = argument("messages", &messages).map_err(model_failure)?;
+        self.ontology("generate", json!({"alias":alias,"messages":messages})).map(|_| ()).map_err(model_failure)
+    }
+    fn next(&mut self) -> Result<Option<String>, ModelFailure> {
+        self.ontology("modelNext", json!({})).map_err(model_failure)?.map(|json|
+            serde_json::from_str::<String>(&json).map_err(|_| ModelFailure {
+                code: "invalid".into(), message: "Invalid model chunk".into(),
+            })
+        ).transpose()
     }
 }
 

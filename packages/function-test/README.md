@@ -35,3 +35,5 @@ With `allowEdits: true`, object edits update the per-call fixture so later gets
 see them. Link and unlink edits appear in `stagedEdits`, which a follow stub can
 use to compute its answer. On a component failure, `stagedEdits` describes the
 attempted writes. Every invocation starts from the supplied fixture.
+
+Protocol 4 tests may supply deterministic model segments for a component using `eigos:models/language-model`. Set `models: { Writer: (messages, principal) => ['one', 'two'] }` and `streaming: true`. The returned `chunks` array contains the guest’s emitted text in order. The fixture does not need a model endpoint or credential.

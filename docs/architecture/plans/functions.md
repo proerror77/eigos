@@ -221,6 +221,8 @@
 
 ## F5：模型与流式
 
+**实现：** 协议 4 的组件通过 `eigos:models/language-model@0.1.0` 按别名发起生成并拉取分段，用 `eigos:function/streaming@0.2.0` 输出文本。Gateway 和 SDK 支持 SSE，PA 可以通过 MCP 进度消息消费同一份结果。调用记录保存供应商回报的输入和输出 token，并单列缺少用量报告的调用。见[模型与流式组件](../../guides/function-host.md#模型与流式组件)。
+
 - **模型调用：**
   - 宿主接口 `eigos:models/generate(alias, input) -> stream<chunk>`；
   - `alias` 映射到已配置的模型，受模型出口策略约束；

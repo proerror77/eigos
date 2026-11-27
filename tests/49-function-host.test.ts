@@ -35,12 +35,12 @@ test('the function host keeps only components that import allowed interfaces and
 
   const uploaded = await host.upload(echo);
   assert.equal(uploaded.cached, false);
-  assert.ok(uploaded.imports!.every(name => /^(wasi:(cli|clocks|random|io|filesystem)|eigos:function)\//.test(name) || name === 'eigos:http/outgoing@0.1.0'), uploaded.imports!.join());
+  assert.ok(uploaded.imports!.every(name => /^(wasi:(cli|clocks|random|io|filesystem)|eigos:function)\//.test(name) || ['eigos:http/outgoing@0.1.0','eigos:models/language-model@0.1.0'].includes(name)), uploaded.imports!.join());
   assert.ok(uploaded.imports!.includes('eigos:function/ontology@0.2.0'), uploaded.imports!.join());
   assert.deepEqual(await host.upload(echo), { sha256: uploaded.sha256, cached: true });
   const health = await host.health();
   assert.equal(health.world, 'eigos:function/handler@0.2.0');
-  assert.equal(health.protocol, 3);
+  assert.equal(health.protocol, 4);
   assert.equal(health.components, 1);
 }));
 
@@ -176,4 +176,26 @@ test('the offline Function harness supplies a principal and reads its staged edi
   assert.equal(readOnly.error?.kind, 'failure');
   assert.equal(readOnly.error?.kind === 'failure' && readOnly.error.code, 'conflict');
   assert.deepEqual(readOnly.stagedEdits, []);
+});
+
+
+test('a component model stub supplies segments for offline stream assertions', {skip}, async () => {
+  const {runFunction} = await import('../packages/function-test/index.js');
+  const outcome=await runFunction({binary:binary!,component:await component('echo_rust'),
+    input:{ontology:{op:'generate',args:['Writer',[{role:'user',content:'hello'}]]}},streaming:true,
+    models:{Writer(messages) { assert.deepEqual(messages,[{role:'user',content:'hello'}]); return ['one','two']; }}});
+  assert.deepEqual(outcome.chunks,['one','two']);
+  assert.deepEqual(outcome.value,{result:'onetwo'});
+});
+
+test('SSE framing handles split Unicode, CRLF, bare CR and incomplete responses', async () => {
+  const { sseData } = await import('../packages/sdk/event-stream.js');
+  const response = (text: string) => new Response(new ReadableStream({ start(controller) {
+    for (const byte of new TextEncoder().encode(text)) controller.enqueue(new Uint8Array([byte]));
+    controller.close();
+  }}), { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
+  const read = async (r:Response,limit=1024) => { const events=[];for await (const data of sseData(r,limit)) events.push(data);return events; };
+  assert.deepEqual(await read(response(': comment\r\ndata: 甲\r\ndata: 乙\r\n\r\ndata: 丙\r\r')),['甲\n乙','丙']);
+  await assert.rejects(read(response('data: partial')),/Incomplete/);
+  await assert.rejects(read(response('data: abc\n\n'),5),/byte limit/);
 });

@@ -34,9 +34,16 @@ interface ontology {
 }
 
 /// An EIGOS Function compiled to a WebAssembly component.
+interface streaming {
+  use types.{failure};
+  emit: func(chunk: string) -> result<_, failure>;
+}
+
 world handler {
   use types.{failure};
   import ontology;
+  import streaming;
+  import eigos:models/language-model@0.1.0;
   import eigos:http/outgoing@0.1.0;
 
   /// Runs the Function on its JSON input and returns its JSON output.

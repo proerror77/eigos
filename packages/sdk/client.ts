@@ -1,3 +1,4 @@
+import { sseData } from './event-stream.js';
 import type { ObjectData, ObjectRef, OntologyDocument } from '../ontology/schema.js';
 import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scenario-decision.js';
 import type { ActionBatchInput, ActionCall, ActionInput } from '../ontology/invocation.js';
@@ -121,6 +122,22 @@ export class OntologyClient {
   ): Promise<QueryResult<T>> {
     const { signal, ...scope } = options;
     return this.request('ontology/query', { query, ontology: this.ontology, ...scope }, signal);
+  }
+  async *evaluateStream<T>(name: string, input: Record<string, unknown>,
+    options: { scenarioId?:string; taskId?:string; signal?:AbortSignal } = {}): AsyncGenerator<{type:'chunk';text:string}|{type:'result';value:T}> {
+    const token = typeof this.options.token === 'function' ? await this.options.token() : this.options.token;
+    const response = await this.fetcher(new URL('ontology/functions',this.base), {
+      method:'POST',signal:options.signal,headers:{Authorization:`Bearer ${token}`,Accept:'text/event-stream','Content-Type':'application/json'},
+      body:JSON.stringify({function:name,input,ontology:this.ontology,taskId:options.taskId,scenarioId:options.scenarioId}),
+    });
+    if (!response.ok) throw new OntologyHttpError(response.status,await response.json().catch(()=>({})));
+    for await (const raw of sseData(response,16<<20)) {
+      const item=JSON.parse(raw);
+      if (item.type==='chunk' && typeof item.text==='string') yield {type:'chunk',text:item.text};
+      else if (item.type==='result' && Object.hasOwn(item,'value')) { yield {type:'result',value:item.value as T}; return; }
+      else throw new Error('Function stream failed');
+    }
+    throw new Error('Incomplete Function stream');
   }
   evaluate<T>(
     name: string,

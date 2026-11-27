@@ -176,7 +176,7 @@ export function createCapabilities(
     new Map([...didi.projections, ...serviceProjections(services), [transferObservationSource, transferObservationProjection]]),
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources,
-      componentSources: extensions.componentSources },
+      componentSources: extensions.componentSources, componentModels: extensions.componentModels },
     notifications.committed);
   sources = capabilities.sources;
   return { ...capabilities, agentInstructions: [

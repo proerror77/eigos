@@ -23,7 +23,7 @@ export function assembleRuntime(
     registered.set(name, projection);
   }
   const componentSources = extensions.componentSources ?? configuredComponentSources(db);
-  const components = new ComponentFunctions(db, undefined, componentSources);
+  const components = new ComponentFunctions(db, undefined, componentSources, extensions.componentModels?.(db));
   const functions = new Functions(handlers, definitions, extensions.functions, components, new ProviderBudgets(db), new FunctionInvocations(db));
   const sources = new Sources(db, functions, registered);
   const webhooks = componentSources && new ActionSourceWebhooks(componentSources, functions);

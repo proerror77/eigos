@@ -20,7 +20,12 @@ export type OntologyLimits = { calls: number; objects: number; bytes: number; ed
 export const defaultOntologyLimits: OntologyLimits = { calls: 1000, objects: 100000, bytes: 4 << 20, edits: 10000 };
 
 /** `writer` is set for an edit Function inside its Action's commit: edits go through it, and reads see them. */
-type Session = { db: Database; context: FunctionContext; writer?: Objects; outgoing?: (input: unknown) => Promise<unknown>; limits: OntologyLimits; calls: number; objects: number; edits: number };
+type ModelOperations = {
+  generate(alias: string, messages: unknown): void;
+  next(): Promise<string | null>;
+  emit(chunk: string): Promise<void>;
+};
+type Session = { models?: ModelOperations; db: Database; context: FunctionContext; writer?: Objects; outgoing?: (input: unknown) => Promise<unknown>; limits: OntologyLimits; calls: number; objects: number; edits: number };
 class LimitReached extends Error {}
 
 const counted = (result: unknown) => result === null ? 0
@@ -75,6 +80,19 @@ const operations: Record<string, (session: Session, input: Record<string, unknow
   },
   async link(session, input) { await writer(session).link(edge(input)); return null; },
   async unlink(session, input) { await writer(session).unlink(edge(input)); return null; },
+  async generate(session, input) {
+    if (!session.models) throw new PermissionDenied('This Function has no model capability');
+    session.models.generate(z.string().parse(input.alias), input.messages);
+    return null;
+  },
+  async modelNext(session) {
+    if (!session.models) throw new PermissionDenied('This Function has no model capability');
+    return session.models.next();
+  },
+  async emit(session, input) {
+    if (!session.models) throw new PermissionDenied('This Function has no streaming capability');
+    return session.models.emit(z.string().parse(input.chunk));
+  },
   async outgoing(session, input) {
     if (!session.outgoing) throw new PermissionDenied('The Function has no declared HTTP Source');
     return session.outgoing(input.request);
@@ -101,15 +119,18 @@ export class FunctionCallbacks {
   async open(db: Database, context: FunctionContext, writer?: Objects, options: {
     limits?: OntologyLimits;
     outgoing?: Session['outgoing'];
+    models?: ModelOperations;
     timings?: FunctionInvocationMetrics['callbacks'];
   } = {}) {
     const { limits = defaultOntologyLimits, outgoing, timings } = options;
-    const session: Session = { db, context, writer, outgoing, limits, calls: 0, objects: 0, edits: 0 };
+    const session: Session = { db, context, writer, outgoing, models: options.models, limits, calls: 0, objects: 0, edits: 0 };
     return this.server.open(async (operation, input) => {
       try {
         const run = Object.hasOwn(operations, operation) ? operations[operation] : undefined;
         if (!run) throw new InvalidInput(`Unknown Ontology operation ${operation}`);
-        if (++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
+        const streamOperation = session.models && (operation === 'generate' || operation === 'modelNext' || operation === 'emit');
+        // Model transport is bounded by its stream byte limit and deadline; individual text segments are not Ontology reads.
+        if (!streamOperation && ++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
         context.signal.throwIfAborted();
         const start = performance.now();
         const result = await run(session, input).finally(() => {
@@ -118,7 +139,7 @@ export class FunctionCallbacks {
           timing.count++;
           timing.durationMs += performance.now() - start;
         });
-        session.objects += counted(result);
+        if (!streamOperation) session.objects += counted(result);
         if (session.objects > limits.objects) throw new LimitReached(`A call may read at most ${limits.objects} objects`);
         return { result: result ?? null };
       } catch (error) {

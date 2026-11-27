@@ -80,7 +80,7 @@ function labelledReferences(value: unknown, access: Access, model: PublishedOnto
 export class OntologyAgent {
   constructor(private readonly db: Database, private readonly metadata: Metadata, private readonly tasks: Tasks,
     private readonly capabilities: Capabilities, private readonly driver: AgentDriver,
-    private readonly options: { sandbox?: boolean } = {}) {}
+    private readonly options: { sandbox?: boolean; onFunctionChunk?: (task: Task, functionName: string, chunk: string) => Promise<void> } = {}) {}
   run(task: Task, outerSignal: AbortSignal) {
     return currentTaskExecution.run({ task, tasks: this.tasks },
       () => this.db.measureQueries(queryCount => this.execute(task, outerSignal, queryCount)));
@@ -157,7 +157,12 @@ export class OntologyAgent {
       }
       return documents;
     };
-    const functionContext = async (id?: string) => ({ ...context, objects: new Objects(this.db,await view(id),access) });
+    const functionContext = async (id?: string, functionName?:string) => ({ ...context, objects: new Objects(this.db,await view(id),access),
+      ...(functionName && this.options.onFunctionChunk ? {onChunk: async (chunk:string) => {
+        if (!(await egress.decide(combineClassification(disclosed,access.exportedClassification()))).allowed) throw new ModelEgressDenied();
+        await this.tasks.current(task);
+        await this.options.onFunctionChunk!(task,functionName,chunk);
+      }} : {}) });
     const checkLegacyEvidence = (client?: import('./database.js').Sql) =>
       cognitive?.evidenceVersion && requireDecisionVersion(this.db, model, task.owner, cognitive.evidenceVersion, client);
     const captureEvidence = <T>(clearance: Classification | undefined, execute: () => Promise<T>) =>
@@ -334,7 +339,7 @@ export class OntologyAgent {
       async ({ function: name, input,scenarioId }) => {
         requireCapability('function', name);
         if (cognitive && !cognitive.functions.includes(name)) throw new Conflict('Function is outside the workflow capability list');
-        return this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId));
+        return this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId,name));
       });
     const apply = async (input: z.infer<typeof actionCall>) => {
       const selected = this.capabilities.actions.resolve(access, model, input);
@@ -373,7 +378,7 @@ export class OntologyAgent {
     add('complete_with_function', 'Return the authoritative result of a published result/acceptance Function as this task response. Select the Function that answers the user request. This executes it afresh; the model cannot supply prices or acceptance flags. Ends this execution without another model turn.', functionCall,
       async ({ function: name, input,scenarioId }) => {
         requireCapability('function', name);
-        const result = await this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId));
+        const result = await this.capabilities.functions.invoke(await view(scenarioId), name, input, await functionContext(scenarioId,name));
         signal.throwIfAborted(); await this.tasks.current(task);
         return completedResult(result);
       });

@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { FunctionInvocations, functionInvocationsQuery } from '../../packages/runtime/function-invocations.js';
 import { ComponentFunctions } from '../../packages/runtime/component-functions.js';
 import {Applications} from '../../packages/runtime/applications.js';
@@ -166,7 +167,9 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
     res.json(await service.invoke(principal(req),input));
   });
   const modelFor = async (p: Principal, taskId?: string, scenarioId?: string, access?: Access, ontology = ontologyId) => {
-    const model = await (taskId ? metadata.get((await tasks.get(p, taskId)).release) : metadata.active(ontology));
+    const task = taskId ? await tasks.get(p, taskId) : undefined;
+    if (task && access) access.observeClassification(task.input.classification);
+    const model = task ? await metadata.get(task.release) : await metadata.active(ontology);
     return scenarioId ? scenarios.view(access ?? await Access.load(db,p),model,scenarioId) : model;
   };
   const confirmReadAccess = async (access: Access) => {
@@ -178,15 +181,18 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
     await confirmReadAccess(access);
     return result;
   };
-  const evaluate = async (p: Principal, raw: unknown) => {
+  const evaluate = async (p: Principal, raw: unknown, stream?: {send:(text:string)=>Promise<void>;signal:AbortSignal}) => {
     const input = functionInput.parse(raw);
     const liveTravelReminder = business?.taskRead(input.function) &&
       !input.taskId && !input.scenarioId && (input.ontology === undefined || input.ontology === 'Eigos');
     // Existing PA clients carry task scopes. These two reads still use the published Function,
     // source, object, and row permissions of the authenticated owner.
     if (!liveTravelReminder || !p.scopes.includes('tasks:read')) requireScope(p, 'ontology:read');
-    const model = await modelFor(p, input.taskId, input.scenarioId,undefined,input.ontology), access = await Access.load(db, p);
-    const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access), signal: AbortSignal.timeout(30000) });
+    const access = await Access.load(db, p), model = await modelFor(p, input.taskId, input.scenarioId,access,input.ontology);
+    access.function(model,input.function);
+    if (stream && !model.functions.get(input.function)?.implementation?.stream) throw new InvalidInput('This Function has no published stream');
+    const result = await capabilities.functions.invoke(model, input.function, input.input, { principal: p, objects: new Objects(db, model, access),
+      signal: stream?.signal ?? AbortSignal.timeout(30000), onChunk:stream?.send });
     if(!await access.canReturn(access.dataRequirements()))throw new PermissionDenied('Result permissions changed');
     return result;
   };
@@ -264,7 +270,25 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
   business?.mountTasks(app, tasks, metadata, principal, publicTask);
   app.get('/ontology',async(req,res)=>{const p=principal(req);requireScope(p,'ontology:read');const ontology=typeof req.query.ontology==='string'?req.query.ontology:ontologyId;res.json((await Access.load(db,p)).describe(await metadata.active(ontology)));});
   app.post('/ontology/query', async (req, res) => res.json(await query(principal(req), req.body)));
-  app.post('/ontology/functions', async (req, res) => res.json(await evaluate(principal(req), req.body)));
+  app.post('/ontology/functions', async (req, res) => {
+    if (!req.get('accept')?.split(',').some(type=>type.split(';')[0]?.trim()==='text/event-stream'))
+      return res.json(await evaluate(principal(req),req.body));
+    const closed=new AbortController(), signal=AbortSignal.any([closed.signal,AbortSignal.timeout(30000)]);
+    res.once('close',()=>closed.abort());
+    res.set({'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Accel-Buffering':'no'});
+    const write = async (event:unknown) => {
+      signal.throwIfAborted();
+      if (!res.write('data: '+JSON.stringify(event)+'\n\n')) await once(res,'drain',{signal});
+    };
+    try {
+      const result=await evaluate(principal(req),req.body,{signal,send:text=>write({type:'chunk',text})});
+      await write({type:'result',value:result});
+      res.end();
+    } catch (error) {
+      if (!res.headersSent) { res.removeHeader('Content-Type'); throw error; }
+      if (!res.destroyed) res.end('data: {"type":"error"}\n\n');
+    }
+  });
   app.get('/ontology/function-invocations', async (req, res) => {
     const p = principal(req);
     requireScope(p, 'ontology:read');
@@ -319,7 +343,8 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
       return query || names ? discoverOntology(model, document, { query, names }) : ontologyIndex(model, document);
     };
     const serve = async () => {
-      const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      const streams = req.body?.method === 'tools/call' && req.body?.params?.name === 'stream_ontology_function';
+      const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: !streams });
       await server.connect(transport);
       res.on('close', () => { void server.close(); });
       await transport.handleRequest(req, res, req.body);
@@ -445,6 +470,14 @@ export function createHostApp(config: Config, db: Database, capabilities: Instal
     server.registerTool('inspect_scenario', { description:'Read a scenario revision, proposed object/link changes and object conflicts in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid()}) }, input=>response(()=>scenarioRead(p,input.scenarioId,input.ontology)));
     server.registerTool('discard_scenario', { description:'Discard the exact reviewed scenario revision in the selected Ontology.',inputSchema:z.strictObject({ontology:z.string().optional(),scenarioId:z.uuid(),revision:z.number().int().positive()}) }, input=>response(()=>scenarioDiscard(p,input.scenarioId,input.revision,input.ontology)));
     server.registerTool('query_ontology', { description: 'Query object sets using an Object Type or Interface and its property and link names.', inputSchema: queryInput }, input => response(() => query(p, input)));
+    server.registerTool('stream_ontology_function', { description:'Read an authorized streaming Function; text chunks are sent as MCP progress and the final result is returned.',inputSchema:functionInput },
+      (input,ctx) => response(async () => {
+        const token=ctx.mcpReq._meta?.progressToken;
+        if (typeof token!=='string' && typeof token!=='number') throw new InvalidInput('Supply an MCP progress token for streamed output');
+        let progress=0;
+        return evaluate(p,input,{signal:AbortSignal.any([ctx.mcpReq.signal,AbortSignal.timeout(30000)]),
+          send:message=>ctx.mcpReq.notify({method:'notifications/progress',params:{progressToken:token,progress:++progress,message}})});
+      }));
     server.registerTool('evaluate_ontology', { description: 'Invoke a published Function using the declared input.', inputSchema: functionInput }, input => response(() => evaluate(p, input)));
     server.registerTool('apply_ontology_action', { description: 'Submit a published Action through its declared parameters and submission criteria.', inputSchema: actionInput }, input => response(() => apply(p, input)));
     if (!quoteOnly) server.registerTool('complete_with_action', {

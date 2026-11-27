@@ -24,6 +24,9 @@ export interface FunctionTestOptions {
   principal?: FixturePrincipal;
   objects?: readonly FixtureObject[];
   stubs?: Partial<Record<'get' | 'follow' | 'query' | 'evaluate' | 'aggregate', Stub>>;
+  /** Offline, deterministic model outputs by declared alias. */
+  models?: Readonly<Record<string, (messages: unknown, principal: FixturePrincipal) => readonly string[]>>;
+  streaming?: boolean;
   allowEdits?: boolean;
   limits?: FunctionLimits;
   signal?: AbortSignal;
@@ -65,7 +68,9 @@ export async function runFunction(options: FunctionTestOptions) {
   const input = JSON.stringify(options.input);
   if (input === undefined) throw new TypeError('Function test input must serialize to JSON');
   const data = await mkdtemp(join(tmpdir(), 'eigos-function-test-'));
-  let calls = 0;
+  let calls = 0, outputBytes = 0;
+  let generation: Iterator<string> | undefined;
+  const chunks: string[] = [];
   let host: FunctionHostClient | undefined;
   try {
     host = await FunctionHostClient.start(options.binary, { EIGOS_FUNCTION_HOST_DATA: data, EIGOS_FUNCTION_HOST_SLOTS: '1' });
@@ -77,6 +82,25 @@ export async function runFunction(options: FunctionTestOptions) {
         const stubs = options.stubs;
         const stub = stubs && Object.hasOwn(stubs, operation) ? stubs[operation as keyof typeof stubs] : undefined;
         if (stub) return { result: await stub(args, { principal, get, edits: structuredClone(edits) }) ?? null };
+        if (operation === 'generate') {
+          if (generation || typeof args.alias !== 'string' || !options.models || !Object.hasOwn(options.models,args.alias))
+            throw new FixtureError('permission-denied','No available fixture model');
+          generation=options.models[args.alias]!(args.messages,principal)[Symbol.iterator]();
+          return {result:null};
+        }
+        if (operation === 'modelNext') {
+          if (!generation) throw new FixtureError('invalid','No model generation in progress');
+          const chunk=generation.next();
+          if (chunk.done) {generation=undefined;return {result:null};}
+          return {result:chunk.value};
+        }
+        if (operation === 'emit') {
+          if (!options.streaming || typeof args.chunk!=='string') throw new FixtureError('permission-denied','A streaming fixture is required');
+          outputBytes+=Buffer.byteLength(args.chunk);
+          if (outputBytes>(options.limits?.outputBytes ?? 1<<20)) throw new FixtureError('limit','Stream output exceeded its limit');
+          chunks.push(args.chunk);
+          return {result:null};
+        }
         if (operation === 'get') return { result: get(target(args)) };
         if (operation === 'follow' || operation === 'query' || operation === 'evaluate' || operation === 'aggregate')
           throw new FixtureError('test-stub-missing', `Supply a fixture stub for ${operation}`);
@@ -109,7 +133,7 @@ export async function runFunction(options: FunctionTestOptions) {
     }, 4 << 20);
     try {
       const outcome = await host.invoke(sha256, input, options.limits ?? defaultLimits, options.signal, session.callback);
-      return { ...outcome, value: outcome.output === undefined ? undefined : JSON.parse(outcome.output) as unknown, stagedEdits: edits };
+      return { ...outcome, value: outcome.output === undefined ? undefined : JSON.parse(outcome.output) as unknown, stagedEdits: edits, chunks };
     } finally { session.close(); }
   } finally {
     try {
