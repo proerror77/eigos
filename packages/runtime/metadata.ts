@@ -12,7 +12,7 @@ import { Database, type Sql } from './database.js';
 import { Access } from './access.js';
 import { machineryStateContract } from './machinery-state.js';
 
-export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string> }
+export interface BindingManifest { functions: Record<string, string>; sources: Record<string, string>; webhooks?: Record<string, string> }
 export interface Bindings {
   describe(model: Ontology): BindingManifest;
   /** Checks what `describe` cannot check offline, such as the components of component Functions, before a release is prepared. */

@@ -56,7 +56,7 @@ EIGOS_FUNCTION_HOST_FIXTURES=/tmp/eigos-function-fixtures npm test -- --suite=49
 
    - `limits` 的每一项都不能超过宿主的上限（下文“调用的上限”），schema 直接拒绝超出的值。
    - 组件函数必须有语义化版本 `x.y.z`。
-   - 组件函数暂时不能声明 `source` 或 `edits`：外部调用和编辑接口分别是 F3 和 F2。
+   - 组件函数可声明 `edits` 供 Action 执行，或声明 `source` 读取外部源，见下文。
 3. **准备发布：** 准备发布时，运行时依次检查：
    - 配置了函数宿主；
    - 宿主的上限不低于函数要求的上限；
@@ -277,6 +277,118 @@ fuel 计的是指令，截止时间计的是墙钟，两者分别生效：等待
 - **数据目录：** 宿主信任其中的预编译文件，因为载入时不会再校验机器码。所以这个目录只能由宿主的用户写入。
 - **wasmtime 升级：** 版本固定在 `Cargo.lock`。wasmtime 发布安全公告后，单独发一个 PR 升级。升级后旧的预编译文件无法载入，宿主会删掉它们，然后由运行时重新上传。
 
+
+## 组件外部源
+
+声明 `source: "Inventory"` 的组件通过 `eigos:http/outgoing@0.1.0` 的
+`send` 导入读取该源。组件传入 JSON 请求，如 `{"path":"/v1/items"}`，
+并收到包含 `status`、`contentType` 和 `body` 的 JSON。请求使用已配置的
+HTTPS 主机、端口和路径前缀。默认方法为 GET，当前组件调用也支持 HEAD。
+发布记录包含连接和出站策略摘要。修改连接策略后重新准备发布。
+
+在 Gateway、Worker 和 Indexer 指定同一份 `EIGOS_COMPONENT_SOURCES_FILE`，
+该 JSON 文件放在仓库外：
+
+```json
+{
+  "Inventory": {
+    "baseUrl": "https://inventory.example.com/v1/",
+    "methods": ["GET"],
+    "bearerSecret": "inventory_token"
+  }
+}
+```
+
+`networks` 可指定批准的 CIDR。未指定时仅连接公共地址，运行时核验 DNS
+解析结果后固定连接地址并继续校验证书。生产配置由部署人员管理。发送前
+再次检查调用者的 Source 权限。运行日志记录源名称、结果和 HTTP 状态码。
+
+Bearer 密钥可以换成配置的 OAuth `client_credentials`。配置 `oauth` 的
+`grant`、`tokenUrl`、`clientId`、`clientSecret` 和可选的 `scope`，其中
+`clientSecret` 是密钥名称。令牌只供运行时使用。运行时通过
+`EIGOS_COMPONENT_SOURCE_SECRETS_FILE` 和
+`EIGOS_COMPONENT_SOURCE_SECRETS_KEY_FILE` 打开加密密钥包。使用
+`node --import tsx scripts/seal-component-source-secrets.ts /path/to/key`
+从标准输入读取密钥名到密钥值的 JSON，并把密文输出到配置路径。密钥文件为
+32 字节随机数据。两个文件都只授予运行服务和部署人员读取权限。
+
+### 授权码凭据刷新
+
+外部授权流程取得的 refresh token 可作为 Source 的初始凭据。将令牌放入
+加密密钥包，部署时在 Source 的 `oauth` 中引用密钥名称。
+
+```json
+{
+  "grant": "refresh_token",
+  "tokenUrl": "https://auth.example.com/oauth/token",
+  "clientId": "eigos-inventory",
+  "clientSecret": "inventory_client",
+  "refreshTokenSecret": "inventory_approved_grant"
+}
+```
+
+Gateway、Worker 和 Indexer 共用 PostgreSQL 中的
+`component_source_oauth_grants`。同一 token URL、client ID 和初始密钥名
+只允许一个刷新请求在途。重新发布连接、调整出口策略或重启进程后会读回
+同一轮换记录。多个 Source 共用同一供应商授权时，应引用同一个初始密钥名。
+访问令牌和轮换后的 refresh token 用 Source 密钥加密，数据库只保存密文。
+部署时由升级角色建表，向配置了刷新授权的运行角色授予 SELECT、INSERT 和
+UPDATE。恢复数据库时应保留对应的 Source 加密密钥。
+
+若授权服务器已明确拒绝请求且授权仍有效，后续可重新请求。收到
+`source-reauthorization-required` 时，应重新完成供应商授权，将新令牌用新
+的密钥名写入加密包，再按更新的 Source 连接重新准备发布。网络中断导致
+无法确认旧令牌是否已被轮换时也走这条恢复路径。 [OAuth 2.0 刷新规范](https://www.rfc-editor.org/rfc/rfc6749.html#section-6) · [刷新令牌轮换](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14)
+
+### Action 提交后的 webhook
+
+在 Source 连接中列出获准写入的路径、方法和数据分级。接收端应当按照
+`Idempotency-Key` 合并重复的相同请求。配置示例中的路径与连接限定的
+基础路径相同。
+
+```json
+{
+  "baseUrl": "https://inventory.example.com/v1/",
+  "methods": ["GET", "POST"],
+  "bearerSecret": "inventory_token",
+  "webhooks": [
+    {
+      "method": "POST",
+      "path": "/v1/notifications",
+      "clearance": { "sensitivity": "INTERNAL" }
+    }
+  ]
+}
+```
+
+Action 的 `effects` 可声明以下副作用。可选的 `function` 引用已发布的只读
+Wasm 格式化函数。它读取映射后的参数并返回 JSON 对象，执行时没有 Ontology
+回调会话。省略该字段时，参数映射直接作为请求体。
+
+```json
+{
+  "name": "NotifyInventory",
+  "webhook": {
+    "source": "Inventory",
+    "method": "POST",
+    "path": "/v1/notifications",
+    "function": "FormatInventoryNotice"
+  },
+  "payload": { "id": { "parameter": "objectId" } }
+}
+```
+
+首次正式提交把副作用与 Action 一起写入既有 outbox。调用者需要该 Action
+的执行权限和 Source 的 `dispatch_source` 授权。使用格式化函数时，还需要
+执行该函数的权限。任务通过 `action.webhook.authorize` 向原 PA 请求授权。
+PA 返回 `approved: true` 及请求中的摘要，Worker 继续同一个 Task 和 Action 请求。
+Scenario 执行只记录拟议编辑。Worker 执行副作用时重新检查授权、原发布的
+连接摘要和当前租约，随后把首次格式化的请求体保存到 outbox。失败后重试会
+使用同一个已保存请求体和幂等键。HTTP 2xx 表示接收端确认收取请求。 [Action webhook 副作用](https://www.palantir.com/docs/foundry/action-types/webhooks)
+
+读取外部源要求协议 3 宿主。旧组件继续使用原有导入。带外部源的组件与
+Scenario 离线求值保持隔离。需要外部写入的业务流使用经授权的 Action 和
+提交后的副作用。 [Foundry 函数的外部 API](https://www.palantir.com/docs/foundry/functions/api-calls/)
 
 ## 调用记录
 

@@ -10,6 +10,7 @@ import { objectRefSchema, type ObjectRef, type OntologyDocument } from '../ontol
 import { legacySourceEvidence } from '../ontology/source-evidence.js';
 import type { PublishedOntology } from './metadata.js';
 import type { Sql } from './database.js';
+import type { Access } from './access.js';
 import type { ActionEffect } from './effects.js';
 
 export type ScenarioEvaluation = { client: Sql; evaluatedAt: number };
@@ -50,8 +51,9 @@ const key = (definition: Definition) => JSON.stringify([definition.apiName, defi
 /** The result an Action's component edit Function stages before it runs; its commit replaces it with the real one. */
 const pendingResult: ObjectRef = { type: 'PendingFunctionResult', id: 'pending' };
 /** A component Function's binding follows from its definition, so every runtime with a function host agrees on it. */
-const componentBinding = (definition: Definition) =>
-  digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation });
+const componentBinding = (definition: Definition, sourceBinding?: string) =>
+  digest({ contract: contract(definition), version: definition.version, implementation: definition.implementation,
+    ...(sourceBinding ? { sourceBinding } : {}) });
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
@@ -80,7 +82,10 @@ export class Functions {
   }
   bindings(model: Ontology): Record<string, string> {
     return Object.fromEntries(model.resolvedDocument.functionTypes.map(fn => {
-      if (fn.implementation) return [fn.apiName, componentBinding(fn)];
+      if (fn.implementation) {
+        const sourceBinding = fn.source ? this.componentSourceBinding(fn.source) : undefined;
+        return [fn.apiName, componentBinding(fn, sourceBinding)];
+      }
       const entry = this.registered.get(key(fn));
       const reply = contract(fn);
       if (!entry || entry.contract !== reply && entry.legacy !== reply) throw new Error(`Function implementation is unavailable or incompatible: ${fn.apiName}`);
@@ -93,10 +98,22 @@ export class Functions {
     if (!this.components) throw new Conflict('Component Functions are unavailable in this runtime');
     await this.components.check(model);
   }
+  async formatWebhook(model: PublishedOntology, name: string, input: Record<string, unknown>, access: Access, signal: AbortSignal) {
+    access.function(model, name);
+    const definition = model.functions.get(name);
+    if (!this.components || !definition?.implementation || definition.source || definition.edits ||
+        model.bindings.functions[name] !== componentBinding(definition))
+      throw new Conflict('Published webhook formatter is unavailable');
+    const parameters = validator(definition.parameters).parse(input) as Record<string, unknown>;
+    // A formatter receives only the Action's mapped input. There is no callback session.
+    const output = await this.components.invoke(name, definition.implementation, parameters, signal);
+    signal.throwIfAborted();
+    return validator(definition.returns).parse(output);
+  }
   supportsScenarioEvaluation(model: PublishedOntology, name: string) {
     const definition = model.functions.get(name);
     // A component Function reads its input and, through its call's own Objects, the evaluated Scenario.
-    if (definition?.implementation) return true;
+    if (definition?.implementation) return !definition.source;
     return Boolean(definition && !definition.source && this.registered.get(key(definition))?.handler.scenarioEvaluation);
   }
   requireScenarioEvaluation(model: PublishedOntology, name: string) {
@@ -147,10 +164,17 @@ export class Functions {
       : run();
   }
 
+  private componentSourceBinding(source: string) {
+    if (!this.components) throw new ServiceUnavailable('Component HTTP Sources are unavailable');
+    return this.components.sourceBinding(source);
+  }
+
   /** A Function implemented by a WebAssembly component: the function host runs it on the validated parameters. */
   private async invokeComponent(model: PublishedOntology, definition: Definition, input: Record<string, unknown>, context: FunctionContext) {
     const name = definition.apiName;
-    if (model.bindings.functions[name] !== componentBinding(definition)) throw new Conflict('Historical Function implementation is unavailable in this runtime');
+    const source = definition.source ? { name: definition.source, binding: this.componentSourceBinding(definition.source) } : undefined;
+    if (model.bindings.functions[name] !== componentBinding(definition, source?.binding))
+      throw new Conflict('Historical Function implementation is unavailable in this runtime');
     if (!this.components) throw new ServiceUnavailable(`Component Functions are unavailable in this runtime: ${name}`);
     if (definition.edits && !context.edit) throw new InvalidInput('Ontology edit Functions must be invoked through an Action');
     context.signal.throwIfAborted();
@@ -166,9 +190,17 @@ export class Functions {
         return objectRefSchema.parse(result.data);
       }));
     }
+    if (source) {
+      if (model.scenario || context.scenarioEvaluation) throw new Conflict('Read external sources before opening a scenario');
+      const access = context.objects.access;
+      await access.refresh();
+      access.source(model, source.name);
+      await this.budgets?.take(access.principal.owner, source.name);
+      context.signal.throwIfAborted();
+    }
     return this.measure(model, definition, context, async metrics => {
       const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal,
-        context, { metrics }), name);
+        context, { source, metrics }), name);
       context.signal.throwIfAborted();
       await context.objects.access.refresh(context.scenarioEvaluation?.client);
       const result = validator(definition.returns).safeParse(output);

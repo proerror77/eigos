@@ -1,6 +1,6 @@
 // Test component for the function host. It echoes its input, or on request returns a given answer, spins, allocates,
 // writes a long output, writes to stderr, fails or panics.
-wit_bindgen::generate!({ world: "handler", path: "../../wit" });
+wit_bindgen::generate!({ world: "handler", path: "../../wit", generate_all });
 
 struct Function;
 
@@ -32,6 +32,8 @@ fn ontology(input: &str) -> Option<Result<String, Failure>> {
     for _ in 0..times {
         let answer = match op {
             "get" => eigos::function::ontology::get(&arg(0), &arg(1)),
+            "outgoing" => eigos::http::outgoing::send(&arg(0)).map(Some)
+                .map_err(|failure| Failure { code: failure.code, message: failure.message }),
             "follow" => eigos::function::ontology::follow(&arg(0), &arg(1)).map(Some),
             "query" => eigos::function::ontology::query(&arg(0)).map(Some),
             "evaluate" => eigos::function::ontology::evaluate(&arg(0)).map(Some),
