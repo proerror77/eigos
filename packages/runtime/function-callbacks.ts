@@ -4,6 +4,7 @@ import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../core/iden
 import { objectRefSchema, ontologyName } from '../ontology/schema.js';
 import type { Database } from './database.js';
 import type { FunctionContext } from './functions.js';
+import type { FunctionInvocationMetrics } from './function-invocations.js';
 import { ObjectSets } from './object-sets.js';
 import { querySchema, type Objects } from './objects.js';
 
@@ -90,7 +91,7 @@ export class FunctionCallbacks {
   private readonly server = new FunctionCallbackServer();
 
   /** Opens the session of one call; `close` ends it, after which its token is refused. */
-  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits) {
+  async open(db: Database, context: FunctionContext, writer?: Objects, limits: OntologyLimits = defaultOntologyLimits, timings?: FunctionInvocationMetrics['callbacks']) {
     const session: Session = { db, context, writer, limits, calls: 0, objects: 0, edits: 0 };
     return this.server.open(async (operation, input) => {
       try {
@@ -98,7 +99,13 @@ export class FunctionCallbacks {
         if (!run) throw new InvalidInput(`Unknown Ontology operation ${operation}`);
         if (++session.calls > limits.calls) throw new LimitReached(`A call may use the Ontology at most ${limits.calls} times`);
         context.signal.throwIfAborted();
-        const result = await run(session, input);
+        const start = performance.now();
+        const result = await run(session, input).finally(() => {
+          if (!timings) return;
+          const timing = timings[operation] ??= { count: 0, durationMs: 0 };
+          timing.count++;
+          timing.durationMs += performance.now() - start;
+        });
         session.objects += counted(result);
         if (session.objects > limits.objects) throw new LimitReached(`A call may read at most ${limits.objects} objects`);
         return { result: result ?? null };

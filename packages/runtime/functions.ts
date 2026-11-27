@@ -2,6 +2,7 @@ import { Conflict, FunctionFailed, InvalidInput, NotFound, ServiceUnavailable, S
 import type { ComponentFunctions } from './component-functions.js';
 import type { ProviderBudgets } from './provider-budgets.js';
 import { timeOperation } from '../core/operation-timing.js';
+import type { FunctionInvocationMetrics, FunctionInvocations } from './function-invocations.js';
 import { validator, type Ontology } from '../ontology/model.js';
 import { Objects } from './objects.js';
 import type { Tasks, Task } from './tasks.js';
@@ -54,7 +55,8 @@ const componentBinding = (definition: Definition) =>
 export class Functions {
   private readonly registered = new Map<string, { contract: string; binding: string; handler: FunctionHandler; legacy?: string }>();
   constructor(handlers: ReadonlyMap<string, FunctionHandler>, definitions: OntologyDocument['functionTypes'], versions: readonly VersionedFunction[] = [],
-    private readonly components?: ComponentFunctions, private readonly budgets?: ProviderBudgets) {
+    private readonly components?: ComponentFunctions, private readonly budgets?: ProviderBudgets,
+    private readonly invocations?: FunctionInvocations) {
     for (const definition of definitions) {
       if (definition.version) continue;
       const handler = handlers.get(definition.apiName);
@@ -125,16 +127,26 @@ export class Functions {
       await this.budgets.take(access.principal.owner, definition.source);
       context.signal.throwIfAborted();
     }
-    const output = await timeOperation('function', async () => entry.handler(parameters, definition.edits ? context : {
-      ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
-    }), name);
-    context.signal.throwIfAborted();
-    await access.refresh(context.scenarioEvaluation?.client);
-    const result = validator(definition.returns).safeParse(output);
-    if (result.success) return result.data;
-    if (definition.source) throw new SourceReadFailure('Source result does not match its published contract', { cause: result.error });
-    throw new Error('Function result does not match its published contract', { cause: result.error });
+    return this.measure(model, definition, context, async () => {
+      const output = await timeOperation('function', async () => entry.handler(parameters, definition.edits ? context : {
+        ...context, edit: undefined, validateScenarioAction: undefined, assertDispatch: undefined, deferEffect: undefined,
+      }), name);
+      context.signal.throwIfAborted();
+      await access.refresh(context.scenarioEvaluation?.client);
+      const result = validator(definition.returns).safeParse(output);
+      if (result.success) return result.data;
+      if (definition.source) throw new SourceReadFailure('Source result does not match its published contract', { cause: result.error });
+      throw new Error('Function result does not match its published contract', { cause: result.error });
+    });
   }
+
+  private measure<T>(model: PublishedOntology, definition: Definition, context: FunctionContext,
+    run: (metrics?: FunctionInvocationMetrics) => Promise<T>) {
+    return this.invocations
+      ? this.invocations.measure(model, definition.apiName, definition.version, context.objects.access.principal, context.signal, run)
+      : run();
+  }
+
   /** A Function implemented by a WebAssembly component: the function host runs it on the validated parameters. */
   private async invokeComponent(model: PublishedOntology, definition: Definition, input: Record<string, unknown>, context: FunctionContext) {
     const name = definition.apiName;
@@ -146,20 +158,22 @@ export class Functions {
     if (definition.edits) {
       // As Palantir's staged writes: the Function runs inside the Action's commit, so its reads, queries and aggregations
       // see its own edits, and all of them commit with the Action or not at all.
-      return context.edit!(pendingResult, async objects => {
+      return context.edit!(pendingResult, objects => this.measure(model, definition, context, async metrics => {
         const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal,
-          { ...context, objects }, { writer: objects }), name);
+          { ...context, objects }, { writer: objects, metrics }), name);
         const result = validator(definition.returns).safeParse(output);
         if (!result.success) throw new FunctionFailed(`${name} returned a result that does not match its published contract`, 'contract', { cause: result.error });
         return objectRefSchema.parse(result.data);
-      });
+      }));
     }
-    const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal, context), name);
-    context.signal.throwIfAborted();
-    await context.objects.access.refresh(context.scenarioEvaluation?.client);
-    const result = validator(definition.returns).safeParse(output);
-    if (result.success) return result.data;
-    // The author's component returned it, so it is the Function's failure rather than the runtime's.
-    throw new FunctionFailed(`${name} returned a result that does not match its published contract`, 'contract', { cause: result.error });
+    return this.measure(model, definition, context, async metrics => {
+      const output = await timeOperation('function', () => this.components!.invoke(name, definition.implementation!, parameters, context.signal,
+        context, { metrics }), name);
+      context.signal.throwIfAborted();
+      await context.objects.access.refresh(context.scenarioEvaluation?.client);
+      const result = validator(definition.returns).safeParse(output);
+      if (result.success) return result.data;
+      throw new FunctionFailed(`${name} returned a result that does not match its published contract`, 'contract', { cause: result.error });
+    });
   }
 }
