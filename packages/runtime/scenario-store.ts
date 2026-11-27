@@ -108,11 +108,21 @@ export async function objectLinksBatch(db: Database, model: PublishedOntology, o
   const edges = new Map<string, unknown[]>();
   if (!refs.length) return edges;
   const { rows } = await db.query<{ object_type: string; object_id: string; links: unknown[] }>(`
-    SELECT k.type AS object_type,k.id AS object_id,associated.links
-    FROM jsonb_to_recordset($3::jsonb) AS k(type text,id text)
-    CROSS JOIN LATERAL (SELECT jsonb_agg(edge ORDER BY type,from_type,from_id,to_type,to_id) AS links
-      FROM (${incidentLinks(db.schema, 'k.type', 'k.id')}) AS edge HAVING count(*)>0) associated`,
-  [model.projection, owner, JSON.stringify(refs)], client);
+    WITH targets AS MATERIALIZED (SELECT DISTINCT type,id FROM jsonb_to_recordset($3::jsonb) AS k(type text,id text)),
+    incident AS (
+      SELECT k.type AS object_type,k.id AS object_id,l.type,l.from_type,l.from_id,l.to_type,l.to_id
+        FROM targets k JOIN ${db.schema}.links l ON l.projection=$1 AND l.owner=$2 AND l.from_type=k.type AND l.from_id=k.id
+      UNION ALL
+      SELECT k.type,k.id,l.type,l.from_type,l.from_id,l.to_type,l.to_id
+        FROM targets k JOIN ${db.schema}.links l ON l.projection=$1 AND l.owner=$2 AND l.to_type=k.type AND l.to_id=k.id
+        WHERE (l.from_type,l.from_id)<>(l.to_type,l.to_id)
+    ), counted AS (
+      SELECT incident.*,row_number() OVER (PARTITION BY object_type,object_id ORDER BY type,from_type,from_id,to_type,to_id) AS ordinal
+        FROM incident
+    ) SELECT object_type,object_id,jsonb_agg(jsonb_build_object('type',type,'from_type',from_type,'from_id',from_id,
+          'to_type',to_type,'to_id',to_id) ORDER BY ordinal) AS links
+        FROM counted WHERE ordinal<=10001 GROUP BY object_type,object_id`,
+    [model.projection, owner, JSON.stringify(refs)], client);
   for (const row of rows) {
     if (row.links.length > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
     edges.set(digest({ type: row.object_type, id: row.object_id }), row.links);

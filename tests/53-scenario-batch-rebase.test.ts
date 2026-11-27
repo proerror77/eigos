@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Access } from '../packages/runtime/access.js';
+import { Access, businessGrants, setGrants } from '../packages/runtime/access.js';
 import { Scenarios } from '../packages/runtime/scenarios.js';
 import { Objects } from '../packages/runtime/objects.js';
 import { document, fixture, principal } from './fixture.js';
@@ -36,6 +36,8 @@ test('a merge Action commits 10000 objects and 10000 link changes with bounded S
         sourceBinding: 'synthetic', observedAt: '2026-11-27T00:00:00.000Z',
       });
     }
+    const reviewer = { ...principal, owner: 'synthetic-scale-reviewer' };
+    await setGrants(db, reviewer.owner, businessGrants(model));
     const samples = [];
     for (const count of [2, 10_000]) {
       const prefix = 'merge-' + count + '-';
@@ -56,10 +58,39 @@ test('a merge Action commits 10000 objects and 10000 link changes with bounded S
         SELECT $1,$2,'RouteOrigin','Route',$3||i,'Place',place,true,false,removed,removed
         FROM generate_series(1,$4::int) i CROSS JOIN (VALUES($5::text,true),($6::text,false)) AS places(place,removed)
         WHERE i%2=0`, [scenario.id, owner, prefix, count, fromPlace, toPlace]);
+      const input = { scenarioId: scenario.id, revision: scenario.revision, resultId: prefix + '1' };
+      if (count === 2) {
+        await db.query(`INSERT INTO ${db.schema}.object_policies(ontology,type,policy) VALUES('Eigos','Route',$1)`,
+          [{read:{all:[],any:[{op:'equals',property:'name',value:'baseline'}]},properties:{}}]);
+        await assert.rejects(f.capabilities.actions.apply(access,model,'MergeManyRoutes',input,prefix+'denied'),/access|available|permission|policy|denied|visible/i);
+        await db.query(`DELETE FROM ${db.schema}.object_policies WHERE ontology='Eigos' AND type='Route'`);
+      } else {
+        const extra = prefix + 'overflow';
+        await db.query(`INSERT INTO ${db.schema}.scenario_objects(scenario_id,owner,type,id,base_links,properties,edited_fields,revision)
+          VALUES($1,$2,'Route',$3,'[]',jsonb_build_object('id',$3::text,'name','overflow'),'["name"]',1)`,[scenario.id,owner,extra]);
+        await assert.rejects(f.capabilities.actions.apply(access,model,'MergeManyRoutes',input,prefix+'overflow'),/exceeds 10000/);
+        await db.query(`DELETE FROM ${db.schema}.scenario_objects WHERE scenario_id=$1 AND owner=$2 AND id=$3`,[scenario.id,owner,extra]);
+      }
+      const before = await db.query(`SELECT
+        (SELECT count(*)::int FROM ${db.schema}.objects WHERE projection=$1 AND owner=$2 AND type='Route' AND id LIKE $3 AND revision=1) AS original,
+        (SELECT count(*)::int FROM ${db.schema}.links WHERE projection=$1 AND owner=$2 AND from_id LIKE $3 AND to_id=$4) AS links,
+        (SELECT count(*)::int FROM ${db.schema}.actions WHERE owner=$2 AND request_id LIKE $3) AS receipts,
+        (SELECT state FROM ${db.schema}.scenarios WHERE id=$5) AS state`,[model.projection,owner,prefix+'%',fromPlace,scenario.id]);
+      assert.deepEqual(before.rows[0],{original:count/2,links:count/2,receipts:0,state:'open'});
+      const currentAccess = await Access.load(db, principal);
+      const invited = await scenarios.inviteReviewers(currentAccess,model,scenario.id,scenario.revision,[reviewer.owner]);
+      const reviewAccess = await Access.load(db,reviewer), reviewStart = performance.now(), beforeReview = db.queries;
+      const inspected = await scenarios.inspectReview(reviewAccess,model,scenario.id);
+      const reviewStatements = db.queries - beforeReview, reviewMilliseconds = Math.round(performance.now()-reviewStart);
+      assert.equal(inspected.objects.length,count);
+      assert.equal(inspected.links.length,count);
+      assert.equal(inspected.conflicts,false);
+      await scenarios.approveReview(reviewAccess,model,scenario.id,invited.revision,inspected.snapshot);
+      input.revision = invited.revision;
       const started = performance.now(), previousStatements = db.queries;
-      const result = await f.capabilities.actions.apply(access, model, 'MergeManyRoutes',
-        { scenarioId: scenario.id, revision: scenario.revision, resultId: prefix + '1' }, prefix);
-      samples.push({ objects: count, statements: db.queries - previousStatements, milliseconds: Math.round(performance.now() - started) });
+      const result = await f.capabilities.actions.apply(currentAccess, model, 'MergeManyRoutes',
+        input, prefix);
+      samples.push({ objects: count, reviewStatements, reviewMilliseconds, statements: db.queries - previousStatements, milliseconds: Math.round(performance.now() - started) });
       assert.deepEqual(result, { type: 'Route', id: prefix + '1' });
       const { rows: [history] } = await db.query(`SELECT count(*)::int AS n,count(DISTINCT xact)::int AS transactions,
         count(*) FILTER (WHERE operation='create')::int AS creates,count(*) FILTER (WHERE operation='edit')::int AS edits
@@ -86,6 +117,7 @@ test('a merge Action commits 10000 objects and 10000 link changes with bounded S
       assert.equal(merged!.state, 'merged');
     }
     assert.equal(samples[0]!.statements, samples[1]!.statements);
+    assert.equal(samples[0]!.reviewStatements, samples[1]!.reviewStatements);
     console.log(JSON.stringify({ bench: 'scenario-merge', synthetic: true, samples }));
   } finally { await f.close(); }
 });
