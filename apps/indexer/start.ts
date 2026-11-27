@@ -1,3 +1,5 @@
+import { MachineryExecution } from '../../packages/runtime/machinery-execution.js';
+import { MachineryWatchPlanner } from '../../packages/runtime/machinery-watch.js';
 import { FunctionInvocations } from '../../packages/runtime/function-invocations.js';
 import type { Installation } from '../../packages/runtime/installation.js';
 import { checkInstallation, openInstallation } from '../../packages/runtime/open-installation.js';
@@ -25,7 +27,8 @@ export async function startIndexer(installation: Installation) {
   const automation = new Automation(db, metadata, capabilities.actions);
   const scenarios = new Scenarios(db);
   const observations = new ObservationInterests(db,metadata);
-  const subscriptions = new ChangeSubscriptions(db, new Tasks(db, metadata));
+  const subscriptions = new ChangeSubscriptions(db, new Tasks(db, metadata),
+    new MachineryWatchPlanner(db, metadata, new MachineryExecution(db, capabilities.actions)));
   const machinery = new MachineryReviews(db, metadata, new ScenarioEvaluations(db, capabilities.actions, capabilities.functions));
   const controller = new AbortController();
   process.on('SIGTERM', () => controller.abort());

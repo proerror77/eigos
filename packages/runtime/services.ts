@@ -1,3 +1,5 @@
+import { ChangeSubscriptions, watchMachinerySchema } from './change-subscriptions.js';
+import { MachineryWatchPlanner } from './machinery-watch.js';
 import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
 import { ProcessNotifications, notificationsSchema, readNotificationSchema } from './process-notifications.js';
 import {digest} from '../core/identity.js';
@@ -35,7 +37,7 @@ import { z } from 'zod';
 import type { Principal } from '../core/identity.js';
 import { Conflict, PermissionDenied, requireScope } from '../core/identity.js';
 import { machineryModelSchema, objectRefSchema, ontologyName } from '../ontology/schema.js';
-import { MachineryExecution, machineryNextActionsInput } from './machinery-execution.js';
+import { MachineryExecution, machineryNextActionsInput, machineryReplanInput } from './machinery-execution.js';
 import { Access } from './access.js';
 import { Database } from './database.js';
 import { Metadata } from './metadata.js';
@@ -658,6 +660,13 @@ export function ontologyServices(
   register('machinery_next_actions','Read the published Action transitions available to this process object.',
     machineryNextActionsInput,false,async(a,input)=>
       new MachineryExecution(db, actions).nextActions(await active(),a,input), { mcpOperatorRead: true });
+  const processWatches = new ChangeSubscriptions(db,new Tasks(db,metadata),new MachineryWatchPlanner(db,metadata,new MachineryExecution(db,actions)));
+  register('watch_machinery_process','Watch one process and refresh its Action candidates and observation schedules on committed changes.',
+    watchMachinerySchema,true,async(a,input)=>processWatches.watchMachinery(a,await active(),input));
+  register('cancel_machinery_watch','Stop a change subscription owned by the caller.',
+    idSchema,true,async(a,{id})=>{ await processWatches.cancel(a,id,true); return {id}; });
+  register('machinery_replan_changes','Refresh Action candidates for changed objects and their linked dependent processes. For a removed link, include its surviving process endpoint.',
+    machineryReplanInput,false,async(a,input)=>new MachineryExecution(db,actions).replan(await active(),a,input), { mcpOperatorRead: true });
   register('machinery_analysis', 'Mine authorized process paths, compare observed transitions with a reference, and analyze dwell time.',
     machineryAnalysisSchema, false, async (a, input) => analyzeMachinery(db, a, await active(), input), { mcpOperatorRead: true });
   register('ingest_machinery_history','Import idempotent observed transitions for an authorized history source.',

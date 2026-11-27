@@ -52,9 +52,9 @@ export class Tasks {
    */
   constructor(readonly db: Database, private readonly metadata: Metadata,
     private readonly ownerSlots = Math.max(1, Number(process.env.EIGOS_TASK_OWNER_SLOTS ?? 2) || 2)) {}
-  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, ontologyId = this.metadata.ontologyId, admit }: {
+  async submit(principal: Principal, raw: unknown, { assignConversation = false, authorize, actionInvocation, expectedRelease, ontologyId = this.metadata.ontologyId, admit, transaction }: {
     assignConversation?: boolean; authorize?: (client: Sql) => Promise<void>; actionInvocation?: z.infer<typeof taskActionSchema>;
-    expectedRelease?: string; ontologyId?: string; admit?: (client: Sql, model: PublishedOntology) => Promise<void>;
+    transaction?: Sql; expectedRelease?: string; ontologyId?: string; admit?: (client: Sql, model: PublishedOntology) => Promise<void>;
   } = {}): Promise<Task> {
     requireScope(principal, 'tasks:write');
     const input = parseSubmission(raw);
@@ -62,7 +62,7 @@ export class Tasks {
     const fingerprint = digest(invocation ? { ...input, actionInvocation: invocation } : input);
     const stored = { ...input, ...(principal.memberAccess ? { memberAccess: true } : {}), ...(principal.clientId ? { paClient: principal.clientId } : {}),
       ...(invocation ? { actionInvocation: invocation } : {}) };
-    const task = await this.db.transaction(async client => {
+    const persist = async (client: Sql) => {
       await authorize?.(client);
       const table = `${this.db.schema}.tasks`, events = `${this.db.schema}.task_inbox_events`;
       const { owner } = principal;
@@ -113,8 +113,8 @@ export class Tasks {
         [owner, input.requestId, fingerprint, input.message, submitted.id, position, ontologyId], client);
       await this.db.query("SELECT pg_notify('eigos_tasks','ready')", [], client);
       return submitted;
-    });
-    return this.visible(principal, task);
+    };
+    return this.visible(principal, transaction ? await persist(transaction) : await this.db.transaction(persist));
   }
   private async lockInboxKey(client: Sql, key: string[]) {
     await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-inbox', ...key)], client);

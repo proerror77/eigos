@@ -379,6 +379,8 @@ export class Database {
         requirements jsonb NOT NULL DEFAULT '[]',created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,operation_key));
       CREATE TABLE IF NOT EXISTS ${s}.scheduled_actions (id text NOT NULL,owner text NOT NULL,body jsonb NOT NULL,scopes jsonb NOT NULL,run_at timestamptz NOT NULL,deadline timestamptz NOT NULL,
         state text NOT NULL DEFAULT 'scheduled',task_id uuid UNIQUE REFERENCES ${s}.tasks(id),error text,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner,id));
+      ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS machinery_retry_at timestamptz;
+      CREATE INDEX IF NOT EXISTS scheduled_actions_inputs ON ${s}.scheduled_actions USING gin(body jsonb_path_ops) WHERE state='scheduled';
       CREATE INDEX IF NOT EXISTS scheduled_actions_due ON ${s}.scheduled_actions(run_at) WHERE state='scheduled';`);
     await this.query(`ALTER TABLE ${s}.tasks ADD COLUMN IF NOT EXISTS workflow_trace jsonb NOT NULL DEFAULT '[]'`);
     await this.query(`ALTER TABLE ${s}.scheduled_actions ADD COLUMN IF NOT EXISTS continue_at timestamptz`);
