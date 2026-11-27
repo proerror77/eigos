@@ -1306,6 +1306,24 @@ async function proposalDialog(branch) {
       [[current.state, current.revision, String(current.base_release).slice(0, 16)]],
     ),
   );
+  const evidence = current.proposalEvidence;
+  if (evidence) {
+    const source = { recorded:'提案创建时记录', reviewer:'按审阅者当前权限复算', restricted:'来源数据受限', unavailable:'当前无法复算该时间窗', earlier_revision:'依据属于较早的提案版本' };
+    node.append(element('p', {}, `${evidence.process} · ${source[evidence.scope]} · ${evidence.from} 至 ${evidence.to}`));
+    if (evidence.scope==='earlier_revision' && current.state!=='merged') node.append(button('按此时间窗重新分析流程', async () => {
+      await service('refresh_machinery_proposal_evidence',{id:current.id,revision:current.revision,
+        analysis:{ type:evidence.process,from:evidence.from,to:evidence.to }});
+      await proposalDialog({id:current.id});
+    }));
+    if (evidence.summary) {
+      const facts = evidence.summary;
+      node.append(table(['观察实例','基线偏离实例','候选模型偏离实例'],[[facts.cases,facts.deviationCases,facts.candidateDeviationCases]]));
+      if (facts.bottlenecks.length) node.append(table(['瓶颈状态','已完成停留 P95（毫秒）'],
+        facts.bottlenecks.map(row=>[row.state,row.completedP95Ms ?? '无样本'])));
+      if (facts.affectedEdges.length) node.append(table(['原状态','目标状态','观察到的实例'],
+        facts.affectedEdges.map(row=>[row.from ?? '起点',row.to ?? '终点',row.observedCases])));
+    }
+  }
   node.append(table(['资源类型','名称','变更'],comparison.changes.map(change=>[change.kind,change.name,change.before===null?'新增':change.after===null?'移除':Object.keys(change.after).filter(key=>JSON.stringify(change.before?.[key])!==JSON.stringify(change.after[key])).join('、')])));
   const invoke = (name) => async () => {
     const result = await service(name, {

@@ -1,3 +1,4 @@
+import { analyzeProposal } from './machinery-proposal.js';
 import { ChangeSubscriptions, watchMachinerySchema } from './change-subscriptions.js';
 import { MachineryWatchPlanner } from './machinery-watch.js';
 import { ObservationInterests,startInterestSchema,listInterestsSchema,cancelInterestSchema } from './observation-interests.js';
@@ -714,16 +715,20 @@ export function ontologyServices(
     });
   register('machinery_propose_model', 'Open a definition branch for a manual or mined process model at the observed release.',
     z.strictObject({ type: ontologyName, model: machineryModelSchema, name: z.string().min(1).max(200),
-      release: z.string().regex(/^[0-9a-f]{64}$/), project: ontologyName.optional() }), true, async (a, input) => {
+      release: z.string().regex(/^[0-9a-f]{64}$/), project: ontologyName.optional(), analysis: machineryAnalysisSchema.optional() }), true, async (a, input) => {
       const current = await active();
       if (current.release !== input.release) throw new Conflict('Ontology changed; refresh the process analysis');
       const body = structuredClone(current.document);
       const definition = body.objectTypes.find(type => type.apiName === input.type);
       if (!definition) throw new Conflict('Select a local process definition in this Ontology');
       definition.machinery = input.model;
+      const evidence = input.analysis && await analyzeProposal(db,a,current,input.analysis,input.type,input.model);
       return governance.create(a, { ontology: ontologyId, name: input.name, project: input.project,
-        body, baseRelease: current.release });
+        body, baseRelease: current.release }, evidence);
     });
+  register('refresh_machinery_proposal_evidence','Recompute the evidence for this Machinery branch revision and reopen it for review.',
+    branchRevisionSchema.extend({analysis:machineryAnalysisSchema}),true,async (a,input)=>
+      governance.refreshMachineryEvidence(a,input.id,input.revision,input.analysis));
   register('save_machinery_review', 'Save or disable periodic review of an authorized Machinery process.',
     machineryReviewSchema, true, async (a, input) => machinery.save(a, await active(), input));
   register('machinery_reviews', 'List owned periodic Machinery reviews and their latest analyzed windows.',

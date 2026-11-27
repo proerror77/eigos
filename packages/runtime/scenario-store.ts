@@ -90,15 +90,44 @@ export async function stageObject(db: Database, model: PublishedOntology, owner:
   }
   await bumpScenario(db, model, owner, client);
 }
+function incidentLinks(schema: string, type: string, id: string) {
+  // Each side uses its endpoint index; UNION keeps a self-link once.
+  return `SELECT type,from_type,from_id,to_type,to_id FROM ${schema}.links
+      WHERE projection=$1 AND owner=$2 AND from_type=${type} AND from_id=${id}
+    UNION SELECT type,from_type,from_id,to_type,to_id FROM ${schema}.links
+      WHERE projection=$1 AND owner=$2 AND to_type=${type} AND to_id=${id}
+    ORDER BY type,from_type,from_id,to_type,to_id LIMIT 10001`;
+}
 export async function objectLinks(db: Database, model: PublishedOntology, owner: string, ref: ObjectRef, client: Sql) {
-  // Each side uses its endpoint index; UNION keeps a self-link once, as the single OR condition did.
-  const { rows } = await db.query(`SELECT type,from_type,from_id,to_type,to_id FROM ${db.schema}.links
-      WHERE projection=$1 AND owner=$2 AND from_type=$3 AND from_id=$4
-    UNION SELECT type,from_type,from_id,to_type,to_id FROM ${db.schema}.links
-      WHERE projection=$1 AND owner=$2 AND to_type=$3 AND to_id=$4
-    ORDER BY type,from_type,from_id,to_type,to_id LIMIT 10001`, [model.projection, owner, ref.type, ref.id], client);
+  const { rows } = await db.query(incidentLinks(db.schema, '$3', '$4'), [model.projection, owner, ref.type, ref.id], client);
   if (rows.length > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
   return rows;
+}
+/** Preserve the same per-object relationship snapshot in one query for the Action journal. */
+export async function objectLinksBatch(db: Database, model: PublishedOntology, owner: string, refs: readonly ObjectRef[], client: Sql) {
+  const edges = new Map<string, unknown[]>();
+  if (!refs.length) return edges;
+  const { rows } = await db.query<{ object_type: string; object_id: string; links: unknown[] }>(`
+    WITH targets AS MATERIALIZED (SELECT DISTINCT type,id FROM jsonb_to_recordset($3::jsonb) AS k(type text,id text)),
+    incident AS (
+      SELECT k.type AS object_type,k.id AS object_id,l.type,l.from_type,l.from_id,l.to_type,l.to_id
+        FROM targets k JOIN ${db.schema}.links l ON l.projection=$1 AND l.owner=$2 AND l.from_type=k.type AND l.from_id=k.id
+      UNION ALL
+      SELECT k.type,k.id,l.type,l.from_type,l.from_id,l.to_type,l.to_id
+        FROM targets k JOIN ${db.schema}.links l ON l.projection=$1 AND l.owner=$2 AND l.to_type=k.type AND l.to_id=k.id
+        WHERE (l.from_type,l.from_id)<>(l.to_type,l.to_id)
+    ), counted AS (
+      SELECT incident.*,row_number() OVER (PARTITION BY object_type,object_id ORDER BY type,from_type,from_id,to_type,to_id) AS ordinal
+        FROM incident
+    ) SELECT object_type,object_id,jsonb_agg(jsonb_build_object('type',type,'from_type',from_type,'from_id',from_id,
+          'to_type',to_type,'to_id',to_id) ORDER BY ordinal) AS links
+        FROM counted WHERE ordinal<=10001 GROUP BY object_type,object_id`,
+    [model.projection, owner, JSON.stringify(refs)], client);
+  for (const row of rows) {
+    if (row.links.length > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
+    edges.set(digest({ type: row.object_type, id: row.object_id }), row.links);
+  }
+  return edges;
 }
 
 export async function stageLink(db: Database, model: PublishedOntology, owner: string, edge: LinkData, removed: boolean, client: Sql, journal?: ScenarioMutation[]) {

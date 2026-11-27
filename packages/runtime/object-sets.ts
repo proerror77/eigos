@@ -327,13 +327,13 @@ export class ObjectSets {
     return { items: result.items, total: result.total,
       cursor: end < result.total && result.membership ? encodeKernelCursor({ identity, offset: end, membership: result.membership }) : undefined };
   }
-  private shadow(access: Access, model: PublishedOntology, input: unknown, reference: (fork: Access) => Promise<unknown>,
+  private shadow(access: Access, model: PublishedOntology, operation: 'evaluate' | 'aggregate', input: unknown, reference: (fork: Access) => Promise<unknown>,
     kernel: (client: KernelClient, fork: Access) => Promise<unknown | undefined>) {
-    return compareWithKernel(this.db, this.kernels.registry, access, model, input, reference, kernel);
+    return compareWithKernel(this.db, this.kernels.registry, access, model, operation, input, reference, kernel);
   }
   private shadowEvaluate(access: Access, model: PublishedOntology, input: z.output<typeof evaluateSetSchema>) {
     const offset = input.cursor ? referenceOffset(input.cursor) : 0;
-    return this.shadow(access, model, input, async fork => {
+    return this.shadow(access, model, 'evaluate', input, async fork => {
       const page = await this.referenceEvaluate(fork, model, input);
       return { items: ontologyValues(page.items), total: page.total };
     }, async (client, fork) => {
@@ -381,7 +381,7 @@ export class ObjectSets {
       return this.referenceAggregate(access, model, input, existing);
     }
     const result = await this.referenceAggregate(access, model, input, existing);
-    await this.shadow(access, model, input, fork => this.referenceAggregate(fork, model, input), async (client, fork) => {
+    await this.shadow(access, model, 'aggregate', input, fork => this.referenceAggregate(fork, model, input), async (client, fork) => {
       const answer = await aggregateWithKernel(client, model, fork, new Objects(this.db, model, fork), input);
       return answer && { count: answer.count, items: answer.items };
     });

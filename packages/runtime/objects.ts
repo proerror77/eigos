@@ -4,7 +4,7 @@ import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } fro
 import { capturingDecisionReads, observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
 import { DerivedProperties } from './derived.js';
 import { compareValues, matchesPredicate, nestedValue, orderSchema, predicateFields, predicateSchema, regexMatches, propertyPathSchema } from './query-filter.js';
-import { journalLinks, recordObjectEdit, resolveSourceEdits } from './edit-history.js';
+import { journalLinks, recordObjectEdit, recordObjectEdits, resolveSourceEdits } from './edit-history.js';
 import { z } from 'zod';
 import { Conflict, NotFound, PermissionDenied, InvalidInput, digest, type ExecutionActor } from '../core/identity.js';
 import { PublishedOntology } from './metadata.js';
@@ -47,6 +47,9 @@ export function queryFields(query: Pick<z.output<typeof querySchema>, 'where' | 
     ...(query.orderBy ?? []).map(item => item.property), ...(query.select ?? []),
     ...(query.intervalOverlap ? [query.intervalOverlap.start, query.intervalOverlap.end] : [])])];
 }
+/** A prepared Scenario create or revision-checked property edit. */
+export type ScenarioObjectWrite = { ref: ObjectRef; fields: Record<string, unknown>; revision?: number };
+
 export class Objects {
   /** How `query` uses the query kernel: by default from EIGOS_KERNEL and the process's kernels. Tests replace it. */
   static kernels: () => KernelUse = defaultKernelUse;
@@ -279,7 +282,9 @@ export class Objects {
     const byType = new Map<string, string[]>();
     for (const ref of refs.map(ref => objectRefSchema.parse(ref))) {
       if (ref.type === scenarioMetadataType || !this.model.objects.has(ref.type)) throw new InvalidInput('Batch reads cover published object types');
-      byType.set(ref.type, [...byType.get(ref.type) ?? [], ref.id]);
+      let ids = byType.get(ref.type);
+      if (!ids) { ids = []; byType.set(ref.type, ids); }
+      ids.push(ref.id);
     }
     if (this.client === this.db.pool && [...byType.keys()].some(type => Object.values(this.model.object(type).properties).some(property => property.derived))) {
       // As `read`: derived values come from one snapshot, and their permissions must still hold when they are returned.
@@ -390,7 +395,7 @@ export class Objects {
   }
   private shadowQuery(kernels: KernelUse, args: z.output<typeof querySchema>) {
     const offset = args.cursor ? referenceOffset(args.cursor) : 0;
-    return compareWithKernel(this.db, kernels.registry, this.access, this.model, args, async fork => {
+    return compareWithKernel(this.db, kernels.registry, this.access, this.model, 'query', args, async fork => {
       const page = await new Objects(this.db, this.model, fork).queryObjects(args);
       return { items: page.items, more: Boolean(page.cursor) };
     }, async (client, fork) => {
@@ -827,7 +832,7 @@ export class Objects {
       if (routed) return routed;
     }
     const targets = await this.followObjects(ref, link, view, maximum);
-    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, { follow: { ref, link, view, maximum } },
+    if (allowed && kernels.mode === 'shadow') await compareWithKernel(this.db, kernels.registry, this.access, this.model, 'follow', { follow: { ref, link, view, maximum } },
       fork => new Objects(this.db, this.model, fork).followObjects(ref, link, view, maximum),
       (client, fork) => new Objects(this.db, this.model, fork).kernelFollow(client, ref, link, view, maximum));
     return targets;
@@ -914,6 +919,73 @@ export class Objects {
       if (digest((await this.stored(ref)).properties) !== digest(properties)) throw new Conflict('Object identity already contains different data');
     } else await recordObjectEdit(this,ref,null,properties,properties,'create');
   }
+  /** Raw live snapshots for batch writes and the Action undo journal. */
+  protected async liveSnapshots(refs: readonly ObjectRef[]) {
+    if (!refs.length) return new Map<string, { revision: number; properties: Record<string, unknown> }>();
+    const { rows } = await this.db.query<{ type: string; id: string; revision: string; properties: Record<string, unknown> }>(`
+      SELECT o.type,o.id,o.revision,o.properties FROM ${this.db.schema}.objects o
+      JOIN jsonb_to_recordset($3::jsonb) AS r(type text,id text) ON o.type=r.type AND o.id=r.id
+      WHERE o.projection=$1 AND o.owner=$2`, [this.model.projection, this.owner, JSON.stringify(refs)], this.client);
+    return new Map(rows.map(row => [digest({ type: row.type, id: row.id }), { revision: Number(row.revision), properties: row.properties }]));
+  }
+
+  /** Commit independent live objects from a Scenario under its existing exclusive Action lock. */
+  async writeScenarioObjects(edits: readonly ScenarioObjectWrite[]) {
+    if (!edits.length) return;
+    if (this.client === this.db.pool || this.model.scenario) throw new Conflict('Scenario batch writes require a live Action transaction');
+    this.requireExclusive('Scenario batch write');
+    await this.prepareWrite();
+    const references = edits.map(edit => objectRefSchema.parse(edit.ref));
+    const keys = references.map(ref => digest(ref));
+    if (new Set(keys).size !== keys.length) throw new Conflict('Scenario batch repeats an object');
+    const snapshots = await this.liveSnapshots(references);
+    const inserted: { type: string; id: string; properties: Record<string, unknown> }[] = [];
+    const updated: (typeof inserted[number] & { revision: number })[] = [];
+    const journal: Parameters<typeof recordObjectEdits>[1][number][] = [];
+    for (const [index, { ref, fields, revision }] of edits.entries()) {
+      this.writeType(ref.type);
+      if (ref.type === documentChunkType) throw new Conflict('Document chunks require their individual row read');
+      this.assertStoredFields(ref, fields);
+      const row = snapshots.get(keys[index]!);
+      const before = row ? this.model.parseObject(ref, row.properties) : null;
+      if (revision === undefined) {
+        const after = this.model.parseObject(ref, fields);
+        this.access.writeRow(this.model, ref.type, after);
+        if (before) {
+          if (digest(before) !== digest(after)) throw new Conflict('Object identity already contains different data');
+          continue;
+        }
+        inserted.push({ ...ref, properties: after });
+        journal.push({ ref, before, after, kind: 'create' });
+      } else {
+        if (!row || !before) throw new NotFound('Object is unavailable');
+        const after = this.model.parseObject(ref, { ...before, ...fields });
+        this.access.readRow(this.model, ref.type, before);
+        for (const field of Object.keys(fields))
+          if (!this.access.cell(this.model, ref.type, field, before)) throw new PermissionDenied('Cannot edit a hidden property');
+        this.access.writeRow(this.model, ref.type, after);
+        if (row.revision !== revision) throw new Conflict('Object revision changed');
+        updated.push({ ...ref, revision, properties: after });
+        journal.push({ ref, before, after, changedFields: fields, kind: 'edit' });
+      }
+    }
+    const scope = [this.model.projection, this.owner];
+    if (inserted.length) {
+      const result = await this.db.query(`INSERT INTO ${this.db.schema}.objects(projection,owner,type,id,properties)
+        SELECT $1,$2,type,id,properties FROM jsonb_to_recordset($3::jsonb) AS r(type text,id text,properties jsonb)
+        ON CONFLICT DO NOTHING`, [...scope, JSON.stringify(inserted)], this.client);
+      if (result.rowCount !== inserted.length) throw new Conflict('Object identity already contains different data');
+    }
+    if (updated.length) {
+      const result = await this.db.query(`UPDATE ${this.db.schema}.objects o SET properties=r.properties,revision=o.revision+1
+        FROM jsonb_to_recordset($3::jsonb) AS r(type text,id text,properties jsonb,revision bigint)
+        WHERE o.projection=$1 AND o.owner=$2 AND o.type=r.type AND o.id=r.id AND o.revision=r.revision`,
+      [...scope, JSON.stringify(updated)], this.client);
+      if (result.rowCount !== updated.length) throw new Conflict('Object revision changed');
+    }
+    await recordObjectEdits(this, journal);
+  }
+
   async ingestBatch(input: readonly { ref: ObjectRef; properties: Record<string,unknown> | null }[], source = 'default', observedAt?: string): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client=>new Objects(this.db,this.model,this.access,client,this.change).ingestBatch(input,source,observedAt));
     await this.prepareWrite();
@@ -994,12 +1066,32 @@ export class Objects {
   async link(edge: LinkData) {
     return this.linkBatch([edge]);
   }
-  async linkBatch(edges: readonly LinkData[]): Promise<void> {
-    if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).linkBatch(edges));
+  private async readScenarioLinkEndpoints(edges: readonly LinkData[]) {
+    const refs = [...new Map(edges.flatMap(edge => [edge.from, edge.to]).map(ref => [digest(ref), ref])).values()];
+    if (capturingDecisionReads()) {
+      for (const ref of refs) await this.read(ref);
+      return;
+    }
+    const regular = refs.filter(ref => ref.type !== scenarioMetadataType);
+    const visible = new Set((await this.readBatch(regular)).map(object => digest(object.ref)));
+    // Use the individual read's exact missing-row or permission response.
+    for (const ref of refs) if (!visible.has(digest(ref))) await this.read(ref);
+  }
+  async linkBatch(edges: readonly LinkData[], scenarioMerge = false): Promise<void> {
+    if (this.client === this.db.pool) {
+      if (scenarioMerge) throw new Conflict('Scenario link writes require a live Action transaction');
+      return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).linkBatch(edges));
+    }
     await this.prepareWrite();
     if (!edges.length) return;
     await this.lockObjects(edges.flatMap(edge => [edge.from, edge.to]), 'exclusive');
-    for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
+    if (scenarioMerge) {
+      if (this.model.scenario) throw new Conflict('Scenario link writes require the live Ontology');
+      this.requireExclusive('Scenario link writes');
+      await this.readScenarioLinkEndpoints(edges);
+    } else {
+      for (const edge of edges) { await this.read(edge.from); await this.read(edge.to); }
+    }
     const rows = edges.map(edge => {
       this.access.definition(this.model, 'link', edge.type); this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
       const definition = this.model.links.get(edge.type);
@@ -1041,6 +1133,25 @@ export class Objects {
         throw new Conflict('Link cardinality exceeded');
       throw error;
     }
+  }
+  async unlinkScenarioLinks(edges: readonly LinkData[]) {
+    if (!edges.length) return;
+    if (this.client === this.db.pool || this.model.scenario) throw new Conflict('Scenario link writes require a live Action transaction');
+    this.requireExclusive('Scenario link writes');
+    await this.prepareWrite();
+    for (const edge of edges) this.access.definition(this.model, 'link', edge.type);
+    await this.readScenarioLinkEndpoints(edges);
+    const rows = edges.map(edge => {
+      this.writeType(edge.from.type,true); this.writeType(edge.to.type,true);
+      const definition = this.model.links.get(edge.type);
+      if (!definition || edge.from.type !== definition.from.type || edge.to.type !== definition.to.type) throw new InvalidInput('Invalid link endpoints');
+      return { type: edge.type, from_type: edge.from.type, from_id: edge.from.id, to_type: edge.to.type, to_id: edge.to.id };
+    });
+    const values: unknown[] = [this.model.projection, this.owner, JSON.stringify(rows)];
+    await this.db.query(`WITH removed AS (DELETE FROM ${this.db.schema}.links l
+      USING jsonb_to_recordset($3::jsonb) AS r(type text,from_type text,from_id text,to_type text,to_id text)
+      WHERE l.projection=$1 AND l.owner=$2 AND (l.type,l.from_type,l.from_id,l.to_type,l.to_id)=(r.type,r.from_type,r.from_id,r.to_type,r.to_id)
+      RETURNING l.type,l.from_type,l.from_id,l.to_type,l.to_id) ${journalLinks(this,'unlink','removed','$1','$2',values)}`, values, this.client);
   }
   async unlink(edge: LinkData): Promise<void> {
     if (this.client === this.db.pool) return this.db.transaction(client => new Objects(this.db, this.model, this.access, client,this.change).unlink(edge));

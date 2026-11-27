@@ -132,45 +132,67 @@ export async function setConflictPolicy(db: Database, access: Access, model: Pub
   return { type, policy };
 }
 
-const key = (graph: Objects, ref: ObjectRef) => [graph.model.projection, graph.owner, ref.type, ref.id];
 function requireTransaction(graph: Objects) {
   if (graph.client === graph.db.pool) throw new Conflict('Edit history must share the object transaction');
 }
-async function state(graph: Objects, ref: ObjectRef): Promise<EditState> {
-  const row = (await graph.db.query(`SELECT overrides,deleted,created FROM ${graph.db.schema}.object_edits WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,key(graph,ref),graph.client)).rows[0];
-  return row ? { overrides: row.overrides, deleted: row.deleted, created: row.created } : { overrides: {}, deleted: false, created: false };
-}
-async function saveState(graph: Objects, ref: ObjectRef, value: EditState) {
-  await graph.db.query(`INSERT INTO ${graph.db.schema}.object_edits(projection,owner,type,id,overrides,deleted,created)
-    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(projection,owner,type,id) DO UPDATE
-    SET overrides=excluded.overrides,deleted=excluded.deleted,created=excluded.created`,[...key(graph,ref),value.overrides,value.deleted,value.created],graph.client);
-}
-async function append(graph: Objects, ref: ObjectRef, operation: string, before: Properties | null, after: Properties | null, source: string | null, observedAt?: string) {
-  if (operation === 'source' && digest(before) === digest(after)) return;
-  await graph.db.query(`INSERT INTO ${graph.db.schema}.edit_history(projection,owner,type,id,release,operation,source,before_values,after_values,actor,action,request_id,task_id,observed_at,executor_kind,executor_id)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[...key(graph,ref),graph.model.release,operation,source,before,after,graph.access.principal.owner,
-    graph.change?.action??null,graph.change?.requestId??null,graph.change?.taskId??null,observedAt??null,
-    graph.change?.executor?.kind??null,graph.change?.executor?.id??null],graph.client);
-}
 
-/** Called after the live mutation, in the same transaction. Scenario deltas are journaled when merged. */
-export async function recordObjectEdit(graph: Objects, ref: ObjectRef, before: Properties | null, after: Properties | null, changedFields?: Properties, kind: 'create' | 'edit' | 'delete' = 'edit') {
-  if (graph.model.scenario) return;
-  requireTransaction(graph);
-  const value = await state(graph,ref);
-  const at = (await graph.db.query('SELECT clock_timestamp() AS at',[],graph.client)).rows[0]!.at.toISOString();
-  if (before) await graph.db.query(`INSERT INTO ${graph.db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
-    SELECT $1,$2,$3,$4,'__legacy__',$5,'-infinity'::timestamptz WHERE NOT EXISTS
-    (SELECT 1 FROM ${graph.db.schema}.source_values WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4)
-    ON CONFLICT DO NOTHING`,[...key(graph,ref),before],graph.client);
+type ObjectEdit = {
+  ref: ObjectRef; before: Properties | null; after: Properties | null;
+  changedFields?: Properties; kind: 'create' | 'edit' | 'delete';
+};
+
+function applyObjectEdit(value: EditState, { after, kind, changedFields }: ObjectEdit, at: string) {
   if (kind === 'create') {
     value.overrides = {};
     value.created = true;
   }
   value.deleted = after === null;
   if (after) for (const [field, fieldValue] of Object.entries(changedFields ?? after)) value.overrides[field] = { value: fieldValue, at };
-  await saveState(graph,ref,value);
-  await append(graph,ref,kind,before,after,null);
+}
+
+/** Called after the live mutation, in the same transaction. Scenario deltas are journaled when merged. */
+export async function recordObjectEdit(graph: Objects, ref: ObjectRef, before: Properties | null, after: Properties | null, changedFields?: Properties, kind: 'create' | 'edit' | 'delete' = 'edit') {
+  if (graph.model.scenario) return;
+  await recordObjectEdits(graph, [{ ref, before, after, changedFields, kind }]);
+}
+
+/** Unique live edits in an Action, with the same source baselines and overrides as individual writes. */
+export async function recordObjectEdits(graph: Objects, edits: readonly ObjectEdit[]) {
+  if (!edits.length) return;
+  if (graph.model.scenario) throw new Conflict('Bulk edit history requires the live projection');
+  requireTransaction(graph);
+  const { db, client, model, change, owner } = graph;
+  const scope = [model.projection, owner];
+  const existing = new Map((await db.query<{ type: string; id: string } & EditState>(`
+    SELECT e.type,e.id,e.overrides,e.deleted,e.created FROM ${db.schema}.object_edits e
+    JOIN jsonb_to_recordset($3::jsonb) AS k(type text,id text) ON e.type=k.type AND e.id=k.id
+    WHERE e.projection=$1 AND e.owner=$2`, [...scope, keyRows(edits.map(edit => edit.ref))], client))
+    .rows.map(row => [objectKey(row), row]));
+  const at = (await db.query<{ at: Date }>('SELECT clock_timestamp() AS at', [], client)).rows[0]!.at.toISOString();
+  const rows = edits.map((edit, ordinal) => {
+    const value = existing.get(objectKey(edit.ref)) ?? { overrides: {}, deleted: false, created: false };
+    applyObjectEdit(value, edit, at);
+    return { ...edit.ref, overrides: value.overrides, deleted: value.deleted, created: value.created,
+      before_values: edit.before, after_values: edit.after, operation: edit.kind, ordinal };
+  });
+  const values = [...scope, JSON.stringify(rows)];
+  if (edits.some(edit => edit.before)) await db.query(`INSERT INTO ${db.schema}.source_values(projection,owner,type,id,source,properties,observed_at)
+    SELECT $1,$2,r.type,r.id,'__legacy__',r.before_values,'-infinity'::timestamptz
+    FROM jsonb_to_recordset($3::jsonb) AS r(type text,id text,before_values jsonb)
+    WHERE r.before_values IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${db.schema}.source_values s
+      WHERE s.projection=$1 AND s.owner=$2 AND s.type=r.type AND s.id=r.id)
+    ON CONFLICT DO NOTHING`, values, client);
+  await db.query(`INSERT INTO ${db.schema}.object_edits(projection,owner,type,id,overrides,deleted,created)
+    SELECT $1,$2,type,id,overrides,deleted,created FROM jsonb_to_recordset($3::jsonb)
+      AS r(type text,id text,overrides jsonb,deleted boolean,created boolean)
+    ON CONFLICT(projection,owner,type,id) DO UPDATE
+    SET overrides=excluded.overrides,deleted=excluded.deleted,created=excluded.created`, values, client);
+  await db.query(`INSERT INTO ${db.schema}.edit_history(projection,owner,type,id,release,operation,before_values,after_values,
+      actor,action,request_id,task_id,executor_kind,executor_id)
+    SELECT $1,$2,type,id,$4,operation,before_values,after_values,$2,$5,$6,$7,$8,$9 FROM jsonb_to_recordset($3::jsonb)
+      AS r(type text,id text,operation text,before_values jsonb,after_values jsonb,ordinal integer)
+    ORDER BY ordinal`, [...values, model.release, change?.action ?? null, change?.requestId ?? null,
+    change?.taskId ?? null, change?.executor?.kind ?? null, change?.executor?.id ?? null], client);
 }
 
 /** One source observation of an object, with the stored value it may replace. */

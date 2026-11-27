@@ -1,3 +1,4 @@
+import { documentChunkType } from '../ontology/documents.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, NotFound, digest, type Principal } from '../core/identity.js';
@@ -6,7 +7,7 @@ import type { ScenarioDecision, ScenarioDecisionMemory } from '../ontology/scena
 import { Access, PermissionDenied, type Requirement } from './access.js';
 import { Database, type Sql } from './database.js';
 import { Metadata, PublishedOntology } from './metadata.js';
-import { Objects, querySchema } from './objects.js';
+import { Objects, type ScenarioObjectWrite, querySchema } from './objects.js';
 import { ObjectSets } from './object-sets.js';
 import { decisionEvidenceSchema, replayRead, type DecisionObservation } from './decision-evidence.js';
 import { bumpScenario, checkScenario, lockEdits, objectLinks, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
@@ -134,6 +135,9 @@ export async function initializeScenarioLifecycle(db: Database) {
     });
   }
 }
+type LinkChange = {type:string;from_type:string;from_id:string;to_type:string;to_id:string};
+const linkKey = (link: LinkChange) => JSON.stringify([link.type,link.from_type,link.from_id,link.to_type,link.to_id]);
+
 export class Scenarios {
   constructor(private readonly db: Database, private readonly decisions?: ScenarioDecisionSupport) {}
   async openSession(access: Access, ttlSeconds=3600, client?: Sql) {
@@ -363,18 +367,34 @@ export class Scenarios {
         `SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,
         [model.projection, row.owner, ref.type, ref.id], client,
       )).rows[0];
-      const changes = await this.changes(row.owner, row.id, client);
+      const changes = { objects: await this.objectChangesWithLive(model,row.owner,row.id,client),
+        links: await this.changedLinks(row.owner,row.id,client) };
+      const conflicts = await this.conflictingLinks(model,row.owner,changes.links,client);
+      const endpoints = new Map<string,ObjectRef>();
+      for (const edge of changes.links) {
+        for (const ref of [{type:edge.from_type,id:edge.from_id},{type:edge.to_type,id:edge.to_id}]) endpoints.set(digest(ref),ref);
+      }
+      const liveEndpoints = new Map<string,Properties>();
+      if (endpoints.size) {
+        const result = await this.db.query<{type:string;id:string;properties:Properties}>(`SELECT r.type,r.id,o.properties
+          FROM jsonb_to_recordset($1::jsonb) r(type text,id text) CROSS JOIN LATERAL (
+            SELECT properties FROM ${this.db.schema}.objects o WHERE o.projection=$2 AND o.owner=$3 AND o.type=r.type AND o.id=r.id LIMIT 1
+          ) o`,[JSON.stringify([...endpoints.values()]),model.projection,row.owner],client);
+        for (const row of result.rows) liveEndpoints.set(digest({type:row.type,id:row.id}),row.properties);
+      }
       const objects = [];
       for (const item of changes.objects) {
-        const ref = { type: item.type, id: item.id }, live = await current(ref), fields = editedFields(item);
+        const ref = { type: item.type, id: item.id }, fields = editedFields(item);
+        const live = item.live_revision && item.live_properties ? { revision:item.live_revision, properties:item.live_properties } : undefined;
         if (live) check(ref.type, live.properties);
         const visible = (properties: Properties | null) => {
           if (!properties) return null;
           check(ref.type, properties, fields);
           return Object.fromEntries(fields.filter(field => Object.hasOwn(properties, field)).map(field => [field, properties[field]]));
         };
+        if ((item.live_links?.length ?? 0) > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
         const conflict = objectConflict(item, live, row.journal_steps > 0)
-          || item.properties === null && digest(await objectLinks(this.db, model, row.owner, ref, client)) !== digest(item.base_links);
+          || item.properties === null && digest(item.live_links) !== digest(item.base_links);
         objects.push({ ref, before: visible(item.base_properties), after: visible(item.properties), editedFields: fields, conflict });
       }
       const links = [], staged = new Map(changes.objects.map(item => [digest({ type: item.type, id: item.id }), item.properties]));
@@ -382,13 +402,13 @@ export class Scenarios {
         for (const access of [author, approver]) access.definition(model, 'link', item.type);
         const from = { type: String(item.from_type), id: String(item.from_id) }, to = { type: String(item.to_type), id: String(item.to_id) };
         for (const ref of [from, to]) {
-          const live = await current(ref);
+          const live = liveEndpoints.get(digest(ref));
           const proposed = staged.get(digest(ref));
           if (!live && !proposed) throw new NotFound('Scenario review endpoint is unavailable');
-          if (live) check(ref.type, live.properties);
+          if (live) check(ref.type, live);
           if (proposed) check(ref.type, proposed);
         }
-        links.push({ type: String(item.type), from, to, removed: Boolean(item.removed), conflict: await this.linkConflict(model, row.owner, item, client) });
+        links.push({ type: String(item.type), from, to, removed: Boolean(item.removed), conflict: conflicts.has(linkKey(item)) });
       }
       await author.refresh(client);
       await approver.refresh(client);
@@ -700,11 +720,43 @@ export class Scenarios {
     }));
   }
 
+  private async changedLinks(owner: string, id: string, client: Sql) {
+    return (await this.db.query<LinkChange & {removed:boolean;base_present:boolean;scenario_id:string}>(`SELECT * FROM ${this.db.schema}.scenario_links
+      WHERE owner=$1 AND scenario_id=$2 AND (NOT removed) IS DISTINCT FROM base_present ORDER BY type,from_id,to_id`,
+    [owner, id], client)).rows;
+  }
+
+  /** Compare staged rows with one snapshot of their live objects. Deleted objects carry bounded, ordered link snapshots. */
+  private async objectChangesWithLive(model: PublishedOntology, owner: string, id: string, client: Sql) {
+    const s = this.db.schema;
+    // Keep the live probe on the whole primary key even before PostgreSQL has sampled a newly filled projection.
+    return (await this.db.query<ScenarioObjectEdit & {
+      live_revision: string | null; live_properties: Properties | null; live_links: unknown[] | null;
+    }>(`SELECT d.*,o.revision AS live_revision,o.properties AS live_properties,
+      CASE WHEN d.properties IS NULL THEN (
+        SELECT coalesce(jsonb_agg(edge ORDER BY edge.type,edge.from_type,edge.from_id,edge.to_type,edge.to_id),'[]'::jsonb)
+        FROM (
+          SELECT type,from_type,from_id,to_type,to_id FROM ${s}.links
+            WHERE projection=$3 AND owner=$1 AND from_type=d.type AND from_id=d.id
+          UNION SELECT type,from_type,from_id,to_type,to_id FROM ${s}.links
+            WHERE projection=$3 AND owner=$1 AND to_type=d.type AND to_id=d.id
+          ORDER BY type,from_type,from_id,to_type,to_id LIMIT 10001
+        ) edge
+      ) END AS live_links
+      FROM ${s}.scenario_objects d LEFT JOIN LATERAL (
+        SELECT live.revision,live.properties FROM ${s}.objects live
+          WHERE live.projection=$3 AND live.owner=d.owner AND live.type=d.type AND live.id=d.id LIMIT 1
+      ) o ON true
+      WHERE d.owner=$1 AND d.scenario_id=$2
+        AND (d.properties IS DISTINCT FROM d.base_properties OR (d.properties IS NOT NULL AND jsonb_array_length(d.edited_fields)>0))
+      ORDER BY d.type,d.id`, [owner,id,model.projection], client)).rows;
+  }
+
   private async changes(owner: string, id: string, client: Sql) {
     const objects = (await this.db.query<ScenarioObjectEdit>(`SELECT * FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2
       AND (properties IS DISTINCT FROM base_properties OR (properties IS NOT NULL AND jsonb_array_length(edited_fields) > 0))
       ORDER BY type,id`, [owner, id], client)).rows;
-    const links = (await this.db.query(`SELECT * FROM ${this.db.schema}.scenario_links WHERE owner=$1 AND scenario_id=$2 AND (NOT removed) IS DISTINCT FROM base_present ORDER BY type,from_id,to_id`, [owner, id], client)).rows;
+    const links = await this.changedLinks(owner, id, client);
     return { objects, links };
   }
   private async steps(owner: string, id: string, client: Sql) {
@@ -980,19 +1032,16 @@ export class Scenarios {
       await checkScenario(this.db, view, owner, client, true);
       const row = (await this.db.query(`SELECT revision FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
       if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
-    if (row.review_status === 'rejected' && Number(row.reviewed_revision) === revision)
-      throw new Conflict('A rejected Scenario revision must be submitted again before merge');
-      const changes = await this.changes(owner, id, client);
-      let rebased = false;
-      for (const item of changes.objects) {
+      const objects = await this.objectChangesWithLive(model, owner, id, client);
+      const merged: { type: string; id: string; revision: string; base: Properties; properties: Properties; fields: string[] }[] = [];
+      for (const item of objects) {
         const ref = { type: item.type, id: item.id };
         for (const snapshot of [item.base_properties, item.properties]) if (snapshot) access.readRow(model, item.type, snapshot);
-        const current = (await this.db.query<{ revision: string; properties: Properties }>(
-          `SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`,
-          [model.projection, owner, item.type, item.id], client,
-        )).rows[0];
+        const current = item.live_revision && item.live_properties
+          ? { revision: item.live_revision, properties: item.live_properties } : undefined;
         if (current) access.readRow(model, item.type, current.properties);
-        if (item.properties === null && digest(await objectLinks(this.db, model, owner, ref, client)) !== digest(item.base_links)) {
+        if ((item.live_links?.length ?? 0) > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
+        if (item.properties === null && digest(item.live_links) !== digest(item.base_links)) {
           throw new Conflict('Scenario deletion conflicts with current relationships');
         }
         if ((current?.revision ?? null) === item.base_revision && digest(current?.properties ?? null) === digest(item.base_properties)) continue;
@@ -1011,17 +1060,20 @@ export class Scenarios {
           else delete next[field];
         }
         access.readRow(model, ref.type, next);
-        await this.db.query(
-          `UPDATE ${this.db.schema}.scenario_objects SET base_revision=$5,base_properties=$6,properties=$7,edited_fields=$8,revision=revision+1
-          WHERE scenario_id=$1 AND owner=$2 AND type=$3 AND id=$4`,
-          [id, owner, ref.type, ref.id, current.revision, current.properties, model.parseObject(ref, next), JSON.stringify(fields)], client,
-        );
-        rebased = true;
+        merged.push({ ...ref, revision: current.revision, base: current.properties, properties: model.parseObject(ref, next), fields });
       }
-      for (const item of changes.links) {
-        if (await this.linkConflict(model, owner, item, client)) throw new Conflict('Scenario link conflicts with current data or cardinality');
+      if ((await this.conflictingLinks(model, owner, await this.changedLinks(owner,id,client), client)).size) throw new Conflict('Scenario link conflicts with current data or cardinality');
+      if (merged.length) {
+        // Resolve each changed primary key once under the Scenario edit lock, then update that exact tuple.
+        const written = await this.db.query(`UPDATE ${this.db.schema}.scenario_objects d
+          SET base_revision=v.revision,base_properties=v.base,properties=v.properties,edited_fields=v.fields,revision=d.revision+1
+          FROM jsonb_to_recordset($3::jsonb) v(type text,id text,revision bigint,base jsonb,properties jsonb,fields jsonb)
+          CROSS JOIN LATERAL (SELECT staged.tableoid,staged.ctid FROM ${this.db.schema}.scenario_objects staged
+            WHERE staged.owner=$1 AND staged.scenario_id=$2 AND staged.type=v.type AND staged.id=v.id LIMIT 1) target
+          WHERE d.tableoid=target.tableoid AND d.ctid=target.ctid`, [owner,id,JSON.stringify(merged)],client);
+        if (written.rowCount !== merged.length) throw new Conflict('Scenario rows changed during rebase');
+        await bumpScenario(this.db, view, owner, client);
       }
-      if (rebased) await bumpScenario(this.db, view, owner, client);
       // A rebase brings the Scenario up to the owner's latest commit, and resolves a conflict that stopped automatic sync.
       // A Scenario created before automatic sync has no creator to sync as; its first explicit rebase records the author.
       const author={owner:access.principal.owner,scopes:[...access.principal.scopes],...(access.principal.memberAccess?{memberAccess:true}:{})};
@@ -1029,8 +1081,65 @@ export class Scenarios {
         sync_position=(SELECT coalesce(max(commit_seq),0) FROM ${this.db.schema}.change_commits WHERE owner=$1) WHERE owner=$1 AND id=$2`,
         [owner, id, JSON.stringify(author)], client);
       await access.refresh(client);
-      return { id, revision: revision + Number(rebased) };
+      return { id, revision: revision + Number(merged.length > 0) };
     });
+  }
+  /** Read occupied single-valued endpoints in sets and probe many-to-many edits by exact key. */
+  private async conflictingLinks(model: PublishedOntology, owner: string, changes: readonly (LinkChange & {removed:boolean;base_present:boolean})[], client: Sql) {
+    const conflicts = new Set<string>();
+    if (!changes.length) return conflicts;
+    const types = new Map<string,LinkChange[]>(), removals = new Set<string>();
+    for (const change of changes) {
+      const group = types.get(change.type);
+      if (group) group.push(change); else types.set(change.type,[change]);
+      if (change.removed && change.base_present) removals.add(linkKey(change));
+    }
+    const values: unknown[] = [model.projection,owner];
+    const bind = (value: unknown) => '$' + values.push(value);
+    const predicates: string[] = [], exact: LinkChange[] = [];
+    for (const [type,group] of types) {
+      const definition = model.links.get(type);
+      if (!definition) {
+        for (const edge of group) conflicts.add(linkKey(edge));
+        continue;
+      }
+      if (definition.from.cardinality !== 'one' && definition.to.cardinality !== 'one') {
+        for (const edge of group) exact.push(edge);
+        continue;
+      }
+      const typeParam = bind(type);
+      for (const side of ['from','to'] as const) {
+        if (definition[side].cardinality !== 'one') continue;
+        const ids = [...new Set(group.map(edge=>edge[`${side}_id`]))];
+        predicates.push(`(type=${typeParam} AND ${side}_type=${bind(definition[side].type)} AND ${side}_id=ANY(${bind(ids)}::text[]))`);
+      }
+    }
+    const queries: string[] = [];
+    const fields = 'type,from_type,from_id,to_type,to_id';
+    if (predicates.length) queries.push(`SELECT ${fields} FROM ${this.db.schema}.links
+      WHERE projection=$1 AND owner=$2 AND (${predicates.join(' OR ')})`);
+    if (exact.length) queries.push(`SELECT k.* FROM jsonb_to_recordset(${bind(JSON.stringify(exact))}::jsonb)
+      k(type text,from_type text,from_id text,to_type text,to_id text)
+      CROSS JOIN LATERAL (SELECT 1 FROM ${this.db.schema}.links l WHERE l.projection=$1 AND l.owner=$2
+        AND l.type=k.type AND l.from_type=k.from_type AND l.from_id=k.from_id AND l.to_type=k.to_type AND l.to_id=k.to_id LIMIT 1) hit`);
+    if (!queries.length) return conflicts;
+    const live = await this.db.query<LinkChange>(queries.join(' UNION ALL '),values,client);
+    const present = new Set<string>(), occupiedFrom = new Set<string>(), occupiedTo = new Set<string>();
+    const endpoint = (edge: LinkChange, side: 'from' | 'to') => JSON.stringify([edge.type,edge[`${side}_type`],edge[`${side}_id`]]);
+    for (const edge of live.rows) {
+      const key = linkKey(edge);
+      present.add(key);
+      if (removals.has(key)) continue;
+      occupiedFrom.add(endpoint(edge,'from'));
+      occupiedTo.add(endpoint(edge,'to'));
+    }
+    for (const edge of changes) {
+      const key = linkKey(edge), definition = model.links.get(edge.type);
+      if (present.has(key) !== edge.base_present || !edge.removed && (
+        definition?.from.cardinality === 'one' && occupiedFrom.has(endpoint(edge,'from')) ||
+        definition?.to.cardinality === 'one' && occupiedTo.has(endpoint(edge,'to')))) conflicts.add(key);
+    }
+    return conflicts;
   }
   private async linkConflict(model: PublishedOntology, owner: string, item: Record<string, any>, client: Sql) {
     const present = (await this.db.query(`SELECT 1 FROM ${this.db.schema}.links WHERE projection=$1 AND owner=$2 AND type=$3 AND from_type=$4 AND from_id=$5 AND to_type=$6 AND to_id=$7`,
@@ -1078,6 +1187,13 @@ export class Scenarios {
     if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
     if (row.review_status === 'rejected' && Number(row.reviewed_revision) === revision)
       throw new Conflict('A rejected Scenario revision must be submitted again before merge');
+    // Reject oversize work before reading full property payloads or recomputing a review.
+    const { rows: [size] } = await this.db.query(`SELECT
+      EXISTS(SELECT 1 FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2
+        AND (properties IS DISTINCT FROM base_properties OR (properties IS NOT NULL AND jsonb_array_length(edited_fields)>0)) OFFSET 10000 LIMIT 1)
+      OR EXISTS(SELECT 1 FROM ${this.db.schema}.scenario_links WHERE owner=$1 AND scenario_id=$2
+        AND (NOT removed) IS DISTINCT FROM base_present OFFSET 10000 LIMIT 1) AS exceeded`,[owner,id],client);
+    if (size!.exceeded) throw new Conflict('Scenario merge exceeds 10000 object or link changes');
     let proposalTask: string | undefined;
     let validateWorkflow: ((candidate: Objects) => Promise<void>) | undefined;
     let evidenceCheck: ReturnType<Scenarios['decisionCheckpoint']> | undefined;
@@ -1138,7 +1254,10 @@ export class Scenarios {
       }
       if (!approvalSnapshot) throw new Conflict('Scenario requires approval from an invited reviewer for this revision');
     }
-    const changes = await this.changes(owner, id, client);
+    const changes = {
+      objects: await this.objectChangesWithLive(model, owner, id, client),
+      links: await this.changedLinks(owner, id, client),
+    };
     if (changes.objects.some(item => !scope.objects.includes(item.type)) || changes.links.some(item => !scope.links.includes(item.type))) throw new Conflict('Scenario contains edits outside this merge Action scope');
     const actions = await this.steps(owner, id, client);
     if (proposalTask && (actions.length === 0 || (await this.db.query(
@@ -1149,14 +1268,17 @@ export class Scenarios {
     const currentRevisions = new Map<ScenarioObjectEdit, number>();
     const changedLive = new Set<string>();
     for (const item of changes.objects) {
-      const live = (await this.db.query<LiveObject>(`SELECT revision,properties FROM ${this.db.schema}.objects WHERE projection=$1 AND owner=$2 AND type=$3 AND id=$4`, [model.projection, owner, item.type, item.id], client)).rows[0];
+      const live = item.live_revision && item.live_properties
+        ? { revision: item.live_revision, properties: item.live_properties } : undefined;
       if (objectConflict(item, live, row.journal_steps > 0))
         throw new Conflict('Scenario object conflicts with current data; rebase or propose and review again');
       if (live) {
         currentRevisions.set(item, Number(live.revision));
         if (digest(live.properties) !== digest(item.base_properties)) changedLive.add(digest({type:item.type,id:item.id}));
       }
-      if (item.properties === null && digest(await objectLinks(this.db,model,owner,{type:item.type,id:item.id},client)) !== digest(item.base_links)) throw new Conflict('Scenario deletion conflicts with current relationships');
+      if ((item.live_links?.length ?? 0) > 10000) throw new Conflict('Object relationships exceed the complete snapshot limit');
+      if (item.properties === null && digest(item.live_links) !== digest(item.base_links))
+        throw new Conflict('Scenario deletion conflicts with current relationships');
     }
     const deleted = (await this.db.query(`SELECT type,id,base_revision FROM ${this.db.schema}.scenario_objects WHERE owner=$1 AND scenario_id=$2 AND properties IS NULL`, [owner,id],client)).rows;
     const deletions = new Map(deleted.map(item => [digest({type:item.type,id:item.id}),item]));
@@ -1190,26 +1312,33 @@ export class Scenarios {
     for (const item of changes.objects) { const ref={type:String(item.type),id:String(item.id)}; touched.set(digest(ref),{ref,deleted:item.properties===null}); }
     for (const item of changes.links) { const ref={type:String(item.from_type),id:String(item.from_id)}; if(!touched.has(digest(ref)))touched.set(digest(ref),{ref,deleted:false}); }
     const edge = (item: Record<string, any>): LinkData => ({ type: item.type, from: { type: item.from_type, id: item.from_id }, to: { type: item.to_type, id: item.to_id } });
-    for (const item of changes.links) if (await this.linkConflict(model, owner, item, client))
+    if ((await this.conflictingLinks(model, owner, changes.links, client)).size)
       throw new Conflict('Scenario link conflicts with current data or cardinality; rebase or propose and review again');
     await this.validateSteps(graph, view, row, actions, changes, async candidate => {
       evidenceCheck?.assertComplete();
       await validateWorkflow?.(candidate);
       await scope.validate?.(candidate, [...touched.values()], changes.links.map(edge));
     }, scope.validateAction, evidenceCheck?.check);
-    for (const item of changes.links) {
-      if (item.removed) await graph.unlink(edge(item));
-    }
+    await graph.unlinkScenarioLinks(changes.links.filter(item => item.removed).map(edge));
+    const batch: ScenarioObjectWrite[] = [];
     for (const item of changes.objects) {
       const ref: ObjectRef = { type: item.type, id: item.id };
-      if (item.properties === null) { if (item.base_revision !== null) await graph.remove(ref, currentRevisions.get(item)!); }
-      else if (item.base_revision === null) await graph.create(ref, item.properties);
-      else {
-        const fields = Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]]));
-        await graph.edit(ref, currentRevisions.get(item)!, fields);
+      if (item.properties === null || ref.type === documentChunkType) {
+        if (batch.length) await graph.writeScenarioObjects(batch.splice(0));
+        if (item.properties === null) {
+          if (item.base_revision !== null) await graph.remove(ref, currentRevisions.get(item)!);
+        } else if (item.base_revision === null) await graph.create(ref, item.properties);
+        else await graph.edit(ref, currentRevisions.get(item)!,
+          Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]])));
+        continue;
       }
+      batch.push(item.base_revision === null ? { ref, fields: item.properties } : {
+        ref, revision: currentRevisions.get(item)!,
+        fields: Object.fromEntries(editedFields(item).map(field => [field, item.properties?.[field]])),
+      });
     }
-    for (const item of changes.links) if (!item.removed) await graph.link(edge(item));
+    await graph.writeScenarioObjects(batch);
+    await graph.linkBatch(changes.links.filter(item => !item.removed).map(edge), true);
     await this.db.query(`UPDATE ${this.db.schema}.scenarios SET state='merged',revision=revision+1 WHERE owner=$1 AND id=$2`, [owner, id], client);
     if (row.workflow_run_id && !(await this.db.query(
       `UPDATE ${this.db.schema}.workflow_runs SET state='completed',step=step+1,updated_at=now() WHERE id=$1 AND proposal_deadline>clock_timestamp()`,
