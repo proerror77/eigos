@@ -35,13 +35,13 @@ export class ModelEgressDenied extends Error {
 export class ModelEgress {
   constructor(private readonly db: Database, private readonly owner: string,
     private readonly model: string, private readonly provider?: string) {}
-  async decide(required: Classification) {
+  async decide(required: Classification, requireExplicit = false) {
     const provider = this.provider;
     const row = provider ? (await this.db.query(`SELECT active,clearance FROM ${this.db.schema}.model_clearances
       WHERE owner=$1 AND provider=$2 AND model=$3`, [this.owner, provider, this.model])).rows[0] : undefined;
     // The built-in transport has a pinned provider. Other external destinations require an exact grant.
     const clearance = row ? (row.active === true ? classificationSchema.parse(row.clearance) : undefined)
-      : !provider || provider === harnessProvider ? internalClassification : undefined;
+      : !requireExplicit && (!provider || provider === harnessProvider) ? internalClassification : undefined;
     const allowed = Boolean(clearance && allowsClassification(clearance, required));
     return { allowed, clearance, policyDigest: digest({ provider: provider ?? 'local-runtime', model: this.model, clearance: clearance ?? null }) };
   }

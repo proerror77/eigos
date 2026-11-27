@@ -48,6 +48,8 @@ export type FunctionDependencies = z.infer<typeof functionDependenciesSchema>;
  */
 export const componentImplementationSchema = z.strictObject({
   kind: z.literal('component'),
+  models: z.array(name).min(1).max(16).refine(items=>new Set(items).size===items.length).optional(),
+  stream: z.literal('text').optional(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   limits: z.strictObject({
     fuel: z.number().int().min(1).max(200_000_000_000),
@@ -161,6 +163,7 @@ export const ontologySchema = z.strictObject({
     ...metadata,source: name.optional(), edits: z.boolean().optional(), version: z.string().min(1).max(100).optional(),
     dependencies:functionDependenciesSchema.optional(), implementation: componentImplementationSchema.optional(),
   }).refine(fn => !fn.implementation || semanticVersion.test(fn.version ?? ''), 'A component Function needs a semantic version such as 1.0.0')
+    .refine(fn => !fn.edits || !(fn.implementation?.models || fn.implementation?.stream), 'Model or streaming Functions must be read-only')
     .refine(fn => !fn.implementation || !fn.source || !fn.edits, 'A component edit Function uses Source writes through a committed Action effect')),
   actionTypes: z.array(z.strictObject({
     apiName: name, description: z.string().min(1),...metadata, parameters: jsonSchema, objectParameters: z.record(name, name),

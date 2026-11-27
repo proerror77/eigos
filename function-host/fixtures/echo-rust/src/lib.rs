@@ -32,6 +32,18 @@ fn ontology(input: &str) -> Option<Result<String, Failure>> {
     for _ in 0..times {
         let answer = match op {
             "get" => eigos::function::ontology::get(&arg(0), &arg(1)),
+            "generate" => {
+                let failure = |e: eigos::models::language_model::Failure| Failure { code:e.code, message:e.message };
+                eigos::models::language_model::generate(&arg(0), &arg(1)).map_err(failure)
+                    .and_then(|_| {
+                        let mut text=String::new();
+                        while let Some(chunk)=eigos::models::language_model::next().map_err(failure)? {
+                            eigos::function::streaming::emit(&chunk)?;
+                            text.push_str(&chunk);
+                        }
+                        Ok(Some(serde_json::json!(text).to_string()))
+                    })
+            },
             "outgoing" => eigos::http::outgoing::send(&arg(0)).map(Some)
                 .map_err(|failure| Failure { code: failure.code, message: failure.message }),
             "follow" => eigos::function::ontology::follow(&arg(0), &arg(1)).map(Some),

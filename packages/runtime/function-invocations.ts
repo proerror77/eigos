@@ -6,6 +6,7 @@ import type { Database } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 
 export type FunctionInvocationMetrics = {
+  modelUsage?: {alias:string;provider:string;model:string;calls:number;reportedCalls:number;inputTokens:number;outputTokens:number}[];
   fuelUsed?: number;
   hostMs?: number;
   callbacks: Record<string, { count: number; durationMs: number }>;
@@ -23,7 +24,7 @@ export const functionInvocationsQuery = z.strictObject({
 type InvocationRow = {
   id: string; version: string | null; release: string; owner: string; started_at: Date;
   duration_ms: number; host_ms: number | null; fuel_used: number | null;
-  callbacks: FunctionInvocationMetrics['callbacks']; error_code: string | null;
+  model_usage: FunctionInvocationMetrics['modelUsage']; callbacks: FunctionInvocationMetrics['callbacks']; error_code: string | null;
 };
 
 export async function initializeFunctionInvocations(db: Database) {
@@ -34,6 +35,7 @@ export async function initializeFunctionInvocations(db: Database) {
     duration_ms integer NOT NULL, host_ms integer, fuel_used double precision,
     callbacks jsonb NOT NULL, error_code text
   );
+  ALTER TABLE ${db.schema}.function_invocations ADD COLUMN IF NOT EXISTS model_usage jsonb;
   CREATE INDEX IF NOT EXISTS function_invocations_lookup ON ${db.schema}.function_invocations(owner,ontology,function_name,id DESC);
   CREATE INDEX IF NOT EXISTS function_invocations_age ON ${db.schema}.function_invocations(started_at);`);
 }
@@ -68,10 +70,10 @@ export class FunctionInvocations {
       // The measurement describes the Function call, including attempts that an Action later rolls back.
       // An asynchronous insert can obtain its own connection after the caller releases its transaction.
       const write = this.db.query(`INSERT INTO ${this.db.schema}.function_invocations
-        (owner,ontology,function_name,version,release,started_at,duration_ms,host_ms,fuel_used,callbacks,error_code)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [
+        (owner,ontology,function_name,version,release,started_at,duration_ms,host_ms,fuel_used,callbacks,error_code,model_usage)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [
         principal.owner, model.document.id, name, version ?? null, model.release, startedAt,
-        Math.round(performance.now() - start), metrics.hostMs ?? null, metrics.fuelUsed ?? null, metrics.callbacks, errorCode,
+        Math.round(performance.now() - start), metrics.hostMs ?? null, metrics.fuelUsed ?? null, metrics.callbacks, errorCode, metrics.modelUsage ? JSON.stringify(metrics.modelUsage) : null,
       ]).then(() => {}).catch(() => { console.error('Could not record Function invocation'); });
       let pending = pendingWrites.get(this.db);
       if (!pending) {
@@ -89,7 +91,7 @@ export class FunctionInvocations {
     access.require(model.document.id, 'view_definition', model.document.id);
     access.function(model, input.function);
     const rows = (await this.db.query<InvocationRow>(`SELECT id::text,version,release,owner,started_at,duration_ms,host_ms,
-      fuel_used,callbacks,error_code FROM ${this.db.schema}.function_invocations
+      fuel_used,callbacks,error_code,model_usage FROM ${this.db.schema}.function_invocations
       WHERE owner=$1 AND ontology=$2 AND function_name=$3 AND ($4::bigint IS NULL OR id<$4::bigint)
         AND started_at>=now()-interval '30 days' ORDER BY function_invocations.id DESC LIMIT $5`,
     [access.principal.owner, model.document.id, input.function, input.before ?? null, input.limit + 1])).rows;
@@ -99,7 +101,7 @@ export class FunctionInvocations {
     const items = rows.slice(0, input.limit).map(row => ({
       id: row.id, function: input.function, version: row.version, release: row.release, owner: row.owner,
       startedAt: row.started_at, durationMs: row.duration_ms, hostMs: row.host_ms,
-      fuelUsed: row.fuel_used, callbacks: row.callbacks, status: row.error_code === null ? 'returned' : 'failed', errorCode: row.error_code,
+      fuelUsed: row.fuel_used, ...(row.model_usage ? {modelUsage:row.model_usage} : {}), callbacks: row.callbacks, status: row.error_code === null ? 'returned' : 'failed', errorCode: row.error_code,
     }));
     return { items, ...(rows.length > items.length ? { cursor: items.at(-1)!.id } : {}) };
   }

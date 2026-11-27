@@ -1,0 +1,9 @@
+package eigos:models@0.1.0;
+
+interface language-model {
+  record failure { code: string, message: string }
+  /// Open one generated response on this invocation. Messages are a JSON array.
+  generate: func(alias: string, messages: string) -> result<_, failure>;
+  /// Read the next UTF-8 text segment; none marks completion.
+  next: func() -> result<option<string>, failure>;
+}

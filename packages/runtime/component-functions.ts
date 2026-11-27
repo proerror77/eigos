@@ -1,3 +1,4 @@
+import { configuredComponentModels } from './component-models.js';
 import { createHash } from 'node:crypto';
 import { Conflict, FunctionFailed, InvalidInput, PermissionDenied, ResourceExhausted, ServiceUnavailable, type Principal } from '../core/identity.js';
 import type { Ontology } from '../ontology/model.js';
@@ -32,7 +33,13 @@ export async function initializeFunctionArtifacts(db: Database) {
  */
 export class ComponentFunctions {
   constructor(private readonly db: Database, private readonly host: () => Promise<FunctionHostClient> | undefined = defaultFunctionHost,
-    private readonly sources?: ConfiguredComponentSources) {}
+    private readonly sources?: ConfiguredComponentSources, private readonly models = configuredComponentModels(db)) {}
+
+  modelBinding(aliases?: readonly string[]) {
+    if (!aliases) return;
+    if (!this.models) throw new ServiceUnavailable('Component model aliases are unavailable');
+    return this.models.binding(aliases);
+  }
 
   sourceBinding(source: string) {
     if (!this.sources) throw new ServiceUnavailable('Component HTTP Sources are unavailable');
@@ -64,7 +71,10 @@ export class ComponentFunctions {
     try { maxima = (await host.health()).maxima; } catch (error) { throw this.refusal(host, error); }
     if (functions.some(fn => fn.source) && !await host.supports(3))
       throw new ServiceUnavailable('Component HTTP Sources require a protocol 3 function host');
+    if (functions.some(fn => fn.implementation?.models || fn.implementation?.stream) && !await host.supports(4))
+      throw new ServiceUnavailable('Model and streaming Functions require a protocol 4 host');
     for (const fn of functions) {
+      this.modelBinding(fn.implementation?.models);
       if (fn.source) this.sourceBinding(fn.source);
       const { sha256, limits } = fn.implementation!;
       const over = (['fuel', 'memoryMb', 'deadlineMs', 'inputBytes', 'outputBytes'] as const)
@@ -106,7 +116,34 @@ export class ComponentFunctions {
     }) : undefined;
     if (source && (!outgoing || !await host.supports(3)))
       throw new ServiceUnavailable('Component HTTP Sources require a configured protocol 3 function host');
-    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer, { outgoing, timings: options.metrics?.callbacks }) : undefined;
+    const controller = new AbortController();
+    const bounded = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(limits.deadlineMs)]);
+    let generating: AsyncGenerator<string> | undefined, emitted = 0, modelCalls = 0;
+    const modelOps = context && (implementation.stream || implementation.models) ? {
+      generate: (alias: string, messages: unknown) => {
+        if (!implementation.models?.includes(alias) || !this.models || context.objects.model.scenario || context.scenarioEvaluation)
+          throw new PermissionDenied('Model capability is unavailable');
+        if (generating || ++modelCalls > 8) throw new Conflict('Model call limit reached');
+        generating = this.models.generate(alias, messages, context, bounded, options.metrics);
+      },
+      next: async () => {
+        if (!generating) throw new InvalidInput('No model generation in progress');
+        const part = await generating.next();
+        if (part.done) { generating = undefined; return null; }
+        return part.value;
+      },
+      emit: async (text: string) => {
+        if (!implementation.stream) throw new PermissionDenied('Streaming is not declared');
+        emitted += Buffer.byteLength(text);
+        if (emitted > (limits.outputBytes ?? 1 << 20)) throw new InvalidInput('Stream exceeded its output byte limit');
+        bounded.throwIfAborted();
+        await context.assertCurrent?.();
+        if (!await context.objects.access.canDisclose(context.objects.access.requirements())) throw new PermissionDenied('Result permissions changed');
+        await context.onChunk?.(text);
+      },
+    } : undefined;
+    if (modelOps && !await host.supports(4)) throw new ServiceUnavailable('Component needs a protocol 4 function host');
+    const session = context && await host.supports(2) ? await functionCallbacks.open(this.db, context, options.writer, { outgoing, models: modelOps, timings: options.metrics?.callbacks }) : undefined;
     let outcome: FunctionOutcome;
     try {
       try { outcome = await host.invoke(implementation.sha256, input, limits, signal, session?.callback); }
@@ -120,7 +157,9 @@ export class ComponentFunctions {
       if (signal.aborted) throw signal.reason;
       throw this.refusal(host, error);
     } finally {
+      controller.abort();
       session?.close();
+      await generating?.return(undefined).catch(() => {});
     }
     if (options.metrics) {
       options.metrics.fuelUsed = outcome.fuelUsed;

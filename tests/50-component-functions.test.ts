@@ -478,3 +478,75 @@ test('a published component embedding Function indexes and ranks the caller’s 
     assert(result.items[0]!.score > result.items[1]!.score);
   } finally { await f.close(); }
 });
+
+test('a published component streams authorized model chunks to the PA before completion and records actual tokens', { skip }, async () => {
+  const { ComponentModels } = await import('../packages/runtime/component-models.js');
+  const { setModelClearance } = await import('../packages/runtime/model-egress.js');
+  const { OntologyClient } = await import('../packages/sdk/client.js');
+  const config = { Writer: {provider:'Synthetic',model:'fixture-v1',endpoint:'https://models.example.invalid/v1/chat/completions',
+    secret:'writer',maxTokens:24} };
+  let releaseSecond!: () => void;
+  let allowSecond = new Promise<void>(resolve => { releaseSecond = resolve; });
+  const calls: string[] = [];
+  const extensions = { componentModels: (db:typeof f.db) => new ComponentModels(db,config,{get:async ()=>'synthetic-model-key'},async (url,init) => {
+    calls.push(String(url));
+    assert.equal(new Headers(init?.headers).get('authorization'),'Bearer synthetic-model-key');
+    const body=JSON.parse(String(init?.body));
+    assert.equal(body.model,'fixture-v1');
+    assert.equal(body.stream,true);
+    assert.deepEqual(body.messages,[{role:'user',content:'synthetic input'}]);
+    const encoder=new TextEncoder();
+    const part=(value:unknown)=>encoder.encode('data: '+JSON.stringify(value)+'\r\n\r\n');
+    return new Response(new ReadableStream<Uint8Array>({async start(controller) {
+      controller.enqueue(part({choices:[{delta:{content:'first'}}]}));
+      await allowSecond;
+      controller.enqueue(part({choices:[{delta:{content:'second'}}]}));
+      controller.enqueue(part({choices:[],usage:{prompt_tokens:7,completion_tokens:2}}));
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));controller.close();
+    }}),{headers:{'content-type':'text/event-stream'}});
+  }) };
+  const f: Awaited<ReturnType<typeof fixture>> = await fixture(undefined,undefined,undefined,undefined,undefined,extensions);
+  const token='synthetic-model-streaming-token-access';
+  const gateway=createApp(readConfig({DATABASE_URL:process.env.EIGOS_TEST_DATABASE_URL,EIGOS_AUTH_MODE:'development',EIGOS_DEV_TOKEN:token}),
+    f.db,f.source,async () => principal,extensions);
+  const server=gateway.app.listen(0,'127.0.0.1');
+  try {
+    await new Promise<void>(resolve=>server.once('listening',resolve));
+    const port=(server.address() as {port:number}).port;
+    const client=new OntologyClient({baseUrl:`http://127.0.0.1:${port}/`,token});
+    const {sha256}=await new ComponentFunctions(f.db).upload(await component('echo_rust'),principal);
+    const document=structuredClone(f.model.document);
+    document.functionTypes.push(echoFunction(sha256,{apiName:'ModelWriter',returns:{type:'object'},
+      implementation:{...implementation(sha256),limits:{...limits,deadlineMs:15000},models:['Writer'],stream:'text'}}));
+    const model=await f.metadata.publish(document,f.capabilities,f.publisher);
+    await setGrants(f.db,principal.owner,businessGrants(model));
+    const input={ontology:{op:'generate',args:['Writer',[{role:'user',content:'synthetic input'}]]}};
+    await assert.rejects(client.evaluateStream('ModelWriter',input).next());
+    assert.deepEqual(calls,[]);
+    await setModelClearance(f.db,{owner:principal.owner,provider:'Synthetic',model:'fixture-v1',clearance:{sensitivity:'INTERNAL',compartments:[]}});
+    const stream=client.evaluateStream<{result:string}>('ModelWriter',input,{signal:AbortSignal.timeout(20000)});
+    assert.deepEqual((await stream.next()).value,{type:'chunk',text:'first'});
+    releaseSecond();
+    assert.deepEqual((await stream.next()).value,{type:'chunk',text:'second'});
+    assert.deepEqual((await stream.next()).value,{type:'result',value:{result:'firstsecond'}});
+    assert((await stream.next()).done);
+    assert.equal(calls.length,1);
+    const reporter=new FunctionInvocations(f.db);
+    const access=await Access.load(f.db,principal);
+    const read=async ()=>(await reporter.list(access,model,functionInvocationsQuery.parse({function:'ModelWriter'}))).items.find(i=>i.status==='returned');
+    let success=await read();
+    const until=Date.now()+3000;
+    while (!success && Date.now()<until) {await delay(20);success=await read();}
+    assert.deepEqual(success?.modelUsage,[{alias:'Writer',provider:'Synthetic',model:'fixture-v1',calls:1,reportedCalls:1,inputTokens:7,outputTokens:2}]);
+    allowSecond = new Promise<void>(resolve => { releaseSecond = resolve; });
+    const revoked=client.evaluateStream('ModelWriter',input,{signal:AbortSignal.timeout(20000)});
+    assert.deepEqual((await revoked.next()).value,{type:'chunk',text:'first'});
+    await setModelClearance(f.db,{owner:principal.owner,provider:'Synthetic',model:'fixture-v1',active:false,clearance:{sensitivity:'INTERNAL',compartments:[]}});
+    releaseSecond();
+    await assert.rejects(revoked.next(),/stream failed/i);
+    assert.equal(calls.length,2);
+    const otherInput={ontology:{op:'generate',args:['Undeclared',[{role:'user',content:'synthetic input'}]]}};
+    await assert.rejects(client.evaluateStream('ModelWriter',otherInput).next());
+    assert.equal(calls.length,2);
+  } finally {releaseSecond();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await f.close();}
+});
