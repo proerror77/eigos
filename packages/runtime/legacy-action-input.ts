@@ -19,9 +19,11 @@ export function legacyActionInput(wait: ActionContinuation) {
 
 export function applyLegacyActionInput(task: Task, input: unknown): Task['input'] {
   const wait = task.input.placeContinuation;
-  if (wait?.waitingFor && wait.waitingFor !== 'pa-request') {
+  const place = placeAnswer.safeParse(input);
+  if (!place.success) {
     const answer = taskInputAnswerSchema.parse(input);
-    if (answer.kind !== wait.waitingFor || z.object({ kind: z.string() }).parse(task.result).kind !== answer.kind)
+    const displayed = z.object({ kind: z.string() }).safeParse(task.result);
+    if (answer.kind !== wait?.waitingFor || !displayed.success || displayed.data.kind !== answer.kind)
       throw new Conflict('The original Action is not waiting for this input');
     switch (answer.kind) {
       case 'city': return { ...task.input, rideCity: answer.city };
@@ -30,7 +32,7 @@ export function applyLegacyActionInput(task: Task, input: unknown): Task['input'
       case 'retry-source': return task.input;
     }
   }
-  const answer = placeAnswer.parse(input);
+  const answer = place.data;
   const candidates = placeChoicesSchema.safeParse(task.result);
   if (!candidates.success) throw new Conflict('The original task has no place candidates');
   const choices = candidates.data;
