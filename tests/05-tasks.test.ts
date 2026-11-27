@@ -10,6 +10,7 @@ import { upgradePublicationStorage } from '../packages/runtime/upgrade.js';
 import { Tasks } from '../packages/runtime/tasks.js';
 import { ProviderBudgetExceeded, ProviderBudgets } from '../packages/runtime/provider-budgets.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
+import { ExternalOperations } from '../packages/runtime/external-operations.js';
 import { Worker } from '../apps/worker/worker.js';
 import { OntologyAgent } from '../packages/runtime/agent.js';
 import { harnessProvider } from '../packages/runtime/model-egress.js';
@@ -76,6 +77,105 @@ test('owner turns admit another owner before the first of 1,000 tasks finishes a
     await f.db.query(`UPDATE ${f.db.schema}.tasks SET lease_until=now()-interval '1 second' WHERE request_id='backlog-1'`);
     assert.deepEqual([await next(), await next()], ['backlog-1', undefined]);
   } finally { await f.close(); }
+});
+
+test('a cumulative Source quota admits only its concurrent share and resets at a UTC boundary', async () => {
+  const f = await fixture();
+  try {
+    const budgets = new ProviderBudgets(f.db, {}, { Didi: { period: 'month', calls: 2 } });
+    const takes = await Promise.allSettled(Array.from({ length: 8 }, () => budgets.take('quota-owner', 'Didi')));
+    assert.equal(takes.filter(take => take.status === 'fulfilled').length, 2);
+    for (const take of takes) {
+      if (take.status !== 'rejected') continue;
+      assert(take.reason instanceof ProviderBudgetExceeded);
+      const expected = new Date(take.reason.until);
+      assert.equal(expected.getUTCDate(), 1);
+      assert.equal(expected.getUTCHours(), 0);
+      assert(Date.parse(take.reason.until) > Date.now());
+    }
+    await budgets.take('quota-other-owner', 'Didi');
+    await budgets.take('quota-owner', 'Amap');
+    await f.db.query(`UPDATE ${f.db.schema}.provider_quotas SET period_start=
+      (date_trunc('month',statement_timestamp() AT TIME ZONE 'UTC')-interval '1 month') AT TIME ZONE 'UTC'
+      WHERE owner='quota-owner' AND provider='Didi'`);
+    await budgets.take('quota-owner', 'Didi');
+    assert.equal((await f.db.query(`SELECT calls FROM ${f.db.schema}.provider_quotas
+      WHERE owner='quota-owner' AND provider='Didi'`)).rows[0]!.calls, 1);
+
+    const combined = new ProviderBudgets(f.db, { Didi: { perMinute: 0.1, burst: 1 } }, { Didi: { period: 'day', calls: 2 } });
+    await combined.take('quota-rate-owner', 'Didi');
+    await assert.rejects(combined.take('quota-rate-owner', 'Didi'), ProviderBudgetExceeded);
+    assert.equal((await f.db.query(`SELECT calls FROM ${f.db.schema}.provider_quotas
+      WHERE owner='quota-rate-owner' AND provider='Didi'`)).rows[0]!.calls, 1);
+  } finally { await f.close(); }
+});
+
+test('an Action write budget defers the original effect and leaves blocked dispatch retryable', async () => {
+  const f = await fixture();
+  const action = 'WriteBudgetProbe', budgetKey = 'Eigos/' + action;
+  const originalRates = process.env.EIGOS_ACTION_WRITE_RATES;
+  process.env.EIGOS_ACTION_WRITE_RATES = JSON.stringify({ [budgetKey]: { perMinute: 1, burst: 1 } });
+  try {
+    const deliveries: string[] = [];
+    const dispatches: string[] = [];
+    const writes = new ExternalOperations(f.db);
+    const parameters = { type: 'object', properties: { id: { type: 'string' }, queue: { type: 'boolean' } }, required: ['id','queue'] };
+    const definition = { apiName: 'writeBudgetProbe', description: 'Test write admission without a provider',
+      version: '1', edits: true, parameters,
+      returns: { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type','id'] } };
+    const capabilities = createCapabilities(f.db, f.source, {
+      functions: [{ definition, implementationId: 'synthetic-write-budget-v1', async handler(input, context) {
+        const id = String(input.id), ref = { type: 'Route', id };
+        await writes.run(context.principal.owner, id, { id }, context.assertDispatch!, async () => {
+          dispatches.push(id);
+          return { id };
+        }, context.objects);
+        if (input.queue) context.deferEffect!({ name: 'Deliver', handler: 'BudgetDeliveryProbe', payload: { id } });
+        return context.edit!(ref, async graph => { await graph.create(ref, { id, name: 'Synthetic budget probe' }); });
+      } }],
+      effects: new Map([['BudgetDeliveryProbe', async (_payload, context) => { deliveries.push(context.idempotencyKey); }]]),
+    });
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(definition);
+    document.actionTypes.push({ apiName: action, description: 'Synthetic external write', parameters,
+      objectParameters: {}, submissionCriteria: [], function: definition.apiName });
+    const model = await f.metadata.publish(document, capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const apply = async (id: string, queue: boolean) =>
+      capabilities.actions.apply(await Access.load(f.db, principal), model, action, { id, queue }, id);
+    const first = 'original-write-budget-probe';
+    assert.deepEqual(await apply(first, true), { type: 'Route', id: first });
+    assert.deepEqual(await apply(first, true), { type: 'Route', id: first });
+    const second = 'deferred-write-budget-probe';
+    await assert.rejects(apply(second, false), ProviderBudgetExceeded);
+    assert.equal(await writes.inspect(principal.owner, second), null);
+    assert.deepEqual(dispatches, [first]);
+    await new ProviderBudgets(f.db, { [budgetKey]: { perMinute: 1, burst: 1 } }, {}).take(principal.owner, budgetKey);
+
+    assert(await capabilities.effects.runOne());
+    assert.deepEqual(deliveries, []);
+    const access = await Access.load(f.db, principal);
+    const [pending] = await capabilities.effects.status(access, first);
+    assert.equal(pending!.state, 'pending');
+    assert.equal(pending!.attempts, 0);
+    assert.equal(await capabilities.effects.runOne(), false);
+    const refill = () => f.db.query(`UPDATE ${f.db.schema}.action_write_budgets
+      SET refilled_at=statement_timestamp()-interval '2 minutes' WHERE action_key=$1`, [budgetKey]);
+    await refill();
+    await f.db.query(`UPDATE ${f.db.schema}.action_effects SET available_at=now() WHERE id=$1`, [pending!.id]);
+    assert(await capabilities.effects.runOne());
+    assert.deepEqual(deliveries, [pending!.id]);
+    const [completed] = await capabilities.effects.status(access, first);
+    assert.equal(completed!.state, 'completed');
+    assert.equal(completed!.attempts, 1);
+    await refill();
+    assert.deepEqual(await apply(second, false), { type: 'Route', id: second });
+    assert.deepEqual(dispatches, [first, second]);
+  } finally {
+    if (originalRates === undefined) delete process.env.EIGOS_ACTION_WRITE_RATES;
+    else process.env.EIGOS_ACTION_WRITE_RATES = originalRates;
+    await f.close();
+  }
 });
 
 test('a provider call over its owner budget waits: the call is deferred and the Worker resumes the task later', async () => {

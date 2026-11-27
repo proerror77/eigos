@@ -4,6 +4,7 @@ import { Conflict, digest, type Principal } from '../core/identity.js';
 import { Access, type Requirement } from './access.js';
 import type { Database, Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
+import { ActionWriteBudgets, ProviderBudgetExceeded } from './provider-budgets.js';
 
 export async function initializeEffects(db: Database) {
   await db.query(`CREATE TABLE IF NOT EXISTS ${db.schema}.action_effects (
@@ -26,7 +27,10 @@ export interface EffectContext { idempotencyKey: string; principal: Principal; s
 export type EffectHandler = (payload: Record<string, unknown>, context: EffectContext) => Promise<void | 'canceled'>;
 export interface ActionEffect { name: string; handler: string; payload: Record<string, unknown> }
 export class Effects {
-  constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>) {}
+  private readonly writeBudgets: ActionWriteBudgets;
+  constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>) {
+    this.writeBudgets = new ActionWriteBudgets(db);
+  }
   check(names: readonly string[]) {
     for (const name of names) if (!this.handlers.has(name)) throw new Error(`Action effect handler is unavailable: ${name}`);
   }
@@ -86,7 +90,7 @@ export class Effects {
     timer.unref();
     try {
       await this.db.withOwner(claim.owner, async () => {
-        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload
+        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload,effect.ontology,effect.action
           FROM ${this.db.schema}.action_effects effect
           JOIN ${this.db.schema}.actions committed
             ON committed.owner=effect.owner AND committed.request_id=effect.request_id
@@ -100,6 +104,15 @@ export class Effects {
         if (!await access.canReturn(row.requirements)) throw new Error('Effect data permissions changed');
         for (const requirement of row.requirements as Requirement[]) access.require(requirement.ontology, requirement.permission, requirement.resource);
         this.check([row.handler]);
+        executionSignal.throwIfAborted();
+        try {
+          await this.writeBudgets.take(claim.owner, undefined, `${row.ontology}/${row.action}`);
+        } catch (error) {
+          if (!(error instanceof ProviderBudgetExceeded)) throw error;
+          await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='pending',lease_until=NULL,token=NULL,
+            available_at=$4,attempts=attempts-1 WHERE id=$1 AND owner=$2 AND token=$3`, [...lease, error.until]);
+          return;
+        }
         executionSignal.throwIfAborted();
         const outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: claim.id, principal, signal: executionSignal });
         executionSignal.throwIfAborted();

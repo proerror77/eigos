@@ -19,6 +19,7 @@ import { ActionInputRequired, Clarification, actionContinuationSchema } from './
 import { assertActionConfirmed } from './action-confirmation.js';
 import { appendTrace } from './execution-trace.js';
 import { capturingDecisionReads } from './decision-evidence.js';
+import { withActionWriteBudget } from './provider-budgets.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
 
@@ -124,7 +125,8 @@ export class Actions {
   }
   apply(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>, requestId: string, beforeCommit?: (client: Sql) => Promise<void>, execution?: FunctionContext['execution'], signal = AbortSignal.timeout(120000), executor?: ExecutionActor, scenarioEvaluation?: ScenarioEvaluation) {
     return timeOperation('action_apply',
-      () => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation), actionName);
+      () => withActionWriteBudget(model.document.id, actionName,
+        () => this.execute(access, model, actionName, raw, requestId, beforeCommit, execution, signal, executor, scenarioEvaluation)), actionName);
   }
   private async execute(access: Access, model: PublishedOntology, actionName: string, raw: Record<string, unknown>,
     requestId: string, beforeCommit: ((client: Sql) => Promise<void>) | undefined, execution: FunctionContext['execution'],
