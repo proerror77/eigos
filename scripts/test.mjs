@@ -6,7 +6,7 @@ import pg from 'pg';
 
 const args = process.argv.slice(2);
 const agentEval = args.includes('--agent-eval'), e2e = args.includes('--e2e'), suite = args.find(arg => arg.startsWith('--suite='))?.split('=')[1];
-const files = e2e ? ['dist/tests/e2e/gateway.test.js'] : readdirSync('tests').filter(name => /^\d\d-.+\.test\.ts$/.test(name) && (!suite || name.startsWith(suite.padStart(2, '0') + '-'))).map(name => 'tests/' + name);
+const files = e2e ? readdirSync('dist/tests/e2e').filter(name => name.endsWith('.test.js')).map(name => 'dist/tests/e2e/' + name) : readdirSync('tests').filter(name => /^\d\d-.+\.test\.ts$/.test(name) && (!suite || name.startsWith(suite.padStart(2, '0') + '-'))).map(name => 'tests/' + name);
 if (!files.length && !agentEval) throw new Error('No test files selected');
 const childArgs = agentEval
   ? ['--import', 'tsx', 'scripts/evaluate-agent.ts', ...args.filter(arg => arg !== '--agent-eval')]

@@ -7,15 +7,7 @@ import { bookImmediateRideAction, immediateRideInterface, immediateRideType, rec
 import { amapObservations } from './amap-observations.js';
 import type { OntologyDocument } from './schema.js';
 
-export const sandboxAgentCapability = { kind: 'agent-capability', name: 'sandbox' } as const;
-
-// Releases before the capability tag use these same published API names.
-export const historicalAgentSandboxResources = {
-  actions: ['CreateStripeSandboxOrder', 'RecoverStripeSandboxOrder', 'PrepareStripeLinkPayment',
-    'HandoffStripeLinkPayment', 'RefreshStripeLinkPayment', 'PrepareDiningTestReservation',
-    'PrepareDiningMiniProgramTestReservation', 'SubmitDiningTestReservation', 'RefreshDiningTestReservation'],
-  objects: ['StripeSandboxOrder', 'StripeLinkPayment', 'DiningReservation'],
-};
+export { sandboxAgentCapability, historicalAgentSandboxResources } from './sandbox.js';
 export type AgentProfile = NonNullable<OntologyDocument['agentProfiles']>[number];
 
 /** Tool discovery profiles shipped in the EIGOS definition. Terms only preload definitions. */

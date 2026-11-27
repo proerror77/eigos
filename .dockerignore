@@ -3,6 +3,7 @@
 !package-lock.json
 !.npmrc
 !tsconfig.json
+!tsconfig.engine.json
 !Dockerfile
 !.dockerignore
 !apps/
@@ -10,5 +11,9 @@
 !packages/
 !packages/**
 !scripts/build.mjs
+!scripts/build-engine.mjs
+!scripts/manage-installation.ts
+!scripts/generate-ontology-sdk.ts
+!scripts/eigos-administration.ts
 !scripts/ontology.ts
 !scripts/account-command.ts

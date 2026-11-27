@@ -63,9 +63,9 @@ Worker 校验调用者、原任务、方法、输入摘要、结果摘要、类�
 
 1. 用户明确要求即时叫车时，原 PA 调用 `ImmediateRideBooking.book` 或 `bookWithEndpoints`。任务先发出 `didi.authorize` 请求。PA 已接通个人滴滴 MCP 时，确认所需工具并回传该连接的随机引用。缺连接时，PA 展示请求中的[滴滴官方申请入口](https://mcp.didichuxing.com/)，保留原请求。用户在滴滴开通 Key 并存在 PA 私有配置里，回到原对话后由 PA 通过 `respond_to_task` 继续。
 2. 同一个连接用于解析地址和询价。PA 展示起终点、车型、价格和有效期，用户确认一项后才应答 `ride.confirm_immediate_order`。
-3. Worker 记录唯一发单请求后发出 `didi.place_order`。PA 执行器重查原任务，以同一连接验价并使用新报价的 traceId。若车型和价格仍匹配，才从 PA 调用滴滴发单。PA 在私有目录持久化派发与回执。无法确定是否发单时保留未知状态，避免重复叫车。
-4. PA 通过同一个 `respond_to_task` 返回下单回执和单独查询到的原订单状态。EIGOS 将准确订单号、状态和证据 `pa_reported` 写入原任务和本体。收到确认号但是原单读回未完成时，结果显示 `submitted`。
+3. Worker 记录唯一发单请求后发出带 `dispatchProtocol: "server-claim-v1"` 的 `didi.place_order`。PA 用原连接重新验价。车型和价格仍匹配时，PA 在调用滴滴前通过 `claim_task_dispatch` 或 `POST /tasks/:id/pa-dispatch-claim` 领取派发权。EIGOS 复核原任务、发布版本、原 PA 身份、当前权限和报价有效期，只向一个执行器返回 `dispatchToken`。PA 在私有目录持久化原单回执及回传凭据。领取后出现断线或结果不明时，只核对原操作。
+4. 持有派发权的 PA 通过 `respond_to_task` 返回下单回执、单独查询到的原订单状态及外层 `dispatchToken`。EIGOS 将准确订单号、状态和证据 `pa_reported` 写入原任务和本体。收到确认号但是原单读回未完成时，结果显示 `submitted`。
 
 生产开通需要 Gateway 和 Worker 同时设置 `EIGOS_DIDI_PA_ORDERS_ENABLED=true`。对单个已开通账号运行 `npm run account -- grant-didi-pa-orders <owner|email>`，为其安装滴滴交易授权。原 PA 使用该用户自己的滴滴连接和发单权限。已有全组授权命令适用于获准的整个测试批次。原任务之外的主动跟单、取消和付款使用各自的授权。
 
-PA 主机可以接入 `DidiPA` SDK，复用发起任务时的 EIGOS 客户端。对支持 HTTP 的 PA，构建后可运行 `node dist/scripts/didi-pa.js <taskId>`。用 PA 主机的私有配置提供 `EIGOS_PA_URL`、原 EIGOS 客户端的 `EIGOS_PA_TOKEN`、个人滴滴 Key 文件路径 `EIGOS_PA_DIDI_KEY_FILE`、稳定私有目录 `EIGOS_PA_DIDI_DIRECTORY` 和 64 位十六进制本地连接标识 `EIGOS_PA_DIDI_CONNECTION`。原 PA 自己处理用户确认。只对收到用户确认后生成的 `didi.place_order` 请求使用 `--dispatch-approved-order`。同一 PA 安装应使用同一个目录保存派发记录。
+PA 主机可以接入 `DidiPA` SDK，复用发起任务时的 EIGOS 客户端。对支持 HTTP 的 PA，构建后可运行 `node dist/scripts/didi-pa.js <taskId>`。用 PA 主机的私有配置提供 `EIGOS_PA_URL`、原 EIGOS 客户端的 `EIGOS_PA_TOKEN`、个人滴滴 Key 文件路径 `EIGOS_PA_DIDI_KEY_FILE`、稳定私有目录 `EIGOS_PA_DIDI_DIRECTORY` 和 64 位十六进制本地连接标识 `EIGOS_PA_DIDI_CONNECTION`。原 PA 自己处理用户确认。只对收到用户确认后生成的 `didi.place_order` 请求使用 `--dispatch-approved-order`。PA 在升级前后的同一安装内继续复用私有目录，以便恢复已保存的回执。切换发布版本前先处理旧的在途任务。新 SDK 对旧派发待办只恢复已保存的回执。带 `server-claim-v1` 的待办需要新版 SDK。

@@ -1,6 +1,7 @@
 import { digest } from '../core/identity.js';
 import type { LinkData, ObjectRef, Value } from '../ontology/schema.js';
 import type { ActionEffect } from './effects.js';
+import { effectHandlerName } from './action-webhooks.js';
 import type { PublishedOntology } from './metadata.js';
 
 export function evaluate(expression: Value, input: Record<string, unknown>): unknown {
@@ -13,7 +14,7 @@ export function evaluate(expression: Value, input: Record<string, unknown>): unk
 export function actionEffects(model: PublishedOntology, action: string, input: Record<string, unknown>): ActionEffect[] {
   return (model.action(action).effects ?? []).map(effect => ({
     name: effect.name,
-    handler: effect.handler,
+    handler: effectHandlerName(effect),
     payload: Object.fromEntries(Object.entries(effect.payload).map(([name, expression]) => [name, evaluate(expression, input)])),
   }));
 }

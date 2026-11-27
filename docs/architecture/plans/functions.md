@@ -182,6 +182,13 @@
 
 ## F3：外部源
 
+**状态：** 组件已能用协议 3 读取声明的 HTTP Source。发布时绑定 HTTPS
+连接和出口策略，调用时复查 Source 权限。密钥以 AES-GCM 密文保存，
+运行时交换并缓存 OAuth client credentials，也能用既有授权码凭据刷新。
+轮换后的令牌加密保存在 PostgreSQL，多个运行进程共用刷新记录。Action
+可在提交后经同一出口策略发送 webhook。副作用保留原发布、权限证据、请求体
+和幂等键。 [组件外部源](../../guides/function-host.md#组件外部源)
+
 - **source 的组成：**
   - 连接：基础 URL；
   - 出口策略：允许的主机、端口和方法；
@@ -198,6 +205,8 @@
   - 出口策略拒绝的请求有记录。
 
 ## F4：测试与观测
+
+**状态：** 离线测试包和两个模板的示例已实现。测试用本机协议 2 宿主运行真实组件，通过 loopback 提供测试主体、对象和查询 stub，并回读暂存编辑。Workbench 可按函数读取调用者自己的记录，过期记录由 Indexer 清理。 [离线测试包](../../../packages/function-test/README.md)
 
 - **测试框架：**
   - 包名 `@eigos/function-test`。它在本机用同一个函数宿主（测试模式）运行组件，Ontology 宿主接口由测试 stub 提供：对象、查询结果和主体。

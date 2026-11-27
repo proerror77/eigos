@@ -24,11 +24,12 @@ const taskView = (task: Task, projectResult: TaskResultProjection) => {
   return A2ATask.fromJSON({ id: task.id, contextId: task.conversation_id ?? task.id, status: { state: states[task.state], timestamp: task.updated_at.toISOString() },
     artifacts: result ? [{ artifactId: task.id, name: 'Task result', parts: [{ data: result, mediaType: 'application/json' }] }] : [], metadata: { error: task.error } });
 };
-export function agentCard(url: string) {
+export function agentCard(url: string, profile?: { name: string; description: string; skills: Pick<AgentCard['skills'][number], 'id' | 'name' | 'description' | 'tags'>[] }) {
   return AgentCard.fromJSON({ name: 'EIGOS', description: 'Source-backed inquiries and calendar-backed scenario scheduling through Ontology queries, functions and actions.', version: '0.2.0',
     supportedInterfaces: [{ url: url + '/a2a', protocolBinding: 'JSONRPC', protocolVersion: '1.0' }], capabilities: { streaming: false, pushNotifications: false },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['application/json'],
     skills: [{ id: 'rideEstimate', name: 'Ride estimate', description: 'Find route endpoints and return provider price estimates.', tags: ['ride', 'estimate'] },{id:'calendarPlanning',name:'Calendar planning',description:'Request calendar availability from the original PA and compare scheduling scenarios without external calendar writes.',tags:['calendar','scheduling','scenario']}],
+    ...profile,
     securitySchemes: { bearer: { httpAuthSecurityScheme: { scheme: 'Bearer' } } }, securityRequirements: [{ schemes: { bearer: { list: [] } } }] });
 }
 export class A2A implements A2ARequestHandler {
@@ -62,10 +63,10 @@ export class A2A implements A2ARequestHandler {
         if (!data?.paResponse) throw new RequestMalformedError('Continuation requires the PA response for the original task');
         return new PARequests(this.tasks).respond(principal, message.taskId, data.paResponse, message.contextId || undefined, authorizeSubmission);
       }
-      if (principal.memberAccess) {
+      if (principal.memberAccess || (data?.action && principal.scopes.includes('ontology:write'))) {
         if (message.parts.length === 1 && data) {
           const invocation = memberAction.safeParse(data);
-          if (!invocation.success) throw new RequestMalformedError('Provide a published Eigos Action and optional result Function');
+          if (!invocation.success) throw new RequestMalformedError('Provide a published Action and optional result Function');
           return this.tasks.submit(principal, { requestId: message.messageId, message: 'Execute the selected published Action',
             conversationId: message.contextId || undefined }, {
             actionInvocation: invocation.data, authorize: authorizeSubmission,

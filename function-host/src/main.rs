@@ -43,8 +43,8 @@ mod world {
 use world::HandlerPre;
 use world::eigos::function::types::Failure;
 
-/// What this host answers: 1, uploads and invocations; 2 adds the Ontology a call reaches through its callback.
-const PROTOCOL: u32 = 2;
+/// Protocol 1 runs components, 2 adds Ontology callbacks, and 3 adds the declared Source callback.
+const PROTOCOL: u32 = 3;
 const WORLD: &str = "eigos:function/handler@0.2.0";
 /// The most a callback answer may hold.
 const MAX_CALLBACK: usize = 16 << 20;
@@ -62,7 +62,7 @@ const STDERR_BYTES: usize = 64 << 10;
 /// How often the epoch advances, which is the granularity of deadlines.
 const EPOCH_MS: u64 = 10;
 /// The WASI interfaces a component may import, by package prefix.
-const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/", "eigos:function/"];
+const ALLOWED_IMPORTS: &[&str] = &["wasi:cli/", "wasi:clocks/", "wasi:random/", "wasi:io/", "wasi:filesystem/", "eigos:function/", "eigos:http/outgoing@0.1.0"];
 
 type Refusal = (StatusCode, Json<Value>);
 fn refuse(status: StatusCode, message: impl ToString) -> Refusal { (status, Json(json!({ "error": message.to_string() }))) }
@@ -132,6 +132,17 @@ impl world::eigos::function::ontology::Host for Call {
     fn unlink(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
         let (from, to) = (argument("from", &from)?, argument("to", &to)?);
         self.ontology("unlink", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
+}
+
+impl world::eigos::http::outgoing::Host for Call {
+    fn send(&mut self, request: String) -> Result<String, world::eigos::http::outgoing::Failure> {
+        let request = argument("request", &request).map_err(|failure| world::eigos::http::outgoing::Failure {
+            code: failure.code, message: failure.message,
+        })?;
+        self.required("outgoing", json!({ "request": request })).map_err(|failure| world::eigos::http::outgoing::Failure {
+            code: failure.code, message: failure.message,
+        })
     }
 }
 

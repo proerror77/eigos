@@ -1,0 +1,540 @@
+{
+  "format": "eigos-ontology-package-v1",
+  "ontology": "TestRecord",
+  "version": "1",
+  "digest": "1c77411bc4431fd0d42ac758e9c0291b6bd977bd38dcd2f81184b2473a4d6dd6",
+  "document": {
+    "id": "TestRecord",
+    "version": "1",
+    "objectTypes": [
+      {
+        "apiName": "TestRecord",
+        "displayName": "TestRecord",
+        "description": "Synthetic test record",
+        "primaryKey": "id",
+        "titleProperty": "name",
+        "properties": {
+          "id": {
+            "description": "TestRecord ID",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          },
+          "name": {
+            "description": "TestRecord name",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          },
+          "state": {
+            "description": "Record state",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "required": true
+          }
+        },
+        "interfaces": {}
+      },
+      {
+        "apiName": "TestRecordStateLog",
+        "displayName": "TestRecord process log",
+        "description": "Committed changes to TestRecord.state; proposed Scenario edits are excluded",
+        "primaryKey": "id",
+        "titleProperty": "name",
+        "properties": {
+          "id": {
+            "description": "Process log id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "name": {
+            "description": "Process log name",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "processId": {
+            "description": "Process log processId",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "property": {
+            "description": "Process log property",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "oldState": {
+            "description": "Process log oldState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "newState": {
+            "description": "Process log newState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "timestamp": {
+            "description": "Process log timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "recordedAt": {
+            "description": "Process log recordedAt",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "sequence": {
+            "description": "Process log sequence",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "action": {
+            "description": "Process log action",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "requestId": {
+            "description": "Process log requestId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "taskId": {
+            "description": "Process log taskId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "source": {
+            "description": "Process log source",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "actor": {
+            "description": "Process log actor",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "release": {
+            "description": "Process log release",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        },
+        "typeClasses": [
+          {
+            "kind": "machinery-log",
+            "name": "TestRecord"
+          },
+          {
+            "kind": "machinery-property",
+            "name": "state"
+          }
+        ],
+        "interfaces": {
+          "ProcessLog": {
+            "properties": {
+              "id": "id",
+              "name": "name",
+              "processId": "processId",
+              "property": "property",
+              "oldState": "oldState",
+              "newState": "newState",
+              "timestamp": "timestamp",
+              "recordedAt": "recordedAt",
+              "sequence": "sequence",
+              "action": "action",
+              "requestId": "requestId",
+              "taskId": "taskId",
+              "source": "source",
+              "actor": "actor",
+              "release": "release"
+            },
+            "links": {},
+            "actions": {}
+          }
+        }
+      }
+    ],
+    "interfaceTypes": [
+      {
+        "apiName": "ProcessLog",
+        "description": "Observed changes to an Ontology process state",
+        "properties": {
+          "id": {
+            "description": "Process log id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "name": {
+            "description": "Process log name",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "processId": {
+            "description": "Process log processId",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "property": {
+            "description": "Process log property",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "oldState": {
+            "description": "Process log oldState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "newState": {
+            "description": "Process log newState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "timestamp": {
+            "description": "Process log timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "recordedAt": {
+            "description": "Process log recordedAt",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "sequence": {
+            "description": "Process log sequence",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "action": {
+            "description": "Process log action",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "requestId": {
+            "description": "Process log requestId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "taskId": {
+            "description": "Process log taskId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "source": {
+            "description": "Process log source",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "actor": {
+            "description": "Process log actor",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "release": {
+            "description": "Process log release",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        },
+        "optionalProperties": [],
+        "links": {},
+        "actions": {}
+      }
+    ],
+    "linkTypes": [
+      {
+        "apiName": "TestRecordStateLogProcess",
+        "description": "State changes of TestRecord.state",
+        "from": {
+          "type": "TestRecordStateLog",
+          "name": "process",
+          "cardinality": "one"
+        },
+        "to": {
+          "type": "TestRecord",
+          "name": "stateLogs",
+          "cardinality": "many"
+        }
+      }
+    ],
+    "functionTypes": [
+      {
+        "apiName": "CreateRecord",
+        "description": "Create a test record",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "edits": true
+      },
+      {
+        "apiName": "ReadRecord",
+        "description": "Read a record name",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      {
+        "apiName": "CloseRecord",
+        "description": "Mark the record closed",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "record": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "record"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "edits": true
+      }
+    ],
+    "actionTypes": [
+      {
+        "apiName": "CreateRecord",
+        "description": "CreateRecord",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "objectParameters": {},
+        "submissionCriteria": [],
+        "function": "CreateRecord"
+      },
+      {
+        "apiName": "CloseRecord",
+        "description": "CloseRecord",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "record": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "record"
+          ],
+          "additionalProperties": false
+        },
+        "objectParameters": {
+          "record": "TestRecord"
+        },
+        "submissionCriteria": [],
+        "function": "CloseRecord"
+      }
+    ],
+    "dataSources": []
+  }
+}

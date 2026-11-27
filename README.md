@@ -6,6 +6,8 @@ EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action�
 
 本体模型的定义、查询、Action、Scenario 和持久化验收见 [Ontology 模型验证](docs/guides/ontology-model-validation.md)。这些能力可直接通过 MCP、HTTP 和 TypeScript 客户端使用。
 
+客户独立环境的制品、数据库角色、安装回执及双环境验收见 [EIGOS VM 安装指南](docs/guides/installed-engine.md#linux-vm-发行与隔离验收)。
+
 ## 启动
 
 使用 Node.js 22.22.3、PostgreSQL 17 和 npm。

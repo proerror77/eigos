@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { Conflict, digest, type Principal } from '../core/identity.js';
 import { Access, type Requirement } from './access.js';
 import type { Database, Sql } from './database.js';
-import type { PublishedOntology } from './metadata.js';
+import { Metadata, type PublishedOntology } from './metadata.js';
+import { isWebhookHandler, type ActionSourceWebhooks } from './action-webhooks.js';
 import { ActionWriteBudgets, ProviderBudgetExceeded } from './provider-budgets.js';
 
 export async function initializeEffects(db: Database) {
@@ -28,17 +29,26 @@ export type EffectHandler = (payload: Record<string, unknown>, context: EffectCo
 export interface ActionEffect { name: string; handler: string; payload: Record<string, unknown> }
 export class Effects {
   private readonly writeBudgets: ActionWriteBudgets;
-  constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>) {
+  private readonly metadata: Metadata;
+  constructor(private readonly db: Database, private readonly handlers: ReadonlyMap<string, EffectHandler>,
+    private readonly webhooks?: ActionSourceWebhooks) {
+    if ([...handlers.keys()].some(isWebhookHandler)) throw new Error('The Source webhook handler name is reserved');
+    this.metadata = new Metadata(db);
     this.writeBudgets = new ActionWriteBudgets(db);
   }
   check(names: readonly string[]) {
-    for (const name of names) if (!this.handlers.has(name)) throw new Error(`Action effect handler is unavailable: ${name}`);
+    for (const name of names)
+      if (!(isWebhookHandler(name) ? this.webhooks : this.handlers.has(name))) throw new Error(`Action effect handler is unavailable: ${name}`);
   }
   async enqueue(client: Sql, access: Access, model: PublishedOntology, action: string, requestId: string, effects: ActionEffect[]) {
     if (model.scenario || !effects.length) return;
     this.check(effects.map(effect => effect.handler));
+    const prepared = effects.map(effect => ({
+      ...effect,
+      payload: isWebhookHandler(effect.handler) ? this.webhooks!.prepare(model, action, effect.name, effect.payload, access) : effect.payload,
+    }));
     const requirements=await access.finalRequirements(client);
-    for (const effect of effects) {
+    for (const effect of prepared) {
       const id = digest([access.principal.owner, requestId, effect.name]);
       await this.db.query(`INSERT INTO ${this.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements),
@@ -90,7 +100,7 @@ export class Effects {
     timer.unref();
     try {
       await this.db.withOwner(claim.owner, async () => {
-        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload,effect.ontology,effect.action
+        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload,effect.name,effect.action,effect.release,effect.ontology
           FROM ${this.db.schema}.action_effects effect
           JOIN ${this.db.schema}.actions committed
             ON committed.owner=effect.owner AND committed.request_id=effect.request_id
@@ -114,7 +124,23 @@ export class Effects {
           return;
         }
         executionSignal.throwIfAborted();
-        const outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: claim.id, principal, signal: executionSignal });
+        let outcome: void | 'canceled';
+        if (isWebhookHandler(row.handler)) {
+          const model = await this.metadata.get(row.release);
+          const authorize = async () => {
+            const current = await this.db.query(`SELECT 1 FROM ${this.db.schema}.action_effects
+              WHERE id=$1 AND owner=$2 AND token=$3 AND state='working' AND lease_until>clock_timestamp()`, lease);
+            if (!current.rowCount || !await access.canReturn(row.requirements)) throw new Conflict('Action webhook authority changed');
+          };
+          const persistBody = async (body: string) => {
+            const changed = await this.db.query(`UPDATE ${this.db.schema}.action_effects SET payload=jsonb_set(payload,'{body}',to_jsonb($4::text))
+              WHERE id=$1 AND owner=$2 AND token=$3 AND state='working' AND lease_until>clock_timestamp()`, [...lease, body]);
+            if (!changed.rowCount) throw new Conflict('Action effect lease is unavailable');
+          };
+          outcome = await this.webhooks!.deliver(model, row.action, row.name, row.payload, access, claim.id, executionSignal, authorize, persistBody);
+        } else {
+          outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: claim.id, principal, signal: executionSignal });
+        }
         executionSignal.throwIfAborted();
         await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state=$4,completed_at=now(),lease_until=NULL,token=NULL,error=NULL
           WHERE id=$1 AND owner=$2 AND token=$3`, [...lease, outcome === 'canceled' ? 'canceled' : 'completed']);
