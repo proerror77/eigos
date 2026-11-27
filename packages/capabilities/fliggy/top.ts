@@ -27,11 +27,17 @@ const credentials = z.strictObject({
   expiresAt: z.iso.datetime(),
   enabled: z.boolean(),
 });
-const hotelCredentials = credentials.extend({
+const hotelConnection = credentials.extend({
   distributor: z.string().min(1).max(100),
-  hotelProfilesFile: z.string().min(1),
-  hotelPaymentsFile: z.string().min(1).optional(),
 });
+const hotelCredentials = z.union([
+  hotelConnection.extend({ readOnly: z.literal(true) }),
+  hotelConnection.extend({
+    readOnly: z.literal(false).optional(),
+    hotelProfilesFile: z.string().min(1),
+    hotelPaymentsFile: z.string().min(1).optional(),
+  }),
+]);
 const flightCredentials = credentials.extend({
   session: z.string().min(8),
   channelName: z.string().min(1).max(100),
@@ -104,11 +110,15 @@ export function configuredFliggyHotel(path?: string, testFetch?: typeof fetch) {
   const connect = configureTop(path, hotelCredentials, testFetch);
   return async (owner: string) => {
     const { config, request, assertCurrent, evidence } = await connect(owner);
+    const requireTrade = () => {
+      if (config.readOnly) throw new Conflict('The Fliggy hotel connection is read-only');
+      return { profilesFile: config.hotelProfilesFile, paymentsFile: config.hotelPaymentsFile };
+    };
     return {
       authority: digest([owner, config.appKey, config.account, config.distributor]),
-      distributor: config.distributor, evidence, assertCurrent,
-      profilesFile: config.hotelProfilesFile, paymentsFile: config.hotelPaymentsFile,
+      distributor: config.distributor, evidence, assertCurrent, requireTrade,
       async call(operation: keyof typeof hotelMethods, input: Record<string, unknown>, signal: AbortSignal) {
+        if (operation !== 'detail') requireTrade();
         const reply = await request(hotelMethods[operation], input, signal);
         if (operation === 'rates') return reply.hotel_prices_result;
         const body = result.parse(reply);
