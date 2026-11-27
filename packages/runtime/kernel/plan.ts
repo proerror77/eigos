@@ -55,7 +55,8 @@ export type KernelSet =
   | { op: 'refs'; refs: ObjectRef[]; enrich?: false }
   | { op: 'union' | 'intersect'; sets: KernelSet[] }
   | { op: 'except'; left: KernelSet; right: KernelSet }
-  | { op: 'traverse'; set: KernelSet; steps: KernelMove[][] };
+  | { op: 'traverse'; set: KernelSet; steps: KernelMove[][] }
+  | { op: 'boundedTraverse'; set: KernelSet; steps: KernelMove[][]; limit: number };
 /** One step of a derived relationship path; a link whose label the principal may not see reaches nothing. */
 export type KernelStep = { link: string; forward: boolean; target: string; visible?: false };
 /** A derived value as the kernel computes it; see `kernel/src/main.rs`. */
@@ -140,14 +141,14 @@ class Scope {
   private readonly compiling = new Set<string>();
   readonly enriched = new Map<string, string[]>();
   private readonly rules = new Map<string, RowRule>();
-  constructor(readonly model: Ontology, readonly access: Access) {}
+  constructor(readonly model: Ontology, readonly access: Access, private readonly completePageType?: string) {}
   /** The row rule of a type, or undefined when only the reference can evaluate it or it has no kernel equivalent. */
   rule(type: string, hydratedProperties = false): RowRule | undefined {
     const { model, access } = this;
     if (!model.objects.has(type) || type === scenarioMetadataType || processLogTarget(model, type)) return undefined;
     // When a plan observes rows without hydrating all of them, the kernel cannot tell which property labels to record.
     // A single relationship hydrates its source and every returned target through the authorized runtime reads.
-    if (!hydratedProperties && Object.values(model.object(type).properties).some(property => property.classification))
+    if (!hydratedProperties && type !== this.completePageType && Object.values(model.object(type).properties).some(property => property.classification))
       return undefined;
     let rule = this.rules.get(type);
     if (!rule) {
@@ -480,8 +481,8 @@ function compileFilter(scope: Scope, q: Query, view: string, type: string): Kern
  * Compiles an Object Set expression for the kernel. `graph` reads the source object of a relationship query, as the
  * reference does before it reads the relationship.
  */
-export async function compileSet(model: Ontology, access: Access, graph: Objects, expression: SetExpression): Promise<KernelPlan | undefined> {
-  const scope = new Scope(model, access);
+export async function compileSet(model: Ontology, access: Access, graph: Objects, expression: SetExpression, completePageType?: string): Promise<KernelPlan | undefined> {
+  const scope = new Scope(model, access, completePageType);
   try {
     const compiled = await compile(scope, graph, expression, 0);
     if (!compiled) return undefined;
@@ -641,7 +642,8 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
         steps.push(moves);
         types = next;
       }
-      return { set: { op: 'traverse', set: start.set, steps }, types };
+      return { set: node.frontierLimit === undefined ? { op: 'traverse', set: start.set, steps }
+        : { op: 'boundedTraverse', set: start.set, steps, limit: node.frontierLimit }, types };
     }
     case 'saved':
     case 'machinery':

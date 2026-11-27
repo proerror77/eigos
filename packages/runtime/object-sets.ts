@@ -20,7 +20,7 @@ export type SetExpression =
   | { op: 'refs'; objects: ObjectRef[] }
   | { op: 'union' | 'intersection'; sets: SetExpression[] }
   | { op: 'difference'; left: SetExpression; right: SetExpression }
-  | { op: 'traverse'; set: SetExpression; path: { link: string; as?: string }[] }
+  | { op: 'traverse'; set: SetExpression; frontierLimit?: number; path: { link: string; as?: string }[] }
   | { op: 'saved'; id: string }
   // Palantir's Machinery output object sets: the processes a Machinery analysis selects, analyzed again on each read.
   | { op: 'machinery'; analysis: Record<string, unknown> };
@@ -30,7 +30,7 @@ const expression: z.ZodType<SetExpression> = z.lazy(() => z.discriminatedUnion('
   z.strictObject({ op: z.literal('union'), sets: z.array(expression).min(2).max(20) }),
   z.strictObject({ op: z.literal('intersection'), sets: z.array(expression).min(2).max(20) }),
   z.strictObject({ op: z.literal('difference'), left: expression, right: expression }),
-  z.strictObject({ op: z.literal('traverse'), set: expression, path: z.array(z.strictObject({ link: z.string().min(1).max(80), as: z.string().min(1).max(80).optional() })).min(1).max(8) }),
+  z.strictObject({ op: z.literal('traverse'), set: expression, frontierLimit: z.number().int().min(1).max(10000).optional(), path: z.array(z.strictObject({ link: z.string().min(1).max(80), as: z.string().min(1).max(80).optional() })).min(1).max(8) }),
   z.strictObject({ op: z.literal('saved'), id: z.uuid() }),
   z.strictObject({ op: z.literal('machinery'), analysis: z.record(z.string(), z.unknown()) }),
 ]));
@@ -217,11 +217,13 @@ export class ObjectSets {
               const key = refKey(target.ref);
               next.set(key, target);
               loaded.set(key, target);
+              if (node.frontierLimit !== undefined && next.size > node.frontierLimit)
+                throw new Conflict('Traversal exceeds the selected frontier limit');
               bounded(next);
             };
             for (const [type, ids] of byType) {
               count();
-              const batch = await objects.followSet(type, ids, step.link, step.as, this.maximumObjects);
+              const batch = await objects.followSet(type, ids, step.link, step.as, Math.min(this.maximumObjects, node.frontierLimit ?? this.maximumObjects), node.frontierLimit !== undefined);
               if (batch) {
                 for (const target of batch) accept(target);
                 continue;
@@ -271,7 +273,7 @@ export class ObjectSets {
     for (let depth = 0; depth <= 16; depth++) {
       if (node.op === 'query') return { query: node.query, path };
       if (node.op === 'traverse') {
-        if (node.path.length + path.length > 8) return undefined;
+        if (node.frontierLimit !== undefined || node.path.length + path.length > 8) return undefined;
         path = [...node.path, ...path];
         node = node.set;
       } else if (node.op === 'saved') {

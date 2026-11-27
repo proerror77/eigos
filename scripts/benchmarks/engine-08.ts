@@ -119,6 +119,23 @@ function traversalCases(n: number): Case[] {
       input: { set: { op: 'traverse', set, path }, limit: 100 } }));
   });
 }
+function plannerCases(): Case[] {
+  const narrow = { op:'refs',objects:[{type:'Route',id:'r1'}] };
+  const broad = { op:'query',query:{type:'Route'} };
+  const starts = { op:'refs',objects:[{type:'Place',id:'p1'}] };
+  const walk = { op:'traverse',set:starts,path:[{link:'departingRoutes'},{link:'origin'}] };
+  const variants: [string, unknown][] = [
+    ['intersection broad first',{op:'intersection',sets:[broad,narrow]}],
+    ['intersection narrow first',{op:'intersection',sets:[narrow,broad]}],
+    ['difference broad minus narrow',{op:'difference',left:broad,right:narrow}],
+    ['difference narrow minus broad',{op:'difference',left:narrow,right:broad}],
+    ['wide first step complete',{...walk,set:{op:'query',query:{type:'Place'}}}],
+    ['wide first step limit 100',{...walk,set:{op:'query',query:{type:'Place'}},frontierLimit:100}],
+    ['contracting frontier complete',walk],
+    ['contracting frontier limit 5',{...walk,frontierLimit:5}],
+  ];
+  return variants.map(([name,set])=>({ name:'C5b planner '+name,kind:'evaluate',input:{set,limit:100} }));
+}
 const cases: Case[] = [
   { name: 'filter 0.5%, first page', kind: 'evaluate', input: { set: hot, limit: 100 } },
   { name: '1 hop from 0.5%', kind: 'evaluate', input: { set: { op: 'traverse', set: quoted, path: oneHop }, limit: 100 } },
@@ -152,7 +169,7 @@ for (const n of sizes) {
         ...await memory(kernel.pid) } };
       console.log(JSON.stringify(size));
       const reads: Record<string, unknown>[] = [];
-      for (const item of [...cases, ...traversalCases(n)].filter(item => !only || item.name.includes(only))) {
+      for (const item of [...cases, ...traversalCases(n), ...plannerCases()].filter(item => !only || item.name.includes(only))) {
         const viaReference = async (): Promise<unknown> => item.kind === 'evaluate' ? reference.evaluate(access, model, item.input)
           : item.kind === 'aggregate' ? reference.aggregate(access, model, item.input) : graph.query(item.input as never);
         const viaKernel = async (): Promise<unknown> => {

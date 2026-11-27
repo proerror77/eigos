@@ -104,6 +104,24 @@ test('the query kernel returns the reference result for every supported Object S
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
+test('bounded traversal detects an oversized intermediate step even when the final set contracts', { skip: !binary }, async () => {
+  const f = await setup();
+  try {
+    const start = { op:'refs', objects:[place('p1')] };
+    const path = [{link:'departingRoutes'},{link:'origin'}];
+    const traverse = (frontierLimit:number) => ({op:'traverse',set:start,path,frontierLimit});
+    const exact = { set:traverse(3),limit:1 };
+    const ref = await f.sets.evaluate(f.access,f.model,exact);
+    const result = await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,exact as never);
+    assert(result);
+    assert.deepEqual(values(result.items),values(ref.items));
+    assert.equal(result.total,1);
+    const tooWide = {set:traverse(2),limit:1};
+    assert.equal(await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,tooWide as never),undefined);
+    await assert.rejects(f.sets.evaluate(f.access,f.model,tooWide),/frontier limit/);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
 test('the query kernel aggregates like the reference', { skip: !binary }, async () => {
   const f = await setup();
   try {
@@ -845,6 +863,13 @@ test('relationship reads use the kernel while hydrating classified source and ta
     for (const clearance of clearances) {
       await compareFollow(f, clearance, { ref: route('a'), link: 'origin' });
       await compareFollow(f, clearance, { ref: place('p1'), link: 'departingRoutes' });
+    }
+    for (const clearance of clearances) {
+      await compareQuery(f,clearance,{type:'Place',where:{id:'p1'},orderBy:[{property:'name'}]});
+      const access = await Access.load(f.db,principal), graph = new Objects(f.db,f.model,access);
+      const partial = await access.measureEgress(() => queryWithKernel(f.kernel,f.model,access,graph,{
+        query:querySchema.parse({type:'Place',orderBy:[{property:'name'}],limit:1}),offset:0 }),clearance);
+      assert.equal(partial.result,undefined,'a partial page cannot account for classified cells outside the page');
     }
     const read = async (clearance: Clearance) => {
       const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
