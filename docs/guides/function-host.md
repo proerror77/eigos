@@ -144,6 +144,11 @@ interface ontology {
   query: func(query: string) -> result<string, failure>;
   evaluate: func(request: string) -> result<string, failure>;
   aggregate: func(request: string) -> result<string, failure>;
+  create: func(object-type: string, id: string, properties: string) -> result<_, failure>;
+  update: func(object: string, properties: string) -> result<_, failure>;
+  delete: func(object: string) -> result<_, failure>;
+  link: func(link-type: string, %from: string, to: string) -> result<_, failure>;
+  unlink: func(link-type: string, %from: string, to: string) -> result<_, failure>;
 }
 
 world handler {
@@ -175,7 +180,23 @@ world handler {
 - **截止时间：** 宿主函数执行时无法被中断，所以等待回调的时长以这次调用剩下的截止时间为限。
 - **错误码：** `permission-denied`、`not-found`、`invalid`、`conflict`、`limit`、`unavailable`。函数把它原样返回时，调用方得到同样 `code` 的 `FunctionFailed`。
 - **协议：** 宿主协议 2 起支持回调。运行时只给协议 2 的宿主发回调；更早的宿主上，导入返回 `unavailable`。
-- **编辑：** 目前不支持，F2 的编辑部分是下一步。
+
+### 编辑
+
+| 导入 | 参数 | 运行时执行 |
+| --- | --- | --- |
+| `create` | 类型、ID、属性 | `Objects.create` |
+| `update` | `{type, id, revision?}`、要改的属性 | `Objects.edit` |
+| `delete` | `{type, id, revision?}` | `Objects.remove` |
+| `link`、`unlink` | Link 类型、起点和终点的 `{type, id}` | `Objects.link`、`unlink` |
+
+依据是 Palantir 的 [edits](https://www.palantir.com/docs/foundry/functions/edits-overview/) 和 [staged writes](https://www.palantir.com/docs/foundry/functions/typescript-v2-staged-writes/)。
+
+- **只经 Action 生效：** 编辑只在 Function-backed Action 中生效。`edits: true` 的组件函数在 Action 之外调用时被拒绝。只读函数调用编辑导入时，得到 `conflict`。
+- **写后读：** 编辑函数在它的 Action 的提交事务里运行，读取、Object Set 查询和聚合都走这个事务，所以在同一次调用内，之后的 `get`、`follow`、`query`、`evaluate`、`aggregate` 都看得到之前的编辑。这对应 Palantir 的 staged writes：“any Ontology data read will reflect all edits previously made in the function”。
+- **原子提交：** 函数正常返回时，它的编辑和 Action 一起提交；函数失败或 trap 时，事务回滚，什么也不留下。Action 的结果是函数返回的对象引用。
+- **版本号：** `revision` 缺省时取对象当前的版本。给出时必须一致，否则 `conflict`。
+- **上限：** 每次调用最多 1 万次编辑。
 
 ## 接口
 

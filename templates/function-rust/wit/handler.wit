@@ -23,6 +23,14 @@ interface ontology {
   evaluate: func(request: string) -> result<string, failure>;
   /// An Object Set aggregation, as `ObjectSets.aggregate` takes and returns it.
   aggregate: func(request: string) -> result<string, failure>;
+
+  /// Edits, in a Function that an Action runs: they commit with the Action, all or none, and later reads, queries and
+  /// aggregations in the same call see them. `object` is `{type, id}` with an optional `revision` that must match.
+  create: func(object-type: string, id: string, properties: string) -> result<_, failure>;
+  update: func(object: string, properties: string) -> result<_, failure>;
+  delete: func(object: string) -> result<_, failure>;
+  link: func(link-type: string, %from: string, to: string) -> result<_, failure>;
+  unlink: func(link-type: string, %from: string, to: string) -> result<_, failure>;
 }
 
 /// An EIGOS Function compiled to a WebAssembly component.

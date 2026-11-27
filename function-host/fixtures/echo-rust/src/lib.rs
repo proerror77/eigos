@@ -43,8 +43,48 @@ fn ontology(input: &str) -> Option<Result<String, Failure>> {
     Some(Ok(format!("{{\"result\":{}}}", last.unwrap_or_else(|| "null".into()))))
 }
 
+/// `{"script": [{"op", "args", "expect"?: {"pointer", "equals"}}, …], "return": <json>}` runs Ontology calls in order. A
+/// read with `expect` fails the call unless the JSON at `pointer` in its answer equals `equals`. The call returns `return`.
+fn script(input: &str) -> Option<Result<String, Failure>> {
+    let value: serde_json::Value = serde_json::from_str(input).ok()?;
+    let steps = value.get("script")?.as_array()?;
+    let fail = |code: &str, message: String| Failure { code: code.into(), message };
+    for (index, step) in steps.iter().enumerate() {
+        let op = step.get("op").and_then(|op| op.as_str()).unwrap_or_default();
+        let args: Vec<String> = step.get("args").and_then(|args| args.as_array()).cloned().unwrap_or_default().iter()
+            .map(|arg| arg.as_str().map(str::to_string).unwrap_or_else(|| arg.to_string())).collect();
+        let arg = |n: usize| args.get(n).cloned().unwrap_or_default();
+        use eigos::function::ontology as o;
+        let answer = match op {
+            "get" => o::get(&arg(0), &arg(1)),
+            "follow" => o::follow(&arg(0), &arg(1)).map(Some),
+            "query" => o::query(&arg(0)).map(Some),
+            "evaluate" => o::evaluate(&arg(0)).map(Some),
+            "aggregate" => o::aggregate(&arg(0)).map(Some),
+            "create" => o::create(&arg(0), &arg(1), &arg(2)).map(|_| None),
+            "update" => o::update(&arg(0), &arg(1)).map(|_| None),
+            "delete" => o::delete(&arg(0)).map(|_| None),
+            "link" => o::link(&arg(0), &arg(1), &arg(2)).map(|_| None),
+            "unlink" => o::unlink(&arg(0), &arg(1), &arg(2)).map(|_| None),
+            "fail" => return Some(Err(fail("asked", format!("step {index} asked to fail")))),
+            _ => return Some(Err(fail("invalid", format!("step {index}: unknown operation {op}")))),
+        };
+        let answer = match answer { Ok(answer) => answer, Err(failure) => return Some(Err(failure)) };
+        if let Some(expect) = step.get("expect") {
+            let got: serde_json::Value = answer.as_deref().and_then(|text| serde_json::from_str(text).ok()).unwrap_or(serde_json::Value::Null);
+            let pointer = expect.get("pointer").and_then(|p| p.as_str()).unwrap_or("");
+            let found = got.pointer(pointer).cloned().unwrap_or(serde_json::Value::Null);
+            if Some(&found) != expect.get("equals") {
+                return Some(Err(fail("assertion", format!("step {index}: {pointer} is {found}, expected {}", expect.get("equals").cloned().unwrap_or_default()))));
+            }
+        }
+    }
+    Some(Ok(value.get("return").cloned().unwrap_or(serde_json::Value::Null).to_string()))
+}
+
 impl Guest for Function {
     fn invoke(input: String) -> Result<String, Failure> {
+        if let Some(result) = script(&input) { return result; }
         if let Some(result) = ontology(&input) { return result; }
         if let Some(value) = answer(&input) { return Ok(value.to_string()); }
         if let Some(n) = number(&input, "spin") {

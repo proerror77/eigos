@@ -113,6 +113,26 @@ impl world::eigos::function::ontology::Host for Call {
     fn query(&mut self, query: String) -> Result<String, Failure> { let query = argument("query", &query)?; self.required("query", json!({ "query": query })) }
     fn evaluate(&mut self, request: String) -> Result<String, Failure> { let request = argument("request", &request)?; self.required("evaluate", request) }
     fn aggregate(&mut self, request: String) -> Result<String, Failure> { let request = argument("request", &request)?; self.required("aggregate", request) }
+    fn create(&mut self, object_type: String, id: String, properties: String) -> Result<(), Failure> {
+        let properties = argument("properties", &properties)?;
+        self.ontology("create", json!({ "type": object_type, "id": id, "properties": properties })).map(|_| ())
+    }
+    fn update(&mut self, object: String, properties: String) -> Result<(), Failure> {
+        let (object, properties) = (argument("object", &object)?, argument("properties", &properties)?);
+        self.ontology("update", json!({ "object": object, "properties": properties })).map(|_| ())
+    }
+    fn delete(&mut self, object: String) -> Result<(), Failure> {
+        let object = argument("object", &object)?;
+        self.ontology("delete", json!({ "object": object })).map(|_| ())
+    }
+    fn link(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
+        let (from, to) = (argument("from", &from)?, argument("to", &to)?);
+        self.ontology("link", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
+    fn unlink(&mut self, link_type: String, from: String, to: String) -> Result<(), Failure> {
+        let (from, to) = (argument("from", &from)?, argument("to", &to)?);
+        self.ontology("unlink", json!({ "type": link_type, "from": from, "to": to })).map(|_| ())
+    }
 }
 
 /// A minimal HTTP/1.1 POST to the runtime on the loopback interface, which answers with a Content-Length and closes.

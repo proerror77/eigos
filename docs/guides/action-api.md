@@ -25,6 +25,13 @@
 - **在正式数据上：** 跳过 `scenario` 条件。
 - **合并：** `applyScenario` 在 Scenario 视图里重放 Scenario 中的 Action，但这些编辑落在正式数据上，所以每一步都按 `live` 重新检查。在 Scenario 中因放宽而通过的一步，合并时仍要满足 live 条件。
 
+## 组件编辑函数
+
+Function-backed Action 的 `function` 可以是 `edits: true` 的组件函数（见 [函数宿主指南](function-host.md#编辑)）。它在 Action 的提交事务里运行：
+- 读取看得到它自己的编辑；
+- 返回的对象引用就是 Action 的结果；
+- 函数失败时什么也不提交。
+
 ## 函数的版本范围
 
 提交条件和 Function-backed Action 可以用 `functionVersion` 声明自己接受的函数版本，与 Palantir 的 Action 依赖版本范围相同（[version range dependencies](https://www.palantir.com/docs/foundry/functions/version-range-dependencies-for-functions/)）：

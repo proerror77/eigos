@@ -127,7 +127,7 @@ test('a release with component Functions needs a function host, their components
       return f.metadata.publish(document, f.capabilities, f.publisher);
     };
     await assert.rejects(publish(echoFunction(sha256, { version: '1' })), /A component Function needs a semantic version/);
-    await assert.rejects(publish(echoFunction(sha256, { edits: true })), /cannot read a source or edit objects/);
+    await assert.rejects(publish(echoFunction(sha256, { source: 'Didi' })), /A component Function cannot read a source yet/);
     await assert.rejects(publish(echoFunction(sha256, { implementation: { ...implementation(sha256), limits: { ...limits, memoryMb: 1024 } } })), /memoryMb/);
     await assert.rejects(publish(echoFunction('a'.repeat(64))), error => error instanceof Conflict && /has not been uploaded/.test(error.message));
     const configured = process.env.EIGOS_FUNCTION_HOST_BIN;
@@ -228,6 +228,57 @@ test('a component Function reads the Ontology as its caller would, within its li
     // The runtime bounds how often one call reads.
     await assert.rejects(call(principal, 'get', ['Route', route.id], 1001), failed('limit', /at most 1000 times/));
     await assert.rejects(call(principal, 'query', ['not JSON']), failed('invalid'));
+  } finally {
+    await f.close();
+  }
+});
+
+test('an Action runs a component edit Function: its reads see its edits, and they commit together or not at all', { skip }, async () => {
+  const f = await fixture();
+  try {
+    const { sha256 } = await new ComponentFunctions(f.db).upload(await component('echo_rust'), principal);
+    const reference = { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string' } }, required: ['type', 'id'], additionalProperties: false };
+    const document = structuredClone(f.model.document);
+    document.functionTypes.push(
+      echoFunction(sha256, { apiName: 'PlanRoute', description: 'Create, rename and link a route', edits: true, returns: reference }),
+      echoFunction(sha256, { apiName: 'ReadOnlyScript', description: 'A read-only Function that tries to edit', returns: { type: 'null' } }));
+    document.actionTypes.push({ apiName: 'PlanRouteAction', description: 'Plan a route through a component edit Function',
+      parameters: { type: 'object' }, objectParameters: {}, submissionCriteria: [], function: 'PlanRoute' });
+    const model = await f.metadata.publish(document, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const access = () => Access.load(f.db, principal);
+    const live = new Objects(f.db, model, await access());
+    const request = { type: 'RideRequest', id: 'plan-request' };
+    await live.create(request, { id: request.id, name: 'Request', status: 'quoted', requestedAt: new Date().toISOString() });
+    type Step = { op: string; args: string[]; expect?: { pointer: string; equals: unknown } };
+    const plan = (id: string, last: Step[] = []): { script: Step[]; return: unknown } => ({ script: [
+      { op: 'create', args: ['Route', id, JSON.stringify({ id, name: 'Draft' })] },
+      { op: 'update', args: [JSON.stringify({ type: 'Route', id }), JSON.stringify({ name: 'Planned' })] },
+      // Reads by key, searches and links all see the call's own edits before the Action commits.
+      { op: 'get', args: ['Route', id], expect: { pointer: '/properties/name', equals: 'Planned' } },
+      { op: 'query', args: [JSON.stringify({ type: 'Route', where: { name: 'Planned' } })], expect: { pointer: '/items/0/ref/id', equals: id } },
+      { op: 'link', args: ['RequestRoute', JSON.stringify(request), JSON.stringify({ type: 'Route', id })] },
+      { op: 'follow', args: [JSON.stringify(request), 'route'], expect: { pointer: '/0/ref/id', equals: id } },
+      ...last,
+    ], return: { type: 'Route', id } });
+    assert.deepEqual(await f.capabilities.actions.apply(await access(), model, 'PlanRouteAction', plan('planned-route'), 'plan-route'),
+      { type: 'Route', id: 'planned-route' });
+    assert.equal((await live.read({ type: 'Route', id: 'planned-route' })).properties.name, 'Planned');
+    assert.deepEqual((await live.follow(request, 'route')).map(item => item.ref.id), ['planned-route']);
+    // A failure after edits leaves nothing behind.
+    const other = { type: 'RideRequest', id: 'failed-request' };
+    await live.create(other, { id: other.id, name: 'Other', status: 'quoted', requestedAt: new Date().toISOString() });
+    const failing = plan('failed-route', [{ op: 'fail', args: [] }]);
+    failing.script[4]!.args[1] = JSON.stringify(other);
+    failing.script[5]!.args[0] = JSON.stringify(other);
+    await assert.rejects(f.capabilities.actions.apply(await access(), model, 'PlanRouteAction', failing, 'plan-failed'), failed('asked'));
+    await assert.rejects(live.read({ type: 'Route', id: 'failed-route' }), /not found|unavailable/i);
+    assert.deepEqual(await live.follow(other, 'route'), []);
+    // Outside an Action an edit Function does not run, and a read-only Function cannot edit.
+    const context = async () => ({ principal, objects: new Objects(f.db, model, await access()), signal: AbortSignal.timeout(60_000) });
+    await assert.rejects(f.capabilities.functions.invoke(model, 'PlanRoute', plan('direct-route'), await context()), /must be invoked through an Action/);
+    await assert.rejects(f.capabilities.functions.invoke(model, 'ReadOnlyScript', { script: [{ op: 'create', args: ['Route', 'sneaky', '{}'] }] }, await context()),
+      failed('conflict', /Edits need an edit Function that an Action runs/));
   } finally {
     await f.close();
   }
