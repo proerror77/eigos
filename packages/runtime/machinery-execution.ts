@@ -10,6 +10,10 @@ import { Objects } from './objects.js';
 
 export const machineryNextActionsInput = z.strictObject({ object: objectRefSchema, process: ontologyName.optional() });
 
+export const machineryReplanInput = z.strictObject({
+  changedObjects: z.array(objectRefSchema).min(1).max(100),
+});
+
 type Availability = 'ready' | 'needs_check' | 'blocked';
 
 async function checkTransition(objects: Objects, subject: ObjectData, edge: ExecutableTransition): Promise<Availability> {
@@ -56,6 +60,43 @@ export async function requireMachineryTransition(objects: Objects, action: strin
 
 export class MachineryExecution {
   constructor(private readonly db: Database, private readonly actions: Actions) {}
+
+  /** Re-read the changed subjects and the parents reached through published transition guards. */
+  async replan(model: PublishedOntology, access: Access, raw: unknown) {
+    const { changedObjects } = machineryReplanInput.parse(raw);
+    const { byType } = compileMachineryExecution(model);
+    const graph = new Objects(this.db, model, access);
+    const parents = new Map<string, Set<string>>();
+    for (const [type, edges] of byType) {
+      for (const edge of edges) {
+        for (const guard of edge.execution.requires ?? []) {
+          if (!guard.link) continue;
+          const nav = model.navigation(type, guard.link);
+          const link = model.links.get(nav.link)!;
+          const reverse = nav.forward ? link.to.name : link.from.name;
+          const paths = parents.get(nav.target) ?? new Set<string>();
+          paths.add(reverse);
+          parents.set(nav.target, paths);
+        }
+      }
+    }
+    const subjects = new Map<string, ObjectRef>();
+    const include = (ref: ObjectRef) => subjects.set(JSON.stringify([ref.type, ref.id]), ref);
+    for (const ref of changedObjects) {
+      await graph.read(ref);
+      if (byType.has(ref.type)) include(ref);
+      for (const path of parents.get(ref.type) ?? []) {
+        const related = await graph.readCompleteRelationship(ref, path);
+        if (!related.complete) throw new Conflict('Cannot resolve the complete set of affected processes');
+        for (const item of related.items) include(item.ref);
+      }
+    }
+    const items = [];
+    for (const object of subjects.values()) items.push(await this.nextActions(model, access, { object }));
+    await access.refresh();
+    if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Machinery result permissions changed');
+    return { release: model.release, items };
+  }
 
   async nextActions(model: PublishedOntology, access: Access, raw: unknown) {
     const input = machineryNextActionsInput.parse(raw);

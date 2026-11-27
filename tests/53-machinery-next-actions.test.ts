@@ -74,6 +74,11 @@ test('Machinery infers a cross-process Action and rechecks its guards on direct 
     assert.equal((await inspect())[0]?.status, 'blocked');
     for (const ref of [flight, transfer, backupTransfer, hotel])
       await graph.link({ type: 'Journey' + ref.type, from: journey, to: ref });
+    const unrelated = { ...journey, id: 'unrelated-journey' };
+    await graph.create(unrelated, { id: unrelated.id, name: unrelated.id, state: 'pending' });
+    const refreshed = await machinery.replan(model, await access(), { changedObjects: [hotel, flight, journey] });
+    assert.deepEqual(refreshed.items.map(item => item.object), [journey]);
+    assert.equal(refreshed.items[0]?.items[0]?.status, 'blocked');
     await graph.edit(flight, 1, { state: 'ready' });
     await graph.edit(transfer, 1, { state: 'ready' });
     assert.equal((await inspect())[0]?.status, 'blocked');
