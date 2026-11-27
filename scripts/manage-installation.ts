@@ -23,7 +23,7 @@ export async function manageInstallation(installation: Installation, [command, a
     const publisher = { owner: process.env.EIGOS_PUBLISHER_SUBJECT ?? 'deployment', scopes: [] };
     try {
       if (command === 'initialize' || command === 'upgrade') {
-        if (command === 'upgrade') await upgradePublicationStorage(db);
+        if (command === 'upgrade') { await upgradePublicationStorage(db); await installation.upgradeData?.(db,installation.model); }
         else await db.initialize();
         await setGrants(db, publisher.owner, [{ resource: model.document.id, permission: 'manage_definition' }]);
       } else if (command === 'enable-owner-isolation') {

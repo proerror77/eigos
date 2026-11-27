@@ -1,3 +1,4 @@
+import { ResourceReservations } from './resource-reservations.js';
 import { requireMachineryTransition } from './machinery-execution.js';
 import { digest, Conflict, InvalidInput, PermissionDenied, NotFound, type ExecutionActor } from '../core/identity.js';
 import { timeOperation } from '../core/operation-timing.js';
@@ -207,6 +208,7 @@ export class Actions {
         await assertActionConfirmed(this.db, model, execution.task, approvedWebhook.data, client);
       }
       await this.checkInput(objects, actionName, input, signal, scenarioEvaluation);
+      if (action.reservation) await new ResourceReservations(this.db).forAction(objects,actionName,input,requestId,'commit');
       const ref = (value: { type: string; id: Value }): ObjectRef => objectRefSchema.parse({ type: value.type, id: evaluate(value.id, input) });
       for (const rule of action.rules ?? []) {
         if (rule.op === 'addLink') await objects.link({ type: rule.link, from: ref(rule.from), to: ref(rule.to) });
@@ -279,6 +281,7 @@ export class Actions {
         await objects.lockWrites();
         await access.refresh(client);
         await this.checkInput(objects, actionName, input, signal);
+        if (action.reservation) await new ResourceReservations(this.db).forAction(objects,actionName,input,requestId,'dispatch');
       },
       deferEffect: effect => {
         if (model.scenario) throw new Conflict('External effects require a formal Action');
@@ -395,6 +398,7 @@ export class Actions {
       const effects=(await this.db.query(`SELECT id,state FROM ${this.db.schema}.action_effects WHERE owner=$1 AND request_id=$2 ORDER BY id FOR UPDATE`,[access.principal.owner,originalRequestId],client)).rows;
       if(effects.some(effect=>effect.state==='working'))throw new Conflict('An original Action effect is in flight');
       await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state='canceled',token=NULL,lease_until=NULL,error=NULL WHERE owner=$1 AND request_id=$2 AND state='pending'`,[access.principal.owner,originalRequestId],client);
+      await new ResourceReservations(this.db).undo(access.principal.owner,originalRequestId,client);
       await compensate(graph,original.objects as ObjectChange[],original.links as LinkChange[]);
       const result={originalRequestId,requestId,result:original.result,externalEffectsReversed:false,pendingEffectsCanceled:effects.filter(effect=>effect.state==='pending').length};
       await this.db.query(`INSERT INTO ${this.db.schema}.actions(owner,request_id,digest,action,release,result,executor_kind,executor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[access.principal.owner,requestId,digest({undo:originalRequestId,release:model.release}),original.action,model.release,original.result,executor.kind,executor.id],client);

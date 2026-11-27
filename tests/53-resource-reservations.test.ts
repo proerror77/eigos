@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ResourceReservations } from '../packages/runtime/resource-reservations.js';
-import { fixture } from './fixture.js';
+import { Scenarios } from '../packages/runtime/scenarios.js';
+import { ExternalOperations } from '../packages/runtime/external-operations.js';
+import { objectRefSchema } from '../packages/ontology/schema.js';
+import { createCapabilities } from '../packages/capabilities/index.js';
+import type { FunctionHandler } from '../packages/runtime/functions.js';
+import { Access,businessGrants,setGrants } from '../packages/runtime/access.js';
+import { Objects } from '../packages/runtime/objects.js';
+import { fixture, principal } from './fixture.js';
 
 test('two concurrent Actions cannot reserve the same resource and interval', async () => {
   const f = await fixture();
@@ -30,4 +37,121 @@ test('two concurrent Actions cannot reserve the same resource and interval', asy
     await f.db.transaction(client => ledger.replace('owner-d', 'released-slot', [same], 'committed', client));
     assert.equal((await f.db.query(`SELECT 1 FROM ${f.db.schema}.resource_reservations WHERE owner=$1 AND state='released'`, [winner])).rowCount, 1);
   } finally { await f.close(); }
+});
+
+test('a published Action and its supplier dispatch retain exclusive intervals through lost replies and retries', async () => {
+  const f=await fixture();
+  try {
+    const doc=structuredClone(f.model.document);
+    const refSchema={type:'object',properties:{type:{type:'string'},id:{type:'string'}},required:['type','id'],additionalProperties:false};
+    const sharedSource=doc.dataSources[0]!.apiName;
+    const policy={ holderParameter:'holder',allocationsParameter:'allocations',state:'committed' as const };
+    for (const name of ['AllocateResource','ReleaseResource','SupplierAllocateResource','SharedAllocateResource','OutboxAllocateResource']) doc.actionTypes.push({
+      apiName:name,description:'Synthetic authorized allocation',objectParameters:{holder:'Route'},submissionCriteria:[],
+      reservation:{...policy,state:name==='ReleaseResource'?'released':'committed',...(name==='SharedAllocateResource'?{sharedSource}:{}),
+        ...(name==='OutboxAllocateResource'?{confirmationEffect:'ConfirmResource'}:{})},
+      ...(name==='OutboxAllocateResource'?{effects:[{name:'ConfirmResource',handler:'ConfirmResource',payload:{}}]}:{}),
+      parameters:{type:'object',properties:{holder:refSchema,revision:{type:'integer'},allocations:{type:'array',items:{type:'object'}}},
+        required:['holder','allocations','revision'],additionalProperties:false},
+      ...(name==='SupplierAllocateResource'?{function:'MakeResourceBooking'}:{
+        rules:[{op:'editObject' as const,object:{parameter:'holder'},expectedRevision:{parameter:'revision'},
+          properties:{name:{literal:name}}}], result:{type:'Route',id:{parameter:'holder',path:['id']}},
+      }),
+    });
+    doc.actionTypes.push({apiName:'MergeAllocationScenario',description:'Accept reviewed resource edits',
+      parameters:{type:'object',properties:{holder:refSchema,scenario:{type:'string'},revision:{type:'integer'}},required:['holder','scenario','revision']},
+      objectParameters:{holder:'Route'},submissionCriteria:[],rules:[{op:'applyScenario',scenario:{parameter:'scenario'},
+        expectedRevision:{parameter:'revision'},objectTypes:['Route'],linkTypes:[]}],result:{type:'Route',id:{parameter:'holder',path:['id']}}});
+    const supplier=doc.actionTypes.find(x=>x.apiName==='SupplierAllocateResource')!;
+    const definition={apiName:'MakeResourceBooking',version:'1.0.0',description:'Synthetic supplier',edits:true,parameters:supplier.parameters,returns:refSchema};
+    doc.functionTypes.push(definition);
+    let calls=0, unavailable=false, effectFails=true;
+    const operations=new ExternalOperations(f.db);
+    const handler: FunctionHandler=async(input,context)=>{
+      const holder=objectRefSchema.parse(input.holder), request=context.operationId!;
+      const result=await operations.run(context.principal.owner,request,input,context.assertDispatch!,async()=>{
+        calls++;
+        if(unavailable)throw new Error('synthetic lost acknowledgement');
+        return holder;
+      },context.objects);
+      return context.edit!(result, async graph=>{
+        await graph.edit(holder,Number(input.revision),{name:'supplier-confirmed'});
+      });
+    };
+    const cap=createCapabilities(f.db,()=>Promise.reject(new Error('unexpected source')),
+      {functions:[{definition,implementationId:'synthetic',handler}],effects:new Map([['ConfirmResource',async()=>{
+        if (effectFails) throw new Error('Synthetic delivery acknowledgement missing');
+      }]])});
+    const model=await f.metadata.publish(doc,cap,f.publisher);
+    await setGrants(f.db,principal.owner,businessGrants(model));
+    const access=await Access.load(f.db,principal), graph=new Objects(f.db,model,access);
+    const room={type:'Route',id:'resource'}, a={type:'Route',id:'holder-a'}, b={type:'Route',id:'holder-b'};
+    for(const ref of [room,a,b])await graph.create(ref,{id:ref.id,name:ref.id});
+    const first={allocation:'one',resource:room,start:'2026-12-01T10:00:00Z',end:'2026-12-01T11:00:00Z'};
+    const second={...first,start:first.end,end:'2026-12-01T12:00:00Z'};
+    const args=(holder:typeof a,allocations:typeof first[],revision=1)=>({holder,allocations,revision});
+    const call=(name:string,input:ReturnType<typeof args>,id:string)=>cap.actions.apply(access,model,name,input,id);
+    await call('AllocateResource',args(a,[first]),'first');
+    await assert.rejects(call('SupplierAllocateResource',args(b,[first]),'overlap'),/reserved/);
+    assert.equal(calls,0);
+    unavailable=true;
+    const input=args(a,[second],2);
+    await assert.rejects(call('SupplierAllocateResource',input,'lost'),/unresolved/);
+    await assert.rejects(call('AllocateResource',args(b,[first]),'old-overlap'),/reserved/);
+    await assert.rejects(call('AllocateResource',args(b,[second]),'new-overlap'),/reserved/);
+    await assert.rejects(call('ReleaseResource',args(a,[],2),'release-before-reconcile'),/still holds/);
+    await assert.rejects(call('SupplierAllocateResource',input,'lost'),/may have been dispatched/);
+    assert.equal(calls,1);
+    await operations.reconcile(principal.owner,'lost',input,async()=>{},async()=>a,graph);
+    await call('SupplierAllocateResource',input,'lost');
+    await call('SupplierAllocateResource',input,'lost');
+    assert.equal(calls,1);
+    await call('AllocateResource',args(b,[first]),'released-old');
+    await call('ReleaseResource',args(a,[],3),'release-confirmed');
+    const c={...a,id:'holder-c'}, d={...a,id:'holder-d'};
+    for(const ref of [c,d])await graph.create(ref,{id:ref.id,name:ref.id});
+    const day=(n:number)=>({...first,start:`2026-12-${n}T10:00:00Z`,end:`2026-12-${n}T11:00:00Z`});
+    await call('AllocateResource',args(c,[day(10)]),'prior');
+    await call('OutboxAllocateResource',args(c,[day(11)],2),'outbox');
+    await cap.effects.runOne();
+    for(const n of [10,11]) await assert.rejects(call('AllocateResource',args(d,[day(n)]),'occupied-'+n),/reserved/);
+    const delivery=(await f.db.query(`SELECT id,state FROM ${f.db.schema}.action_effects WHERE request_id='outbox'`)).rows[0]!;
+    assert.equal(delivery.state,'failed');
+    effectFails=false;
+    await cap.effects.retry(access,delivery.id);
+    assert(await cap.effects.runOne());
+    await call('AllocateResource',args(d,[day(10)]),'no-longer-occupied');
+    await assert.rejects(cap.actions.undo(access,model,'outbox','no-local-undo'),/supplier reservation/);
+    await cap.actions.undo(access,model,'no-longer-occupied','undo-local');
+    await call('OutboxAllocateResource',args(c,[day(12)],3),'never-dispatched');
+    await cap.actions.undo(access,model,'never-dispatched','cancel-before-delivery');
+    assert(!await cap.effects.runOne());
+    const scenarios=new Scenarios(f.db);
+    const scenario=await scenarios.create(access,model,{requestId:'preview',name:'Reserve for a plan'});
+    const view=await scenarios.view(access,model,scenario.id);
+    const dRev=(await graph.read(d)).revision;
+    await cap.actions.apply(access,view,'AllocateResource',args(d,[day(13)],dRev),'stage');
+    const metadata=await scenarios.inspect(access,model,scenario.id);
+    const merge={holder:d,scenario:scenario.id,revision:metadata.revision};
+    await call('AllocateResource',args(c,[day(13)],(await graph.read(c)).revision),'racer');
+    await assert.rejects(cap.actions.apply(access,model,'MergeAllocationScenario',merge,'merge'),/reserved/);
+    assert.equal((await scenarios.inspect(access,model,scenario.id)).state,'open');
+    await cap.actions.undo(access,model,'racer','remove-racer');
+    await cap.actions.apply(access,model,'MergeAllocationScenario',merge,'merge');
+    assert.equal((await f.db.query(`SELECT state FROM ${f.db.schema}.scenarios WHERE id=$1`,[scenario.id])).rows[0]!.state,'merged');
+    await cap.actions.undo(access,model,'merge','undo-merge');
+    const grants=[...businessGrants(model),{resource:'Eigos/source/'+sharedSource,permission:'dispatch_source' as const}];
+    const peer={...principal,owner:'second-reservation-owner'};
+    await setGrants(f.db,principal.owner,grants);
+    await setGrants(f.db,peer.owner,grants);
+    const theirs=await Access.load(f.db,peer), peerGraph=new Objects(f.db,model,theirs);
+    for(const ref of [room,b]) await peerGraph.create(ref,{id:ref.id,name:ref.id});
+    const shared=await Promise.allSettled([
+      cap.actions.apply(await Access.load(f.db,principal),model,'SharedAllocateResource',args(a,[second],4),'shared'),
+      cap.actions.apply(theirs,model,'SharedAllocateResource',args(b,[second]),'shared'),
+    ]);
+    assert.equal(shared.filter(row=>row.status==='fulfilled').length,1);
+    assert(shared.some(row=>row.status==='rejected' && /reserved/.test(String(row.reason))));
+    assert.equal((await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.reservation_dispatches`)).rows[0]!.n,0);
+  }finally{await f.close();}
 });

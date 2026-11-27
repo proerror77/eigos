@@ -394,7 +394,7 @@ export function schedulingFunctions(db: Database): ReadonlyMap<string, FunctionH
             resource: JSON.stringify([graph.owner, graph.model.document.id, resource.ref.type, resource.ref.id]) }));
         });
         await new ResourceReservations(db).replace(graph.owner,
-          JSON.stringify([graph.model.document.id, input.plan.type, input.plan.id]), allocations, 'committed', graph.client);
+          JSON.stringify([graph.model.document.id, input.plan.type, input.plan.id]), allocations, 'committed', graph.client, graph.change?.requestId);
         if(graph.model.object('SchedulePlan').properties.state){const plan=await graph.read(input.plan);if(plan.properties.state!=='confirmed')await graph.edit(input.plan,plan.revision,{state:'confirmed'});}
       });
     }],

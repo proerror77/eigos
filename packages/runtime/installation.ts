@@ -34,6 +34,7 @@ export interface Installation {
   runtimeId(core: string): string;
   assemble(db: Database): InstalledRuntime;
   afterActivation?(db: Database, model: Ontology): Promise<void>;
+  upgradeData?(db: Database, model: Ontology): Promise<void>;
   driver(): AgentDriver;
 }
 const file = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);

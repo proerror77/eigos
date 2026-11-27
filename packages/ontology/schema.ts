@@ -183,6 +183,10 @@ export const ontologySchema = z.strictObject({
     ])).min(1).optional(),
     result: reference.optional(), function: name.optional(), functionVersion: z.string().regex(versionRange).optional(),
     effects: z.array(actionEffectSchema).max(20).optional(),
+    reservation: z.strictObject({
+      holderParameter: name, allocationsParameter: name, state: z.enum(['held','committed','released']),
+      sharedSource: name.optional(), confirmationEffect: name.optional(),
+    }).optional(),
   }).refine(action => action.function ? !action.rules && !action.result : !!action.rules && !!action.result, 'Select declarative rules or an edit Function')),
   dataSources: z.array(z.strictObject({
     apiName: name, objectType: name, function: name, classification: classificationSchema.optional(),

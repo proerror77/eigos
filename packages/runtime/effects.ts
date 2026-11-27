@@ -1,3 +1,4 @@
+import { ResourceReservations } from './resource-reservations.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Conflict, digest, type Principal } from '../core/identity.js';
@@ -14,6 +15,7 @@ export async function initializeEffects(db: Database) {
     token uuid, lease_until timestamptz, available_at timestamptz NOT NULL DEFAULT now(), error text,
     created_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz,
     UNIQUE(owner,request_id,name));
+    ALTER TABLE ${db.schema}.action_effects ADD COLUMN IF NOT EXISTS confirms_reservation boolean NOT NULL DEFAULT false;
     CREATE INDEX IF NOT EXISTS action_effects_queue ON ${db.schema}.action_effects(state,available_at);
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='${db.schema}.action_effects'::regclass
@@ -47,9 +49,9 @@ export class Effects {
     const requirements=await access.finalRequirements(client);
     for (const effect of prepared) {
       const id = digest([access.principal.owner, requestId, effect.name]);
-      await this.db.query(`INSERT INTO ${this.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements),
-        JSON.stringify(access.principal.memberAccess ? { scopes: access.principal.scopes, memberAccess: true } : access.principal.scopes)], client);
+      await this.db.query(`INSERT INTO ${this.db.schema}.action_effects(id,owner,request_id,release,ontology,action,name,handler,payload,requirements,scopes,confirms_reservation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [id, access.principal.owner, requestId, model.release, model.document.id, action, effect.name, effect.handler, effect.payload, JSON.stringify(requirements),
+        JSON.stringify(access.principal.memberAccess ? { scopes: access.principal.scopes, memberAccess: true } : access.principal.scopes), model.action(action).reservation?.confirmationEffect===effect.name], client);
     }
   }
   async status(access: Access, requestId: string) {
@@ -97,7 +99,7 @@ export class Effects {
     timer.unref();
     try {
       await this.db.withOwner(claim.owner, async () => {
-        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload,effect.name,effect.action,effect.release
+        const row = (await this.db.query(`SELECT effect.scopes,effect.requirements,effect.handler,effect.payload,effect.name,effect.action,effect.release,effect.request_id,effect.confirms_reservation
           FROM ${this.db.schema}.action_effects effect
           JOIN ${this.db.schema}.actions committed
             ON committed.owner=effect.owner AND committed.request_id=effect.request_id
@@ -130,8 +132,15 @@ export class Effects {
           outcome = await this.handlers.get(row.handler)!(row.payload, { idempotencyKey: claim.id, principal, signal: executionSignal });
         }
         executionSignal.throwIfAborted();
-        await this.db.query(`UPDATE ${this.db.schema}.action_effects SET state=$4,completed_at=now(),lease_until=NULL,token=NULL,error=NULL
-          WHERE id=$1 AND owner=$2 AND token=$3`, [...lease, outcome === 'canceled' ? 'canceled' : 'completed']);
+        const completed = outcome !== 'canceled';
+        const mark = (client:Sql) => this.db.query(`UPDATE ${this.db.schema}.action_effects SET state=$4,completed_at=now(),lease_until=NULL,token=NULL,error=NULL
+          WHERE id=$1 AND owner=$2 AND token=$3`, [...lease, completed ? 'completed' : 'canceled'],client);
+        if (row.confirms_reservation) {
+          await this.db.transaction(async client => {
+            if ((await mark(client)).rowCount) await new ResourceReservations(this.db)
+              .finishEffect(claim.owner,row.release,row.action,row.request_id,row.name,completed,client);
+          });
+        } else await mark(this.db.pool);
       });
     } catch {
       // A handler can have completed remotely before a local failure. Retries always retain its idempotency key.
