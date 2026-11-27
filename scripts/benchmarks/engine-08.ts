@@ -57,7 +57,7 @@ async function memory(pid: number | undefined) {
   }
 }
 
-/** The fixture's Ontology with numeric Route fields and an Interface over routes and places. */
+/** The fixture's Ontology with benchmark fields and an Interface over routes and places. */
 function document(base: Awaited<ReturnType<typeof fixture>>['model']['document']) {
   const copy = structuredClone(base);
   const route = copy.objectTypes.find(type => type.apiName === 'Route')!;
@@ -67,6 +67,8 @@ function document(base: Awaited<ReturnType<typeof fixture>>['model']['document']
     open: { description: 'Synthetic open flag', schema: { type: 'boolean' }, required: false },
   });
   const property = (description: string, type: string, required = false) => ({ description, schema: { type }, required });
+  const request = copy.objectTypes.find(type => type.apiName === 'RideRequest')!;
+  request.properties.benchmarkIndex = property('Synthetic request sequence', 'integer');
   copy.interfaceTypes.push({
     apiName: 'Measured', description: 'Synthetic measured things',
     properties: { label: property('Label', 'string', true), size: property('Size', 'number') },
@@ -87,7 +89,8 @@ async function seed(f: Awaited<ReturnType<typeof fixture>>, projection: string, 
       jsonb_build_object('id','r'||g,'name',CASE WHEN g%200=0 THEN 'hot' ELSE 'cold' END,'distance',(g%1000)::float8/10,'lanes',g%4,'open',g%2=0)
       FROM generate_series(1,$3::int) g`, [projection, o, n]);
     await q(`INSERT INTO ${s}.objects(projection,owner,type,id,revision,properties) SELECT $1,$2,'RideRequest','q'||g,1,
-      jsonb_build_object('id','q'||g,'name','q'||g,'status',CASE WHEN g%200=0 THEN 'quoted' ELSE 'requested' END,'requestedAt','2026-11-01T00:00:00.000Z')
+      jsonb_build_object('id','q'||g,'name','q'||g,'status',CASE WHEN g%200=0 THEN 'quoted' ELSE 'requested' END,
+        'requestedAt','2026-11-01T00:00:00.000Z','benchmarkIndex',g)
       FROM generate_series(1,$3::int) g`, [projection, o, n]);
     await q(`INSERT INTO ${s}.objects(projection,owner,type,id,revision,properties) SELECT $1,$2,'Place','p'||g,1,
       jsonb_build_object('id','p'||g,'name','p'||g,'city',CASE WHEN g%20=0 THEN 'Shanghai' ELSE 'City'||(g%50) END,'address','A',
@@ -106,10 +109,20 @@ type Case = { name: string; kind: 'evaluate' | 'aggregate' | 'query'; input: Rec
 const hot = { op: 'query', query: { type: 'Route', where: { name: 'hot' } } };
 const quoted = { op: 'query', query: { type: 'RideRequest', where: { status: 'quoted' } } };
 const byLanes = { groupBy: ['lanes'], metrics: { total: { op: 'count' }, mean: { op: 'avg', property: 'distance' } } };
+const oneHop = [{ link: 'route' }];
+const threeHops = [...oneHop, { link: 'origin' }, { link: 'departingRoutes' }];
+/** Measure fixed root counts independently of the seeded population's quoted percentage. */
+function traversalCases(n: number): Case[] {
+  return [1, 100, 10_000].filter(count => count <= n).flatMap(count => {
+    const set = { op: 'query', query: { type: 'RideRequest', filter: { op: 'lte', property: 'benchmarkIndex', value: count } } };
+    return [oneHop, threeHops].map(path => ({ name: `${path.length} hop traversal from ${count} root objects`, kind: 'evaluate',
+      input: { set: { op: 'traverse', set, path }, limit: 100 } }));
+  });
+}
 const cases: Case[] = [
   { name: 'filter 0.5%, first page', kind: 'evaluate', input: { set: hot, limit: 100 } },
-  { name: '1 hop from 0.5%', kind: 'evaluate', input: { set: { op: 'traverse', set: quoted, path: [{ link: 'route' }] }, limit: 100 } },
-  { name: '3 hops from 0.5%', kind: 'evaluate', input: { set: { op: 'traverse', set: quoted, path: [{ link: 'route' }, { link: 'origin' }, { link: 'departingRoutes' }] }, limit: 100 } },
+  { name: '1 hop from 0.5%', kind: 'evaluate', input: { set: { op: 'traverse', set: quoted, path: oneHop }, limit: 100 } },
+  { name: '3 hops from 0.5%', kind: 'evaluate', input: { set: { op: 'traverse', set: quoted, path: threeHops }, limit: 100 } },
   { name: 'aggregate 0.5% by lanes', kind: 'aggregate', input: { set: hot, ...byLanes } },
   { name: 'aggregate all routes by lanes', kind: 'aggregate', input: { set: { op: 'query', query: { type: 'Route' } }, ...byLanes } },
   { name: 'all routes, first page', kind: 'evaluate', input: { set: { op: 'query', query: { type: 'Route' } }, limit: 100 } },
@@ -139,7 +152,7 @@ for (const n of sizes) {
         ...await memory(kernel.pid) } };
       console.log(JSON.stringify(size));
       const reads: Record<string, unknown>[] = [];
-      for (const item of cases.filter(item => !only || item.name.includes(only))) {
+      for (const item of [...cases, ...traversalCases(n)].filter(item => !only || item.name.includes(only))) {
         const viaReference = async (): Promise<unknown> => item.kind === 'evaluate' ? reference.evaluate(access, model, item.input)
           : item.kind === 'aggregate' ? reference.aggregate(access, model, item.input) : graph.query(item.input as never);
         const viaKernel = async (): Promise<unknown> => {

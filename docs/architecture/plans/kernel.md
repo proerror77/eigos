@@ -120,7 +120,7 @@
 
 ### C5b：多跳与 Search Around
 
-**状态：** `Objects.follow` 已经过内核，见 [查询内核指南](../../guides/query-kernel.md#objectsfollowc5b)。多跳执行顺序（按选择性先求值）和前沿上限的提前停止，等 Engine Benchmark 08 的夜间数据出来再决定是否需要。
+**状态：** `Objects.follow` 已经过内核，见 [查询内核指南](../../guides/query-kernel.md#objectsfollowc5b)。2026-11-27 的 Nightly 在 10 万个路线、10 万个乘车请求和 1 万个地点上，从 500 个请求出发做 7 次测量。单跳中位数从 67.3 ms 降到 41.2 ms，数据库语句从 10 条降到 2 条。三跳中位数从 84.8 ms 降到 71.0 ms，数据库语句从 12 条降到 2 条，其中内核执行占 65.5 ms。选择性排序和前沿提前停止分别需要集合组合与高分叉用例的对照结果。先以固定的 1、100 和 1 万个起点补齐规模曲线，再看何时应改执行计划。 [Nightly 报告](https://github.com/proerror77/eigos/actions/runs/45924409983)
 
 承接 OSS 03.2 留下的问题：候选分页 100 行、一万个对象时 JS 处理成为瓶颈、每次 `follow` 调用的固定开销。
 
