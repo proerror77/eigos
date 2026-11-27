@@ -3,6 +3,7 @@ import { ComponentFunctions } from '../../packages/runtime/component-functions.j
 import {Applications} from '../../packages/runtime/applications.js';
 import { ontologyServices } from '../../packages/runtime/services.js';
 import express, { type Request } from 'express';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { McpServer } from '@modelcontextprotocol/server';
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import { jsonRpcHandler } from '@a2a-js/sdk/server/express';
@@ -72,7 +73,7 @@ export interface BusinessAdapter {
   hotels(metadata: Metadata): { approve(p: Principal, input: unknown): Promise<unknown>; list(p: Principal): Promise<unknown> };
   amend(tasks: Tasks, metadata: Metadata, principal: Principal, id: string, input: Extract<z.infer<typeof taskPlaceAmendmentSchema>, { source: string }>): Promise<Task>;
   restaurants(server: McpServer, metadata: Metadata, principal: Principal, member: boolean,
-    response: (operation: () => Promise<unknown>) => Promise<any>, authorize: (client: Sql) => Promise<void>): void;
+    response: (operation: () => Promise<unknown>) => Promise<CallToolResult>, authorize: (client: Sql) => Promise<void>): void;
 }
 export function createHostApp(config: Config, db: Database, capabilities: InstalledRuntime, ontologyId: string,
   verify: VerifyToken = verifier(config), business?: BusinessAdapter) {

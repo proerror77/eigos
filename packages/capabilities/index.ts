@@ -178,7 +178,7 @@ export function createCapabilities(
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources },
     notifications.committed);
   sources = capabilities.sources;
-  return { ...capabilities, registerServices, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
+  return { ...capabilities, legacyProfiles: businessDefinition.agentProfiles, registerServices, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
     scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
     taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
     projectTaskResult: publicHotelTaskResult };

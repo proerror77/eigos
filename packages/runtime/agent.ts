@@ -40,6 +40,7 @@ const accountQueryTools = new Set([
 ]);
 export interface Capabilities extends Bindings {
   functions: Functions; actions: Actions; sources: Sources;
+  legacyProfiles?: NonNullable<import('../ontology/schema.js').OntologyDocument['agentProfiles']>;
   taskWorkflow?: AgentTaskWorkflow;
   taskPrompt?: AgentTaskPrompt;
 }
@@ -439,7 +440,7 @@ export class OntologyAgent {
             instructions: [], prompt,
           };
         }
-        const { profiles, include } = taskCatalogueScope(model, access, task.input, workflow?.catalogue);
+        const { profiles, include } = taskCatalogueScope(model, access, task.input, workflow?.catalogue, this.capabilities.legacyProfiles);
         const scoped = catalogue(model, access, sandbox, include);
         const actions = new Set(scoped.actions.map(action => action.apiName));
         const functions = new Set(scoped.functions.map(fn => fn.apiName));

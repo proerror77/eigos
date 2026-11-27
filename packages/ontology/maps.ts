@@ -1,3 +1,4 @@
+import { placeDetailInput } from './pickup-evidence.js';
 import { z } from 'zod';
 import {
   coordinateSystem, coordinates, requestLocationForService, serviceLocation,
@@ -8,7 +9,7 @@ import { json, time } from './service-contracts.js';
 
 const label = z.string().trim().min(1).max(250);
 export const adcode = z.string().regex(/^[0-9]{6}$/);
-const poiId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const poiId = placeDetailInput.shape.id;
 export const gcjPoint = z.strictObject({ ...coordinates, coordinateSystem: z.literal('gcj02') });
 export const mapPoint = z.strictObject({ ...coordinates, coordinateSystem });
 export const mapAddress = z.strictObject({ address: label, city: label.optional() });
@@ -27,13 +28,9 @@ export const ridePickupResult = z.strictObject({
   inputCoordinateSystem: coordinateSystem, coordinateSystem: z.literal('gcj02'),
   conversion: z.enum(['converted_by_amap', 'already_gcj02']),
 });
-export const pickupCoordinateEvidence = ridePickupResult.pick({
-  provider: true, fetchedAt: true, inputCoordinateSystem: true, coordinateSystem: true, conversion: true,
-});
-
 const place = z.strictObject({ id: poiId, name: label, address: label.optional(), ...area, point: gcjPoint.optional() });
 export const mapPlaceResult = z.strictObject({ ...source, places: z.array(place).max(20) });
-export const placeDetailInput = z.strictObject({ id: poiId });
+export { placeDetailInput, pickupCoordinateEvidence } from './pickup-evidence.js';
 export const placeDetailResult = z.strictObject({ ...source, place });
 
 export const mapSearch = z.strictObject({ query: label, city: label.optional() });
