@@ -74,7 +74,17 @@ Workbench 的「流程运行 → Machinery」和 Ontology MCP 使用同一份分
 - **节点：** `states: [...]`。与 `current: true` 一起使用时，选出现在处于其中某个状态的流程；否则选出曾经处于其中某个状态的流程。
 - **边：** `edges: [...]`。`edgeMode: "through"`（默认）选出曾经经过其中某条转换的流程，`"last"` 只选最后一次转换是其中某条的流程。
 
-这对应 Palantir 的 “Processes currently in selected states / ever in selected states”，以及边的 “ever went through a transition or just the last transition”。选出的流程用 `ontology_save_machinery_cases` 保存为 Object Set，供下游的分析、Automation 和 Action 使用。
+这对应 Palantir 的 “Processes currently in selected states / ever in selected states”，以及边的 “ever went through a transition or just the last transition”。选出的流程用 `ontology_save_machinery_cases` 保存为 Object Set，供下游的分析、Automation 和 Action 使用：
+- `mode: "static"`（默认）保存当前的实例；
+- `mode: "dynamic"` 保存选择本身，即 Object Set 表达式 `{ "op": "machinery", "analysis": … }`。每次读取都在同一时间窗上重新分析，所以流程离开所选状态后，集合也随之变化。
+
+### 工作台
+
+工作台的 Machinery 页面在流程图上方提供四种视图的切换：曾经计数、当前计数、历史停留、当前停留。
+- 节点显示视图的数值和节点指标，按指标阈值或停留目标着色。
+- 边按视图的流量加粗，悬停时显示流程数和边指标。
+- 流程图下方可以多选状态（当前处于、曾经处于）或转换（经过、最后一次转换）来筛选。
+- 保存匹配的实例时，可以选择静态或动态。
 
 ### 节点和边的指标
 

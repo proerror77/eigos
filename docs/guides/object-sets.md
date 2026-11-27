@@ -13,6 +13,7 @@ Object Sets 将本体查询、对象引用和关系导航组合为可复用集�
 | `difference` | `left`、`right` | 保留左侧有、右侧没有的对象 |
 | `traverse` | `set`、`path` | 从集合出发依次导航 Links，每一步可通过 `as` 使用 Interface Link 名称 |
 | `saved` | `id` | 求值当前有权使用的已保存集合 |
+| `machinery` | `analysis` | 一次 Machinery 分析选出的流程，每次求值都重新分析，对应 Palantir Machinery 的输出 Object Set。分析不能再从已保存集合或父流程出发（`setId`、`focus`），以免集合引用到自身。它不能作为决策证据记录，也不经过查询内核 |
 
 以下表达式从所有询价请求导航到路线，再通过 `RideEstimatable` Interface 取得出发地点。
 

@@ -635,6 +635,33 @@ test('Machinery shows its four views, selects processes by state or last transit
   } finally { await f.close(); }
 });
 
+test('a dynamic Machinery selection follows the processes as they move, while a static one keeps its cases', async () => {
+  const f = await processSetup();
+  try {
+    const sets = new ObjectSets(f.db), access = () => Access.load(f.db, principal);
+    const now = Date.now();
+    const analysis = machineryAnalysisSchema.parse({ type: 'RouteStateLog', from: new Date(now - 3600000).toISOString(),
+      to: new Date(now + 3600000).toISOString(), filter: { states: ['stalled'], current: true } });
+    await f.change('open');
+    await f.change('stalled');
+    const dynamic = await sets.save(await access(), f.model, { requestId: 'stalled-now', name: 'Stalled now', mode: 'dynamic',
+      set: { op: 'machinery', analysis } });
+    const today = (await analyzeMachinery(f.db, await access(), f.model, analysis, true)).members!;
+    const fixed = await sets.save(await access(), f.model, { requestId: 'stalled-today', name: 'Stalled today', mode: 'static',
+      set: { op: 'refs', objects: today } });
+    const members = async (id: string) => (await sets.evaluate(await access(), f.model, { set: { op: 'saved', id } })).items.map(item => item.ref.id);
+    assert.deepEqual(await members(dynamic.id), [f.source.id]);
+    assert.deepEqual(await members(fixed.id), [f.source.id]);
+    // The route leaves the selected state: the dynamic set follows it, the static one keeps it.
+    await f.change('done');
+    assert.deepEqual(await members(dynamic.id), []);
+    assert.deepEqual(await members(fixed.id), [f.source.id]);
+    // A selection that reads a saved set could reach itself, so it analyzes all readable processes or one object.
+    await assert.rejects(sets.evaluate(await access(), f.model, { set: { op: 'machinery', analysis: { ...analysis, setId: dynamic.id } } }),
+      /analyzes all readable processes or one object/);
+  } finally { await f.close(); }
+});
+
 test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
   const f = await setup();
   try {

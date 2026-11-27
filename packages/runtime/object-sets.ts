@@ -21,7 +21,9 @@ export type SetExpression =
   | { op: 'union' | 'intersection'; sets: SetExpression[] }
   | { op: 'difference'; left: SetExpression; right: SetExpression }
   | { op: 'traverse'; set: SetExpression; path: { link: string; as?: string }[] }
-  | { op: 'saved'; id: string };
+  | { op: 'saved'; id: string }
+  // Palantir's Machinery output object sets: the processes a Machinery analysis selects, analyzed again on each read.
+  | { op: 'machinery'; analysis: Record<string, unknown> };
 const expression: z.ZodType<SetExpression> = z.lazy(() => z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('query'), query: setQuerySchema }),
   z.strictObject({ op: z.literal('refs'), objects: z.array(objectRefSchema).max(10000) }),
@@ -30,6 +32,7 @@ const expression: z.ZodType<SetExpression> = z.lazy(() => z.discriminatedUnion('
   z.strictObject({ op: z.literal('difference'), left: expression, right: expression }),
   z.strictObject({ op: z.literal('traverse'), set: expression, path: z.array(z.strictObject({ link: z.string().min(1).max(80), as: z.string().min(1).max(80).optional() })).min(1).max(8) }),
   z.strictObject({ op: z.literal('saved'), id: z.uuid() }),
+  z.strictObject({ op: z.literal('machinery'), analysis: z.record(z.string(), z.unknown()) }),
 ]));
 
 // Check depth before recursive parsing, including programmatic callers outside HTTP body limits.
@@ -181,6 +184,20 @@ export class ObjectSets {
             catch (error) { if (!(error instanceof NotFound) && !(error instanceof PermissionDenied)) throw error; }
           }
           return result;
+        case 'machinery': {
+          // A recorded decision names every page it read; a process analysis is not one of them.
+          if (capturingDecisionReads()) throw new Conflict('A Machinery selection cannot be part of recorded decision evidence');
+          const { analyzeMachinery, machineryAnalysisSchema } = await import('./machinery-analysis.js');
+          const analysis = machineryAnalysisSchema.parse(node.analysis);
+          // Selecting from a saved set or a parent could reach this set again.
+          if (analysis.setId || analysis.focus) throw new Conflict('A Machinery selection in an Object Set analyzes all readable processes or one object');
+          count();
+          for (const ref of (await analyzeMachinery(this.db, access, model, analysis, true)).members ?? []) {
+            try { add(await read(ref)); }
+            catch (error) { if (!(error instanceof NotFound) && !(error instanceof PermissionDenied)) throw error; }
+          }
+          return result;
+        }
         case 'saved': {
           if (savedIds.has(node.id)) throw new Conflict('Object set references form a cycle');
           const saved = await this.saved(access, model, node.id, client);

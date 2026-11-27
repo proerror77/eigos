@@ -8,9 +8,24 @@ const status = { conforming: '符合', deviation: '偏离', unknown: '证据不�
 const localTime = iso => new Date(iso).toLocaleString('zh-CN');
 const edgeText = edge => (edge.from ?? '开始') + ' → ' + (edge.to ?? '结束');
 
+const views = [
+  ['count', 'historical', '曾经计数'], ['count', 'current', '当前计数'],
+  ['duration', 'historical', '历史停留'], ['duration', 'current', '当前停留'],
+];
+
+/** A node's or an edge's number in the selected view, or its count when no view is selected. */
+const viewValue = (kind, value) => value == null ? '—' : kind === 'duration' ? duration(value) : String(value);
+const metricValue = (metric, value) => value == null ? '—'
+  : new Intl.NumberFormat('zh-CN', { maximumFractionDigits: metric.decimals ?? 2 }).format(value) + (metric.unit ? ' ' + metric.unit : '');
+
 function processGraph(result, element, button, selectState) {
   const states = result.states;
   if (!states.length) return null;
+  const view = result.view, metrics = result.metrics ?? {};
+  const nodeView = new Map((view?.nodes ?? []).map(node => [node.state, node]));
+  const edgeView = new Map((view?.edges ?? []).map(edge => [edgeText(edge), edge.value]));
+  const nodeMetric = new Map((metrics.node?.values ?? []).map(row => [row.state, row]));
+  const edgeMetric = new Map((metrics.edge?.values ?? []).map(row => [edgeText(row), row]));
   const width = 720, step = 36;
   const height = Math.max(90, states.length * step + 28);
   const svg = (type, attributes, text) => {
@@ -28,25 +43,48 @@ function processGraph(result, element, button, selectState) {
     const end = edge.to === null ? height - 5 : positions.get(edge.to);
     if (start === undefined || end === undefined) return;
     const x = 224 + (i % 12) * 34;
+    // Edge thickness is the flow: the view's value for the edge, or its transitions without a view (Sankey).
+    const flow = view ? edgeView.get(edgeText(edge)) ?? 0 : edge.count;
+    const kind = edge.expected === false ? 'unexpected' : edge.count ? 'observed' : 'expected';
     const curve = svg('path', {
       d: 'M 199 ' + start + ' C ' + x + ' ' + start + ', ' + x + ' ' + end + ', 205 ' + end,
-      class: edge.expected === false ? 'unexpected' : edge.count ? 'observed' : 'expected',
-      'stroke-width': 1 + Math.min(6, Math.log2(1 + edge.count)),
+      class: kind, 'stroke-width': 1 + Math.min(8, Math.log2(1 + flow)),
     });
-    curve.append(svg('title', {}, edgeText(edge) + ' · ' + edge.count + ' 次'));
-    graph.append(curve, svg('path', {
-      d: 'M 205 ' + (end - 3) + ' L 199 ' + end + ' L 205 ' + (end + 3),
-      class: edge.expected === false ? 'unexpected' : edge.count ? 'observed' : 'expected',
-    }));
+    const metric = edgeMetric.get(edgeText(edge));
+    curve.append(svg('title', {}, edgeText(edge) + ' · ' + edge.count + ' 次'
+      + (view ? ' · ' + viewValue('count', flow) + ' 个流程' : '')
+      + (metric ? ' · ' + metrics.edge.label + ' ' + metricValue(metrics.edge, metric.value) : '')));
+    graph.append(curve, svg('path', { d: 'M 205 ' + (end - 3) + ' L 199 ' + end + ' L 205 ' + (end + 3), class: kind }));
   });
   states.forEach((row, index) => {
-    graph.append(svg('rect', { x: 0, y: y(index) - 13, width: 192, height: 26, rx: 4 }));
-    const label = row.name.length > 24 ? row.name.slice(0, 24) + '…' : row.name;
-    graph.append(svg('text', { x: 9, y: y(index) + 4 }, label));
+    const shown = nodeView.get(row.name), metric = nodeMetric.get(row.name);
+    // A metric's color reflects its thresholds; otherwise a duration view's color compares the dwell target.
+    const color = metric?.color ?? shown?.color;
+    graph.append(svg('rect', { x: 0, y: y(index) - 13, width: 192, height: 26, rx: 4, ...(color ? { class: 'tone-' + color } : {}) }));
+    const label = row.name.length > 14 ? row.name.slice(0, 14) + '…' : row.name;
+    const parts = [label, view && viewValue(view.kind, shown?.value), metric && metricValue(metrics.node, metric.value)].filter(Boolean);
+    const text = svg('text', { x: 9, y: y(index) + 4 }, parts.join(' · '));
+    text.append(svg('title', {}, row.name + (metric ? ' · ' + metrics.node.label + ' ' + metricValue(metrics.node, metric.value) + ' · ' + metric.cases + ' 个一致流程' : '')));
+    graph.append(text);
   });
   return element('div', { class: 'section' }, graph,
     element('div', { class: 'toolbar' }, states.map(row =>
       button(row.name + ' · ' + row.current, () => selectState(row.name)))));
+}
+
+/** Select several states (now in or ever in) or transitions (ever through or last), as Machinery's outputs do. */
+function selectionPanel(result, element, button, select, choose) {
+  const box = () => element('input', { type: 'checkbox' });
+  const stateBoxes = result.states.map(row => [row.name, box()]);
+  const edgeBoxes = result.transitions.map(edge => [{ from: edge.from, to: edge.to }, box()]);
+  const stateMode = select([['current', '当前处于'], ['ever', '曾经处于']], 'current');
+  const edgeMode = select([['through', '经过'], ['last', '最后一次转换']], 'through');
+  const picked = boxes => boxes.filter(([, input]) => input.checked).map(([value]) => value);
+  return element('div', { class: 'section' },
+    element('div', { class: 'toolbar' }, ...stateBoxes.map(([name, input]) => element('label', {}, input, ' ' + name)), stateMode,
+      button('按所选状态筛选', () => { const states = picked(stateBoxes); if (states.length) choose({ states, current: stateMode.value === 'current' }); })),
+    element('div', { class: 'toolbar' }, ...edgeBoxes.map(([edge, input]) => element('label', {}, input, ' ' + edgeText(edge))), edgeMode,
+      button('按所选转换筛选', () => { const edges = picked(edgeBoxes); if (edges.length) choose({ edges, edgeMode: edgeMode.value }); })));
 }
 
 export async function renderMachinery(body, ui) {
@@ -265,10 +303,14 @@ export async function renderMachinery(body, ui) {
         progress.textContent = result.casesTotal + ' 个流程实例 · 耗时按'
           + (result.durationClock === 'observedAt' ? '来源观察时间' : '记录时间');
         const setName=element('input',{placeholder:'待复用实例名称'});
+        const setMode=select([['static','保存当前实例（静态）'],['dynamic','每次读取重新分析（动态）']],'static');
         const saved=element('div',{role:'status'});
+        const viewBar=element('div',{class:'toolbar'},...views.map(([kind,scope,label])=>
+          button(label,()=>render({...fixed,view:{kind,scope}}),input.view?.kind===kind&&input.view?.scope===scope?'primary':undefined)),
+          input.view&&button('不用视图',()=>{const {view:_view,...rest}=fixed;return render(rest);}));
         output.replaceChildren(
-          result.casesTotal>0&&element('div',{class:'toolbar'},setName,button('保存匹配实例为对象集',async()=>{
-            const result=await service('save_machinery_cases',{analysis:fixed,name:setName.value,requestId:crypto.randomUUID()});
+          result.casesTotal>0&&element('div',{class:'toolbar'},setName,setMode,button('保存匹配实例为对象集',async()=>{
+            const result=await service('save_machinery_cases',{analysis:fixed,name:setName.value,requestId:crypto.randomUUID(),mode:setMode.value});
             saved.replaceChildren(element('span',{},'对象集 '+result.id+' 已保存。'),
               button('用对象集试跑',()=>openEvaluation(result.id)));
           }),saved),
@@ -278,8 +320,9 @@ export async function renderMachinery(body, ui) {
               button(status[key] + ' ' + count, () => render({ ...fixed, offset: 0, filter: { conformance: key } }))),
             author, processStates.length > 0 && configureRule,
           ),
-          element('h3', {}, '流程图'),
+          element('h3', {}, '流程图'), viewBar,
           processGraph(result, element, button, name => render({ ...fixed, offset: 0, filter: { state: name, current: true } })),
+          selectionPanel(result, element, button, select, filter => render({ ...fixed, offset: 0, filter })),
           element('h3', {}, '实际路径'), pathTable,
           element('h3', {}, '瓶颈排名'), bottlenecks,
           element('h3', {}, '状态停留'), dwell, distribution,
