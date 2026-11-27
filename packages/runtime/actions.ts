@@ -15,7 +15,7 @@ import { JournalObjects, compensate, type ObjectChange, type LinkChange } from '
 
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
 import { validateCognitive } from './cognitive-workflow.js';
-import { ActionPARequestRequired, Clarification, CityConfirmationRequired, PlaceConfirmationRequired, RideEndpointRequired, SourceRetryRequired, placeContinuationSchema } from './clarification.js';
+import { ActionInputRequired, Clarification, actionContinuationSchema } from './clarification.js';
 import { assertActionConfirmed } from './action-confirmation.js';
 import { appendTrace } from './execution-trace.js';
 import { capturingDecisionReads } from './decision-evidence.js';
@@ -297,21 +297,9 @@ export class Actions {
       reference = await this.apply(access, model, selected.action, selected.input, requestId, guard, execution, signal);
     } catch (error) {
       if (!execution || !options.allowPause || model.scenario) throw error;
-      const original = { ...selected, requestId, read };
-      if (error instanceof CityConfirmationRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions, { ...original, waitingFor: 'city' });
-      }
-      if (error instanceof RideEndpointRequired || error instanceof ActionPARequestRequired) {
+      if (error instanceof ActionInputRequired) {
         throw new Clarification(error.message, error.choices, error.permissions,
-          { ...original, waitingFor: error instanceof RideEndpointRequired ? error.side : 'pa-request' });
-      }
-      if (error instanceof SourceRetryRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions,
-          { ...original, waitingFor: 'retry-source', receipts: error.receipts });
-      }
-      if (error instanceof PlaceConfirmationRequired) {
-        throw new Clarification(error.message, error.choices, error.permissions,
-          { ...original, receipts: error.receipts, pickup: error.pickup });
+          { ...selected, requestId, read, ...error.wait });
       }
       throw error;
     }
@@ -340,14 +328,7 @@ export class Actions {
   async resume(access: Access, model: PublishedOntology, execution: TaskExecution, signal: AbortSignal) {
     const { task, tasks } = execution;
     await tasks.current(task);
-    const pending = placeContinuationSchema.parse(task.input.placeContinuation);
-    const missingInput = pending.waitingFor === 'city' && !task.input.rideCity ||
-      pending.waitingFor === 'origin' && !task.input.rideOrigin ||
-      pending.waitingFor === 'destination' && !task.input.rideDestination ||
-      !pending.waitingFor && !task.input.places;
-    if (missingInput) {
-      throw new Conflict('Original Action is waiting for input');
-    }
+    const pending = actionContinuationSchema.parse(task.input.placeContinuation);
     await assertActionConfirmed(this.db, model, task, pending);
     return this.complete(access, model, { action: pending.action, input: pending.input },
       pending.requestId, pending.read, execution, signal, { allowPause: true });

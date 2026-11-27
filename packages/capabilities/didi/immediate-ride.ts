@@ -11,7 +11,6 @@ import { privateLocation } from '../../ontology/personal-places.js';
 import { json } from '../../ontology/service-contracts.js';
 import type { ObjectData, ObjectRef } from '../../ontology/schema.js';
 import { actionConfirmationRef } from '../../runtime/action-confirmation.js';
-import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
 import type { Database } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
@@ -59,22 +58,18 @@ async function requestApproval(
 ) {
   const { task, tasks } = interactiveTask(context);
   const quoteDigest = digest([task.id, terms, quote.receipt.inputDigest, quote.receipt.resultDigest, sourceAuthority]);
-  try {
-    const raw = await new PARequests(tasks).request(task, quoteDigest, immediateRideApprovalCapability, {
+  const raw = await new PARequests(tasks).requestActionInput(task, context.operationId!, quoteDigest,
+    immediateRideApprovalCapability, 'authorization', {
       ...terms, quoteDigest, evidence: quote.evidence,
       message: '请向用户展示起终点、车型和人民币预估价。收到用户对车型和预估价的明确确认后再回传。实际车费可能随行程变化。',
     }, json(immediateRideConfirmation));
-    const approval = immediateRideConfirmation.parse(raw);
-    if (approval.quoteDigest !== quoteDigest) throw new Conflict('Confirmation does not match the original ride quote');
-    if (approval.decision === 'cancel') return null;
-    const fare = terms.fares.find(item => item.category === approval.category &&
-      item.amountMinor === approval.amountMinor && item.currency === approval.currency);
-    if (!fare) throw new Conflict('Confirm one exact vehicle and estimate from the original quote');
-    return { fare, quoteDigest };
-  } catch (error) {
-    if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
-    throw error;
-  }
+  const approval = immediateRideConfirmation.parse(raw);
+  if (approval.quoteDigest !== quoteDigest) throw new Conflict('Confirmation does not match the original ride quote');
+  if (approval.decision === 'cancel') return null;
+  const fare = terms.fares.find(item => item.category === approval.category &&
+    item.amountMinor === approval.amountMinor && item.currency === approval.currency);
+  if (!fare) throw new Conflict('Confirm one exact vehicle and estimate from the original quote');
+  return { fare, quoteDigest };
 }
 
 export function immediateDidiRideFunctions(
