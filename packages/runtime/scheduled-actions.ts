@@ -22,7 +22,7 @@ export type ScheduledCall = {
 };
 export type ScheduleTerminal = (db: Database, model: PublishedOntology, client: Sql, owner: string, scheduleId: string,
   call: { action: string; arguments: unknown }, state: 'expired' | 'failed', taskId?: string) => Promise<void>;
-type TerminalJob = { owner: string; id: string; body: { action: string; arguments: unknown }; task_id?: string };
+type TerminalJob = { owner: string; id: string; body: { action: string; arguments: unknown; plannedRelease: string }; task_id?: string };
 export class DeferredExecution extends Error {
   constructor(readonly until: string) {
     super('Scheduled check will resume');
@@ -72,8 +72,8 @@ export class ScheduledActions {
     validator(graph.model.action(job.action).parameters).parse(job.arguments);
     if (job.sourceTaskId) {
       const original = await this.db.query(
-        `SELECT 1 FROM ${this.db.schema}.tasks WHERE id=$1 AND owner=$2`,
-        [job.sourceTaskId, graph.owner],
+        `SELECT 1 FROM ${this.db.schema}.tasks WHERE id=$1 AND owner=$2 AND ontology=$3`,
+        [job.sourceTaskId, graph.owner, graph.model.document.id],
         graph.client,
       );
       if (!original.rowCount) throw new Conflict('Original task owner mismatch');
@@ -84,6 +84,7 @@ export class ScheduledActions {
       contract: actionContract(graph.model, job.action),
       sourceTaskId: job.sourceTaskId ?? null,
       plannedRelease: graph.model.release,
+      ...(graph.access.principal.clientId ? { paClient: graph.access.principal.clientId } : {}),
       ...(graph.access.principal.memberAccess ? { memberAccess: true } : {}),
       ...(job.observationInterestId?{observationInterestId:job.observationInterestId}:{}),
     };
@@ -112,9 +113,12 @@ export class ScheduledActions {
   }
   async promoteOne(): Promise<boolean> {
     return this.db.transaction(async (client) => {
-      const model = await this.metadata.active('Eigos', client, true);
-      const notify = (job: TerminalJob, state: 'expired' | 'failed') => this.terminalHandlers.get(job.body.action)?.(
-        this.db, model, client, job.owner, job.id, job.body, state, job.task_id ?? undefined);
+      const activeFor = async (release: string) => {
+        const planned = await this.metadata.get(release, client);
+        return this.metadata.active(planned.document.id, client, true);
+      };
+      const notify = async (job: TerminalJob, state: 'expired' | 'failed') => this.terminalHandlers.get(job.body.action)?.(
+        this.db, await activeFor(job.body.plannedRelease), client, job.owner, job.id, job.body, state, job.task_id ?? undefined);
       const terminalActions = [...this.terminalHandlers.keys()];
       const failed = await this.db.query<TerminalJob>(
         `UPDATE ${this.db.schema}.scheduled_actions s SET state='blocked',error='Scheduled Action failed'
@@ -165,6 +169,7 @@ export class ScheduledActions {
         return true;
       };
       if (new Date(row.deadline).getTime() <= Date.now()) return fail('Execution window expired');
+      const model = await activeFor(row.body.plannedRelease);
       const principal = { owner: row.owner, scopes: row.scopes, memberAccess: row.body.memberAccess === true } as Principal;
       try {
         const access = await Access.load(this.db, principal, client);
@@ -180,6 +185,7 @@ export class ScheduledActions {
         requestId,
         message: `Execute scheduled Action ${row.body.action}`,
         ...(principal.memberAccess ? { memberAccess: true } : {}),
+        ...(row.body.paClient ? { paClient: row.body.paClient } : {}),
         scheduledAction: {
           scheduleId: row.id,
           action: row.body.action,

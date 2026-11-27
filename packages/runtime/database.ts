@@ -334,6 +334,28 @@ export class Database {
         received_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(owner,request_id), UNIQUE(task_id,position));
       CREATE TABLE IF NOT EXISTS ${s}.source_calls (task_id uuid NOT NULL REFERENCES ${s}.tasks(id), name text NOT NULL, state text NOT NULL, input_digest text NOT NULL, result jsonb, PRIMARY KEY(task_id,name));
       ALTER TABLE ${s}.source_calls ADD COLUMN IF NOT EXISTS lease_token uuid;`);
+    // Existing tasks already pin a release. Derive ownership from that release for every producer,
+    // including cognitive and scheduled tasks, and backfill old inbox rows in the same transaction.
+    await this.query(`DO $migration$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='${s}.tasks'::regclass AND attname='ontology' AND NOT attisdropped) THEN
+        ALTER TABLE ${s}.tasks ADD COLUMN ontology text;
+        UPDATE ${s}.tasks t SET ontology=r.body->>'id' FROM ${s}.releases r WHERE r.digest=t.release;
+        ALTER TABLE ${s}.tasks ALTER COLUMN ontology SET NOT NULL;
+        CREATE FUNCTION ${s}.assign_task_ontology() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN
+          SELECT body->>'id' INTO STRICT NEW.ontology FROM ${s}.releases WHERE digest=NEW.release;
+          RETURN NEW;
+        END $fn$;
+        CREATE TRIGGER assign_task_ontology BEFORE INSERT OR UPDATE OF release,ontology ON ${s}.tasks
+          FOR EACH ROW EXECUTE FUNCTION ${s}.assign_task_ontology();
+        ALTER TABLE ${s}.task_inbox_events ADD COLUMN ontology text;
+        UPDATE ${s}.task_inbox_events e SET ontology=t.ontology FROM ${s}.tasks t WHERE t.id=e.task_id;
+        ALTER TABLE ${s}.task_inbox_events ALTER COLUMN ontology SET NOT NULL;
+        ALTER TABLE ${s}.task_inbox_events DROP CONSTRAINT task_inbox_events_pkey, ADD PRIMARY KEY(ontology,owner,request_id);
+        ALTER TABLE ${s}.tasks DROP CONSTRAINT tasks_owner_request_id_key, ADD UNIQUE(ontology,owner,request_id);
+        DROP INDEX ${s}.tasks_conversation_batch;
+        CREATE UNIQUE INDEX tasks_conversation_batch ON ${s}.tasks(ontology,owner,conversation_id,conversation_batch) WHERE conversation_id IS NOT NULL;
+      END IF;
+    END $migration$`);
     await initializeAccounts(this);
     await this.query(`
       CREATE TABLE IF NOT EXISTS ${s}.scenarios (id uuid PRIMARY KEY, owner text NOT NULL, request_id text NOT NULL, name text NOT NULL,

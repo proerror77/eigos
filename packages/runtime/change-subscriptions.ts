@@ -38,8 +38,8 @@ export const subscribeSchema = z.strictObject({
 /** The wake a subscriber receives: the commits after `after` through `through`, and what in its footprint they touched. */
 export type ChangeWake = { event: 'ontology_changes'; subscription: string; commits: { after: string; through: string }; types: string[]; links: string[] };
 
-const storedPrincipal = z.object({ owner: z.string(), scopes: z.array(z.string()), memberAccess: z.literal(true).optional() });
-type Row = { id: string; owner: string; request_id: string; conversation_id: string; principal: unknown; footprint: ChangeFootprint; position: string };
+const storedPrincipal = z.object({ owner: z.string(), scopes: z.array(z.string()), clientId: z.string().optional(), memberAccess: z.literal(true).optional() });
+type Row = { ontology: string; id: string; owner: string; request_id: string; conversation_id: string; principal: unknown; footprint: ChangeFootprint; position: string };
 
 export class ChangeSubscriptions {
   constructor(private readonly db: Database, private readonly tasks: Tasks) {}
@@ -57,7 +57,7 @@ export class ChangeSubscriptions {
     for (const type of footprint.types) { model.object(type); access.read(model, type); }
     for (const link of footprint.links) access.definition(model, 'link', link);
     const owner = access.principal.owner;
-    const principal: Principal = { owner, scopes: [...access.principal.scopes], ...(access.principal.memberAccess ? { memberAccess: true } : {}) };
+    const principal: Principal = { owner, scopes: [...access.principal.scopes], clientId: access.principal.clientId, ...(access.principal.memberAccess ? { memberAccess: true } : {}) };
     return this.db.withOwner(owner, () => this.db.transaction(async client => {
       const position = await latestCommit(this.db, owner, client);
       const row = (await this.db.query<{ id: string; position: string }>(`INSERT INTO ${this.db.schema}.change_subscriptions
@@ -65,11 +65,11 @@ export class ChangeSubscriptions {
         ON CONFLICT(owner, request_id) DO NOTHING RETURNING id, position::text`,
         [randomUUID(), owner, input.requestId, model.document.id, input.conversationId, principal, footprint, position], client)).rows[0];
       if (row) return { id: row.id, position: row.position, footprint };
-      const prior = (await this.db.query<{ id: string; position: string; footprint: ChangeFootprint; conversation_id: string }>(
-        `SELECT id, position::text, footprint, conversation_id FROM ${this.db.schema}.change_subscriptions WHERE owner=$1 AND request_id=$2`,
+      const prior = (await this.db.query<{ id: string; ontology: string; position: string; footprint: ChangeFootprint; conversation_id: string }>(
+        `SELECT id, ontology, position::text, footprint, conversation_id FROM ${this.db.schema}.change_subscriptions WHERE owner=$1 AND request_id=$2`,
         [owner, input.requestId], client)).rows[0]!;
       // jsonb reorders keys, so the footprints are compared canonically.
-      if (canonical(prior.footprint) !== canonical(footprint) || prior.conversation_id !== input.conversationId)
+      if (prior.ontology !== model.document.id || canonical(prior.footprint) !== canonical(footprint) || prior.conversation_id !== input.conversationId)
         throw new Conflict('Request ID already used with a different subscription');
       return { id: prior.id, position: prior.position, footprint: prior.footprint };
     }));
@@ -95,7 +95,7 @@ export class ChangeSubscriptions {
   async scanOne(): Promise<boolean> {
     const s = this.db.schema;
     const claimed = await this.db.transaction(async client => {
-      const row = (await this.db.query<Row>(`SELECT id, owner, request_id, conversation_id, principal, footprint, position::text
+      const row = (await this.db.query<Row>(`SELECT id, ontology, owner, request_id, conversation_id, principal, footprint, position::text
         FROM ${s}.change_subscriptions WHERE cancelled_at IS NULL AND (last_scan IS NULL OR last_scan<=now()-interval '1 second')
         ORDER BY last_scan NULLS FIRST, id FOR UPDATE SKIP LOCKED LIMIT 1`, [], client)).rows[0];
       if (row) await this.db.query(`UPDATE ${s}.change_subscriptions SET last_scan=now() WHERE id=$1`, [row.id], client);
@@ -106,7 +106,7 @@ export class ChangeSubscriptions {
     await this.db.withOwner(owner, async () => {
       const changes = await this.db.transaction(async client => {
         const through = await latestCommit(this.db, owner, client);
-        return BigInt(through) > BigInt(after) ? footprintChanges(this.db, owner, claimed.footprint, client, after, through) : undefined;
+        return BigInt(through) > BigInt(after) ? footprintChanges(this.db, owner, claimed.footprint, client, after, through, claimed.ontology) : undefined;
       });
       if (!changes) return;
       const advance = async (client: Sql) => {
@@ -123,7 +123,7 @@ export class ChangeSubscriptions {
       try {
         // The request ID names the window's start, so a retried or concurrent dispatch of the same window is the same task.
         await this.tasks.submit(principal, { requestId: `subscription:${claimed.id}:${after}`, message: JSON.stringify(wake), conversationId: claimed.conversation_id },
-          { admit: client => advance(client) });
+          { ontologyId: claimed.ontology, admit: client => advance(client) });
       } catch (error) { if (!(error instanceof Conflict)) throw error; }
     });
     return true;

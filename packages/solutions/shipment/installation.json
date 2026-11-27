@@ -1,0 +1,9 @@
+{
+  "format": "ontology-installation-v1",
+  "definition": "ontology.json",
+  "definitionDigest": "f729b6a7eb4e282df4cd5f3ec30ec02de2d713d7a3d95ae0ec31ac3490002940",
+  "implementation": {
+    "file": "implementation.mjs",
+    "sha256": "bde767534cd889964b24df2776f883e2982ef0a5e6f462db0706d8c8e913787a"
+  }
+}

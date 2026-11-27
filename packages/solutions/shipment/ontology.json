@@ -1,0 +1,540 @@
+{
+  "format": "eigos-ontology-package-v1",
+  "ontology": "Shipment",
+  "version": "1",
+  "digest": "f729b6a7eb4e282df4cd5f3ec30ec02de2d713d7a3d95ae0ec31ac3490002940",
+  "document": {
+    "id": "Shipment",
+    "version": "1",
+    "objectTypes": [
+      {
+        "apiName": "Shipment",
+        "displayName": "Shipment",
+        "description": "Synthetic freight shipment",
+        "primaryKey": "id",
+        "titleProperty": "name",
+        "properties": {
+          "id": {
+            "description": "Shipment ID",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          },
+          "name": {
+            "description": "Shipment name",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          },
+          "state": {
+            "description": "Delivery state",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "registered",
+                "delivered"
+              ]
+            },
+            "required": true
+          }
+        },
+        "interfaces": {}
+      },
+      {
+        "apiName": "ShipmentStateLog",
+        "displayName": "Shipment process log",
+        "description": "Committed changes to Shipment.state; proposed Scenario edits are excluded",
+        "primaryKey": "id",
+        "titleProperty": "name",
+        "properties": {
+          "id": {
+            "description": "Process log id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "name": {
+            "description": "Process log name",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "processId": {
+            "description": "Process log processId",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "property": {
+            "description": "Process log property",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "oldState": {
+            "description": "Process log oldState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "newState": {
+            "description": "Process log newState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "timestamp": {
+            "description": "Process log timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "recordedAt": {
+            "description": "Process log recordedAt",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "sequence": {
+            "description": "Process log sequence",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "action": {
+            "description": "Process log action",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "requestId": {
+            "description": "Process log requestId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "taskId": {
+            "description": "Process log taskId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "source": {
+            "description": "Process log source",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "actor": {
+            "description": "Process log actor",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "release": {
+            "description": "Process log release",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        },
+        "typeClasses": [
+          {
+            "kind": "machinery-log",
+            "name": "Shipment"
+          },
+          {
+            "kind": "machinery-property",
+            "name": "state"
+          }
+        ],
+        "interfaces": {
+          "ProcessLog": {
+            "properties": {
+              "id": "id",
+              "name": "name",
+              "processId": "processId",
+              "property": "property",
+              "oldState": "oldState",
+              "newState": "newState",
+              "timestamp": "timestamp",
+              "recordedAt": "recordedAt",
+              "sequence": "sequence",
+              "action": "action",
+              "requestId": "requestId",
+              "taskId": "taskId",
+              "source": "source",
+              "actor": "actor",
+              "release": "release"
+            },
+            "links": {},
+            "actions": {}
+          }
+        }
+      }
+    ],
+    "interfaceTypes": [
+      {
+        "apiName": "ProcessLog",
+        "description": "Observed changes to an Ontology process state",
+        "properties": {
+          "id": {
+            "description": "Process log id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "name": {
+            "description": "Process log name",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "processId": {
+            "description": "Process log processId",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "property": {
+            "description": "Process log property",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "oldState": {
+            "description": "Process log oldState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "newState": {
+            "description": "Process log newState",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "timestamp": {
+            "description": "Process log timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "recordedAt": {
+            "description": "Process log recordedAt",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": true
+          },
+          "sequence": {
+            "description": "Process log sequence",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "action": {
+            "description": "Process log action",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "requestId": {
+            "description": "Process log requestId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "taskId": {
+            "description": "Process log taskId",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "source": {
+            "description": "Process log source",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "required": true
+          },
+          "actor": {
+            "description": "Process log actor",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          "release": {
+            "description": "Process log release",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        },
+        "optionalProperties": [],
+        "links": {},
+        "actions": {}
+      }
+    ],
+    "linkTypes": [
+      {
+        "apiName": "ShipmentStateLogProcess",
+        "description": "State changes of Shipment.state",
+        "from": {
+          "type": "ShipmentStateLog",
+          "name": "process",
+          "cardinality": "one"
+        },
+        "to": {
+          "type": "Shipment",
+          "name": "stateLogs",
+          "cardinality": "many"
+        }
+      }
+    ],
+    "functionTypes": [
+      {
+        "apiName": "RegisterShipment",
+        "description": "Register a synthetic shipment",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "edits": true
+      },
+      {
+        "apiName": "ReadShipment",
+        "description": "Read a shipment name",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      {
+        "apiName": "DeliverShipment",
+        "description": "Mark the shipment delivered",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "shipment": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "shipment"
+          ],
+          "additionalProperties": false
+        },
+        "returns": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "edits": true
+      }
+    ],
+    "actionTypes": [
+      {
+        "apiName": "RegisterShipment",
+        "description": "RegisterShipment",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "objectParameters": {},
+        "submissionCriteria": [],
+        "function": "RegisterShipment"
+      },
+      {
+        "apiName": "DeliverShipment",
+        "description": "DeliverShipment",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "shipment": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "shipment"
+          ],
+          "additionalProperties": false
+        },
+        "objectParameters": {
+          "shipment": "Shipment"
+        },
+        "submissionCriteria": [],
+        "function": "DeliverShipment"
+      }
+    ],
+    "dataSources": []
+  }
+}
