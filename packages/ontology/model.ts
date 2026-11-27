@@ -176,16 +176,19 @@ export class Ontology {
       processLogTarget(this, type);
       if (definition.machinery) validateMachineryModel(this, type, definition.machinery);
     }
-    // Process containers nest through subprocesses; a container cannot contain itself.
-    const children = (type: string) => this.objects.get(type)?.machinery?.subprocesses?.map(child => child.process) ?? [];
-    const settled = new Set<string>();
-    const visit = (type: string, path: Set<string>) => {
-      if (path.has(type)) throw new Error('Machinery subprocesses must not form a cycle: ' + [...path, type].join(' → '));
-      if (settled.has(type)) return;
-      for (const child of children(type)) visit(child, new Set([...path, type]));
-      settled.add(type);
-    };
-    for (const type of this.objects.keys()) visit(type, new Set());
+    // Process containers nest through subprocesses; a container cannot contain itself. Releases published before this
+    // check load as they are, like derived properties.
+    if (!options.published) {
+      const children = (type: string) => this.objects.get(type)?.machinery?.subprocesses?.map(child => child.process) ?? [];
+      const settled = new Set<string>();
+      const visit = (type: string, path: Set<string>) => {
+        if (path.has(type)) throw new Error('Machinery subprocesses must not form a cycle: ' + [...path, type].join(' → '));
+        if (settled.has(type)) return;
+        for (const child of children(type)) visit(child, new Set([...path, type]));
+        settled.add(type);
+      };
+      for (const type of this.objects.keys()) visit(type, new Set());
+    }
   }
   object(name: string) {
     const object = this.objects.get(name);
