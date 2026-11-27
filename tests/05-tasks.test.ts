@@ -56,17 +56,17 @@ test('the existing PostgreSQL data upgrades in place with old definitions and ta
   } finally { await db.query(`DROP SCHEMA IF EXISTS ${s} CASCADE`); await db.close(); }
 });
 
-test('owners take turns at the task queue, and each runs at most its share of slots', async () => {
+test('owner turns admit another owner before the first of 1,000 tasks finishes and enforce the slot limit', async () => {
   const f = await fixture();
   try {
     const tasks = new Tasks(f.db, f.metadata, 2);
     const other = { ...principal, owner: 'queue-other-owner' };
     await setGrants(f.db, other.owner, businessGrants(f.model));
     const submit = (as: typeof principal, requestId: string) => tasks.submit(as, { requestId, message: '只询价', route });
-    for (let index = 0; index < 4; index++) await submit(principal, 'backlog-' + index);
+    for (let index = 0; index < 1_000; index++) await submit(principal, 'backlog-' + index);
     await submit(other, 'other-owner-task');
     const next = async () => (await tasks.claim())?.request_id;
-    // The other owner's task came last but goes second: owners take turns.
+    // The other owner's task came last but is claimed before the first owner's task finishes.
     assert.deepEqual([await next(), await next(), await next()], ['backlog-0', 'other-owner-task', 'backlog-1']);
     // The first owner now runs two tasks, its share, so its backlog waits even with slots free.
     assert.equal(await next(), undefined);
