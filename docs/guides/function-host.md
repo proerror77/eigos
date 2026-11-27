@@ -312,6 +312,34 @@ Bearer 密钥可以换成配置的 OAuth `client_credentials`。配置 `oauth` �
 从标准输入读取密钥名到密钥值的 JSON，并把密文输出到配置路径。密钥文件为
 32 字节随机数据。两个文件都只授予运行服务和部署人员读取权限。
 
+### 授权码凭据刷新
+
+外部授权流程取得的 refresh token 可作为 Source 的初始凭据。将令牌放入
+加密密钥包，部署时在 Source 的 `oauth` 中引用密钥名称。
+
+```json
+{
+  "grant": "refresh_token",
+  "tokenUrl": "https://auth.example.com/oauth/token",
+  "clientId": "eigos-inventory",
+  "clientSecret": "inventory_client",
+  "refreshTokenSecret": "inventory_approved_grant"
+}
+```
+
+Gateway、Worker 和 Indexer 共用 PostgreSQL 中的
+`component_source_oauth_grants`。同一 token URL、client ID 和初始密钥名
+只允许一个刷新请求在途。重新发布连接、调整出口策略或重启进程后会读回
+同一轮换记录。多个 Source 共用同一供应商授权时，应引用同一个初始密钥名。
+访问令牌和轮换后的 refresh token 用 Source 密钥加密，数据库只保存密文。
+部署时由升级角色建表，向配置了刷新授权的运行角色授予 SELECT、INSERT 和
+UPDATE。恢复数据库时应保留对应的 Source 加密密钥。
+
+若授权服务器已明确拒绝请求且授权仍有效，后续可重新请求。收到
+`source-reauthorization-required` 时，应重新完成供应商授权，将新令牌用新
+的密钥名写入加密包，再按更新的 Source 连接重新准备发布。网络中断导致
+无法确认旧令牌是否已被轮换时也走这条恢复路径。 [OAuth 2.0 刷新规范](https://www.rfc-editor.org/rfc/rfc6749.html#section-6) · [刷新令牌轮换](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14)
+
 读取外部源要求协议 3 宿主。旧组件继续使用原有导入。带外部源的组件与
 Scenario 离线求值保持隔离。需要外部写入的业务流使用经授权的 Action 和
 提交后的副作用。 [Foundry 函数的外部 API](https://www.palantir.com/docs/foundry/functions/api-calls/)

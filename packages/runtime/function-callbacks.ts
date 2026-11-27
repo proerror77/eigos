@@ -1,7 +1,8 @@
 import { FunctionCallbackServer, type CallbackFailure } from '../function-host/callback-server.js';
 import { z } from 'zod';
-import { Conflict, InvalidInput, NotFound, PermissionDenied } from '../core/identity.js';
+import { Conflict, InvalidInput, NotFound, PermissionDenied, SourceReadFailure } from '../core/identity.js';
 import { objectRefSchema, ontologyName } from '../ontology/schema.js';
+import { SourceOAuthReauthorization } from './component-source-oauth.js';
 import type { Database } from './database.js';
 import type { FunctionContext } from './functions.js';
 import type { FunctionInvocationMetrics } from './function-invocations.js';
@@ -87,6 +88,8 @@ function failureOf(error: unknown): CallbackFailure {
   if (error instanceof NotFound) return { code: 'not-found', message: error.message };
   if (error instanceof InvalidInput || error instanceof z.ZodError) return { code: 'invalid', message: error instanceof z.ZodError ? 'Invalid request' : error.message };
   if (error instanceof Conflict) return { code: 'conflict', message: error.message };
+  if (error instanceof SourceOAuthReauthorization) return { code: 'source-reauthorization-required', message: error.message };
+  if (error instanceof SourceReadFailure) return { code: 'unavailable', message: 'Source request failed' };
   console.error('Component Function callback failed', error);
   return { code: 'unavailable', message: 'The Ontology is temporarily unavailable' };
 }

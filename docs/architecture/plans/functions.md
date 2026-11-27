@@ -184,7 +184,8 @@
 
 **状态：** 组件已能用协议 3 读取声明的 HTTP Source。发布时绑定 HTTPS
 连接和出口策略，调用时复查 Source 权限。密钥以 AES-GCM 密文保存，
-OAuth client credentials 由运行时交换和缓存。授权码凭据刷新及 Action
+运行时交换并缓存 OAuth client credentials，也能用既有授权码凭据刷新。
+轮换后的令牌加密保存在 PostgreSQL，多个运行进程共用刷新记录。Action
 副作用写入待继续实现。 [组件外部源](../../guides/function-host.md#组件外部源)
 
 - **source 的组成：**
