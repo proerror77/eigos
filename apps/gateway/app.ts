@@ -450,13 +450,13 @@ export function createApp(config: Config, db: Database, source: SourceResolver, 
       inputSchema: codeModeInput.extend({ requestId: submitSchema.shape.requestId }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     }, ({ code, requestId }) => response(() => runCode(code, requestId)));
-    server.registerTool('claim_task_dispatch', {
-      description: 'Claim the one-time dispatch grant for a pending authorized PA operation. Preserve the returned token privately and include it with the response for this dispatch.',
-      inputSchema: z.strictObject({ taskId: z.uuid(), ...paDispatchClaimSchema.shape }),
-      annotations: { readOnlyHint: false },
-    }, ({ taskId, ...input }) => response(() =>
-      pa.claimDispatch(p, taskId, input, member ? authorizeMemberSubmission(req) : undefined)));
     if (member) {
+      server.registerTool('claim_task_dispatch', {
+        description: 'Claim the one-time dispatch grant for a pending authorized PA operation. Preserve the returned token privately and include it with the response for this dispatch.',
+        inputSchema: z.strictObject({ taskId: z.uuid(), ...paDispatchClaimSchema.shape }),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      }, ({ taskId, ...input }) => response(() =>
+        pa.claimDispatch(p, taskId, input, authorizeMemberSubmission(req))));
       const memberSubmit = submitSchema.pick({ requestId: true, message: true, conversationId: true });
       const queueAction = async (requestId: string, ontology: string | undefined, action: ActionCall,
         read?: z.infer<typeof completeWithActionRequestSchema>['read']) => {
