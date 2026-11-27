@@ -824,13 +824,13 @@ function actionDialog(object, options = {}) {
     holder = element('div');
   const draw = () => {
     const action = actions.find((action) => action.apiName === picker.value),
-      initial = {};
+      initial = { ...options.initial };
     for (const [name, type] of Object.entries(action.objectParameters))
       if (
         type === object?.ref.type ||
         state.model.objectTypes.find((item) => item.apiName === object?.ref.type)?.interfaces[type]
       )
-        initial[name] = object.ref;
+        initial[name] ??= object.ref;
     const form = jsonSchemaForm(action.parameters, initial);
     holder.replaceChildren(
       element('p', {}, action.description),
@@ -2858,7 +2858,7 @@ async function renderProcesses(reviewPage = 1) {
     await renderMachinery(machinery, { actions:state.model?.actionTypes ?? [], functions:state.model?.functionTypes ?? [],
       objectTypes:state.model?.objectTypes ?? [], scopes:state.identity?.scopes ?? [], evaluate:(name,input)=>request('/ontology/functions',{ontology:state.ontology,function:name,input}),
       element, button, field, select, table, modal, jsonInput, service, proposalDialog,
-      openActions: (ref, actions) => actionDialog({ ref }, { actions, live: true }),
+      openActions: (ref, actions, initial) => actionDialog({ ref }, { actions, initial, live: true }),
       openEvaluation: (id) => openScenarioEvaluation('trial', [], id),
       inspectTask: async (id) => {
         const task = await request('/tasks/' + encodeURIComponent(id));

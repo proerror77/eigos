@@ -135,3 +135,20 @@ EIGOS 用两种方式组织容器：
 ## 定期复盘
 
 在 Workbench 保存复盘配置，或调用 `ontology_save_machinery_review`。可以手动运行 `ontology_run_machinery_review`，也可以启用同一 Indexer 中的定期复盘，周期以天为单位。定期复盘在创建者权限下运行，保存最新分析的时间窗口和发布引用。Workbench 或 `ontology_machinery_review` 读取时按当前权限重算，避免把撤权历史留在聚合缓存里。发布变化后可重新运行取得新报告。结果包含可以打开审阅的候选状态和转换。添加、修改和启用实际运行规则仍通过既有 Automation 入口。
+
+
+## 下一步 Action
+
+为参考转换增加 `execution` 后，工作台的流程详情会列出该
+业务对象按当前状态可以用的 Action。也可以调用
+`machinery_next_actions` 并传入 `{object:{type,id},process?}`。
+结果包含发布、目标状态、可直接填入 Action 的参数和仍需填写的字段。
+
+`execution.subject` 是 Action 的主体参数。`parameters` 可以把参数
+绑定到主体可读取的字段。每个 `requires` 守卫声明目标 ProcessLog、
+合格状态以及 `all` 或 `any`。跨对象的依赖沿声明的 `link` 读取。
+关系为空就等待建立相关实例，字段或关系的读取不完整时显示「待检查」。
+
+提交仍使用发布的 Action。Action 会在提交检查中重新求值当前状态和
+依赖，直接调用也做同样的检查。为守卫验证完整性时，关系使用相同的
+PostgreSQL 事务快照。 [Machinery 状态与转换](https://www.palantir.com/docs/foundry/machinery/core-concepts/) · [Action 提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria/)
