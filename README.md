@@ -29,6 +29,12 @@ npm run dev:worker
 
 Gateway 和 Worker 使用相同的 `DATABASE_URL`、`EIGOS_PG_SCHEMA`。构建后的入口为 `npm run start:gateway` 和 `npm run start:worker`。Docker 的 `runtime` 与 `worker` target 使用相同代码。
 
+Worker 的并发和公平（运行时预算 06.1、06.2）：
+- 每个 Worker 进程同时执行 `EIGOS_WORKER_SLOTS` 个任务，默认 4；有排程时另有一个排程槽。
+- 每个 owner 在所有 Worker 上同时最多占 `EIGOS_TASK_OWNER_SLOTS` 个槽，默认 2。领取时以 owner 为单位加锁并复查，所以多个 Worker 同时领取也不会超出。
+- 同一通道里，owner 轮流领取：最久没有被服务的 owner 先领（`task_turns` 记录每个 owner 上次被服务的时间）。所以一个 owner 的大批任务不会挡住其他 owner。
+- 生产的 Worker 数据库角色需要 `task_turns` 的 SELECT、INSERT、UPDATE。
+
 每次 CI 都会构建这两个镜像，但不发布。`scripts/container-smoke.sh` 以非 root 用户、在没有任何配置的情况下运行 Gateway、Worker 和 Indexer 的入口。每个入口都必须先加载完全部依赖，并停在配置检查上，才算通过。镜像只能手动发布：在 Actions 中运行 Release images，并填写 main 上 CI 已通过的完整提交号。镜像推送到 `ghcr.io/<仓库>/gateway` 和 `ghcr.io/<仓库>/worker`，标签为 `sha-<提交号>`。同一标签不会被覆盖，部署仍须单独授权。
 
 JWT 身份由现有身份提供方验证，owner 由 issuer、tenant 和 subject 计算。`GET /identity` 返回当前 owner 与 scopes。本地开发使用 `.env` 中的随机令牌，owner 为 `local-developer`。

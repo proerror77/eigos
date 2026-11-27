@@ -315,6 +315,9 @@ export class Database {
       CREATE INDEX IF NOT EXISTS tasks_conversation_pending ON ${s}.tasks(owner,conversation_id,conversation_batch)
         WHERE conversation_id IS NOT NULL AND state IN('submitted','working','input-required');
       CREATE INDEX IF NOT EXISTS tasks_conversation_available ON ${s}.tasks(available_at) WHERE conversation_id IS NOT NULL AND state='submitted';
+      -- Runtime budgets (06.1, 06.2): the running tasks of an owner, and when each owner was last served.
+      CREATE INDEX IF NOT EXISTS tasks_owner_working ON ${s}.tasks(owner) WHERE state='working';
+      CREATE TABLE IF NOT EXISTS ${s}.task_turns (owner text PRIMARY KEY, served_at timestamptz NOT NULL);
       CREATE TABLE IF NOT EXISTS ${s}.task_inbox_events (
         owner text NOT NULL, request_id text NOT NULL, input_digest text NOT NULL, message text NOT NULL,
         task_id uuid NOT NULL REFERENCES ${s}.tasks(id), position integer NOT NULL,
