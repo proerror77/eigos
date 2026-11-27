@@ -70,6 +70,13 @@ export function validateMachineryModel(model: Ontology, type: ObjectRef['type'],
     const kind = model.object(target.objectType).properties[metric.aggregation.property]?.schema.type;
     if (kind !== 'number' && kind !== 'integer') throw new Error('Machinery metrics aggregate a numeric property of the tracked object type');
   }
+  const alongside = new Set<string>();
+  for (const process of specification.parallel ?? []) {
+    const other = processLogTarget(model, process);
+    if (!other || process === type || alongside.has(process) || other.objectType !== target.objectType || other.property === target.property)
+      throw new Error('Machinery parallel processes require other tracked state properties of the same objects');
+    alongside.add(process);
+  }
   const children = new Set<string>();
   for (const child of specification.subprocesses ?? []) {
     const navigation = model.navigation(target.objectType, child.link);

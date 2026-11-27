@@ -388,6 +388,70 @@ async function customMetrics(db: Database, access: Access, model: PublishedOntol
   return output;
 }
 
+type Crosstab = { state: string; with: { state: string | null; count: number }[] }[];
+function crosstab(pairs: [string, string | null][]): Crosstab {
+  const rows = new Map<string, Map<string | null, number>>();
+  for (const [state, other] of pairs) {
+    const row = rows.get(state) ?? new Map<string | null, number>();
+    row.set(other, (row.get(other) ?? 0) + 1);
+    rows.set(state, row);
+  }
+  return [...rows].map(([state, row]) => ({ state, with: [...row].map(([other, count]) => ({ state: other, count }))
+    .sort((a, b) => b.count - a.count || String(a.state).localeCompare(String(b.state))) }));
+}
+const stateOf = (properties: Record<string, unknown>, property: string) => typeof properties[property] === 'string' ? properties[property] as string : null;
+
+/**
+ * One process container: where the same objects now stand in the model's parallel processes, the other tracked state
+ * properties of their type, against their current state in this one.
+ */
+function parallelStates(access: Access, model: PublishedOntology, target: ProcessLogTarget, baseline: MachineryModel | undefined,
+  cases: ProcessCase[], current: Map<string, Record<string, unknown>>) {
+  const result: { process: string; property: string; states: Crosstab }[] = [];
+  for (const process of baseline?.parallel ?? []) {
+    const other = processLogTarget(model, process);
+    if (!other || !access.canRead(model, process)) continue;
+    const pairs: [string, string | null][] = [];
+    for (const item of cases) {
+      const properties = current.get(item.object.id);
+      if (item.current === null || !properties || !access.cell(model, target.objectType, other.property, properties)) continue;
+      pairs.push([item.current, stateOf(properties, other.property)]);
+    }
+    result.push({ process, property: other.property, states: crosstab(pairs) });
+  }
+  return result;
+}
+
+/**
+ * Nested containers: for each readable subprocess, the current states of the children its link reaches, against the
+ * current state of their parent. Children are read under the caller's row policies.
+ */
+async function alignSubprocesses(db: Database, client: Sql, access: Access, model: PublishedOntology, target: ProcessLogTarget,
+  reference: ReturnType<typeof readableModel>, cases: ProcessCase[]) {
+  const result: { link: string; process: string; property: string; states: Crosstab }[] = [];
+  const parents = new Map(cases.filter(item => item.current !== null).map(item => [item.object.id, item.current!]));
+  if (!parents.size) return result;
+  for (const child of reference?.subprocesses ?? []) {
+    const childTarget = processLogTarget(model, child.process);
+    if (!childTarget) continue;
+    const nav = model.navigation(target.objectType, child.link);
+    const [from, to] = nav.forward ? ['from', 'to'] : ['to', 'from'];
+    const values: unknown[] = [access.principal.owner, model.projection, target.objectType, [...parents.keys()], nav.link, childTarget.objectType];
+    const policy = access.rowSql(model, childTarget.objectType, values, 'o.properties');
+    const rows = (await db.query<{ parent: string; properties: Record<string, unknown> }>(`SELECT l.${from}_id AS parent,o.properties
+      FROM ${db.schema}.links l JOIN ${db.schema}.objects o ON o.projection=l.projection AND o.owner=l.owner AND (o.type,o.id)=(l.${to}_type,l.${to}_id)
+      WHERE l.owner=$1 AND l.projection=$2 AND l.type=$5 AND l.${from}_type=$3 AND l.${from}_id=ANY($4::text[]) AND o.type=$6 AND ${policy}`,
+      values, client)).rows;
+    const pairs: [string, string | null][] = [];
+    for (const row of rows) {
+      if (!access.cell(model, childTarget.objectType, childTarget.property, row.properties)) continue;
+      pairs.push([parents.get(row.parent)!, stateOf(row.properties, childTarget.property)]);
+    }
+    result.push({ link: child.link, process: child.process, property: childTarget.property, states: crosstab(pairs) });
+  }
+  return result;
+}
+
 function mine(summary: ReturnType<typeof summarize>, reference: MachineryModel | undefined, input: Input['mining']) {
   const excluded = new Set(input?.exclude.map(edge => edgeKey(edge.from, edge.to)));
   const observed = summary.transitions.filter(edge => edge.cases >= (input?.minCases ?? 1) &&
@@ -451,13 +515,15 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     const reference = readableModel(access, model, target, baseline);
     const events = await (input.externalSource ? readExternalEvents : readEvents)(db, client, access, model, target, { ...input, to: new Date(end).toISOString() }, ids);
     const idsInHistory = [...new Set(events.map(event => event.caseId))];
+    const current = new Map<string, Record<string, unknown>>();
     if (idsInHistory.length) {
-      const snapshots = await db.query<{ properties: Record<string, unknown> }>(
-        `SELECT properties FROM ${db.schema}.objects WHERE owner=$1 AND projection=$2 AND type=$3 AND id=ANY($4::text[])`,
+      const snapshots = await db.query<{ id: string; properties: Record<string, unknown> }>(
+        `SELECT id,properties FROM ${db.schema}.objects WHERE owner=$1 AND projection=$2 AND type=$3 AND id=ANY($4::text[])`,
         [access.principal.owner, model.projection, target.objectType, idsInHistory], client);
-      for (const { properties } of snapshots.rows) {
+      for (const { id, properties } of snapshots.rows) {
         access.readRow(model, target.objectType, properties, true);
         access.cell(model, target.objectType, target.property, properties);
+        current.set(id, properties);
       }
     }
     const groups = new Map<string, Event[]>();
@@ -471,6 +537,8 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
     const cases = traces.map(({ item }) => item);
     const { offset, limit } = input;
     const summary = summarize(cases, reference);
+    const parallel = parallelStates(access, model, target, baseline, cases, current);
+    const alignment = await alignSubprocesses(db, client, access, model, target, reference, cases);
     const comparison = input.candidate ? {
       baseline: summary.conformance,
       candidate: summarize(traces.map(({ history }) => trace(target, history, from, end, input.candidate, input.durationClock)),
@@ -481,6 +549,7 @@ export async function analyzeMachinery(db: Database, access: Access, model: Publ
       from: new Date(from).toISOString(), to: new Date(end).toISOString(), windowClock: input.externalSource ? 'observedAt' : 'recordedAt', durationClock: input.durationClock,
       ...(collectMembers ? {members:cases.map(item=>item.object)} : {}),
       reference, ...summary, mined: mine(summary, baseline, input.mining), comparison,
+      ...(parallel.length ? { parallel } : {}), ...(alignment.length ? { alignment } : {}),
       casesTotal: cases.length, nextOffset: offset + limit < cases.length ? offset + limit : null,
       cases: cases.slice(offset, offset + limit).map(({ events: history, episodes, ...item }) => ({
         ...item, transitions: history.length,

@@ -103,6 +103,28 @@ Workbench 的「流程运行 → Machinery」和 Ontology MCP 使用同一份分
 - **执行：** 聚合就是 Object Set 聚合，在分析快照之后执行，所以路由允许时由查询内核回答。超过 1 万个对象时，这一项不聚合，标记为 `truncated`。调用方无权读取被聚合的属性时，这一项标记为 `denied`，分析的其余部分照常返回。
 - **着色：** `colors` 取值达到的最高一档 `min` 对应的颜色。结果里的 `metrics.node.values` 和 `metrics.edge.values` 带有 `value`、`cases`，以及可选的 `color`。
 
+## 流程容器
+
+一个对象类型可以有多个被跟踪的状态属性，每个属性生成一个 ProcessLog，例如 `RouteStateLog` 和 `RoutePriorityLog`。依据是 Palantir 的 [core concepts](https://www.palantir.com/docs/foundry/machinery/core-concepts)：
+
+- 流程容器 “can be linked to one another and even be nested”；
+- 一个对象同时处在多个状态时，“should be modeled as a process hierarchy”。
+
+EIGOS 用两种方式组织容器：
+
+- **并行：** 流程模型的 `parallel` 列出同一类对象上的其他流程，即其他被跟踪的状态属性。分析结果的 `parallel` 按本流程的当前状态，统计这些对象在每个并行流程中的当前状态。
+- **嵌套：** `subprocesses` 沿 Link 连到子流程，可以跨类型。分析结果的 `alignment` 按父流程的当前状态，统计这条 Link 连到的子对象在子流程中的当前状态。
+
+```json
+"parallel": ["RoutePriorityLog"],
+"subprocesses": [{ "link": "requests", "process": "RideRequestStatusLog" }]
+```
+
+两种统计的形状相同：`[{ state, with: [{ state, count }] }]`。
+
+- **校验：** 定义校验要求 `parallel` 里的流程跟踪同一对象类型的另一个状态属性，并且不能重复。各流程模型的 `subprocesses` 合起来不能成环，成环时报出环的路径。
+- **权限：** 子对象按调用者的行策略读取，被遮罩的状态不参与统计。
+
 ## 时间和权限
 
 - 以提交记录时间 `recordedAt` 确定半开窗口 `[from,to)`。时间线也保留可见的来源观察时间。对按时间顺序索引的外部历史，选择 `durationClock: "observedAt"` 可按来源时间差计算耗时，仍以记账时间选择报告窗口。来源时间回退或被隐藏时，对应停留时长保持未知。窗口开始前最后一条记录用于还原当时状态。缺失的停留时间保持未知。路径统计只包括窗口中确实发生转换的实例，当前库存还可以包括窗口内没有转换的实例。
