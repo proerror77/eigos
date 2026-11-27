@@ -43,16 +43,16 @@ test('only the designated reviewer can open the linked applicant, and the origin
     currentTitle = card.header.title.content;
     return Response.json({ code: 0 });
   };
-  const payload = (reviewer = config.reviewerOpenId, messageId = message) => ({
-    schema: '2.0', header: { app_id: config.appId, event_type: 'card.action.trigger', token: config.verificationToken },
+  const payload = (reviewer = config.reviewerOpenId, messageId = message, createdAt = String(Date.now()) + '000') => ({
+    schema: '2.0', header: { app_id: config.appId, event_type: 'card.action.trigger', token: config.verificationToken,
+      create_time: createdAt },
     event: { operator: { open_id: reviewer }, context: { open_message_id: messageId },
       action: { tag: 'button', value: { kind: 'eigos_beta_approve', key } } },
   });
-  const click = (value: unknown, correctSignature = true) => {
+  const click = (value: unknown, correctSignature = true, stamp = String(Math.floor(Date.now() / 1000))) => {
     const iv = randomBytes(16), nonce = randomBytes(8).toString('hex');
     const cipher = createCipheriv('aes-256-cbc', createHash('sha256').update(config.encryptKey).digest(), iv);
     const body = JSON.stringify({ encrypt: Buffer.concat([iv, cipher.update(JSON.stringify(value)), cipher.final()]).toString('base64') });
-    const stamp = String(Math.floor(Date.now() / 1000));
     const signature = createHash('sha256').update(stamp + nonce + config.encryptKey).update(body).digest('hex');
     return fetch(callback, { method: 'POST', body, headers: { 'Content-Type': 'application/json', 'X-Lark-Request-Timestamp': stamp,
       'X-Lark-Request-Nonce': nonce, 'X-Lark-Signature': correctSignature ? signature : 'a'.repeat(64) } });
@@ -69,14 +69,22 @@ test('only the designated reviewer can open the linked applicant, and the origin
     assert.equal((await (await click(payload(config.reviewerOpenId, 'om_other'))).json()).toast.type, 'error');
     assert.equal((await sync()).inspected, 0);
     assert.equal(await accounts.account(owner), undefined);
-    assert.match((await (await click(payload())).json()).toast.content, /正在开通/);
+    const transportTimestamp = new Date().toISOString();
+    const staleTime = Date.now() - 360_000;
+    assert.equal((await click(payload(config.reviewerOpenId, message, String(staleTime) + '000'), true, transportTimestamp)).status, 401);
+    assert.equal((await click(payload(config.reviewerOpenId, message, 'invalid'), true, transportTimestamp)).status, 401);
+    assert.equal((await click(payload(), true, String(staleTime) + '000')).status, 401);
+    assert.equal((await click(payload(), false, transportTimestamp)).status, 401);
+    assert.match((await (await click(payload(), true, transportTimestamp)).json()).toast.content, /正在开通/);
     assert.equal((await sync()).failures, 1);
     assert.equal((await accounts.account(owner))?.status, 'active');
     assert.match(currentTitle!, /待审核/);
     allowPatch = true;
     assert.equal((await sync()).updated, 1);
     assert.match(currentTitle!, /已开通/);
-    assert.match((await (await click(payload())).json()).toast.content, /已处理/);
+    for (const stamp of [String(Math.floor(Date.now() / 1000)), String(Date.now()), String(Date.now()) + '000', String(Date.now()) + '000000']) {
+      assert.match((await (await click(payload(), true, stamp)).json()).toast.content, /已处理/);
+    }
     assert.deepEqual(await sync(), { inspected: 0, sent: 0, updated: 0, failures: 0 });
     assert.deepEqual([sendCount, updateCount], [1, 2]);
   } finally {

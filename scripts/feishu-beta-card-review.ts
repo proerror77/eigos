@@ -18,12 +18,13 @@ const installedConfig = z.strictObject({
   verificationTokenFile: z.string(), encryptKeyFile: z.string(),
   port: z.number().int().min(1024).max(65535).default(3261),
 });
-const signatureHeaders = z.object({ timestamp: z.string().regex(/^\d{10,13}$/),
+const signatureHeaders = z.object({ timestamp: z.string().min(1).max(128),
   nonce: z.string().min(1).max(128), signature: z.string().regex(/^[a-f0-9]{64}$/i) });
 const challenge = z.object({ type: z.literal('url_verification'), challenge: z.string().min(1).max(1024), token: z.string() });
 const signedEvent = z.object({
   schema: z.literal('2.0'),
-  header: z.object({ app_id: appId, event_type: z.literal('card.action.trigger'), token: z.string() }),
+  header: z.object({ app_id: appId, event_type: z.literal('card.action.trigger'), token: z.string(),
+    create_time: z.unknown().optional() }),
   event: z.object({ operator: z.object({ open_id: openId }), context: z.object({ open_message_id: messageId }),
     action: z.object({ tag: z.literal('button'), value: z.strictObject({ kind: z.literal('eigos_beta_approve'), key: z.uuid() }) }) }),
 });
@@ -32,6 +33,11 @@ const eq = (a: string, b: string) => {
   const left = Buffer.from(a), right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
 };
+
+function epochMillis(timestamp: string) {
+  if (!/^\d{10}(?:\d{3}){0,3}$/.test(timestamp)) return undefined;
+  return timestamp.length === 10 ? Number(timestamp) * 1000 : Number(timestamp.slice(0, 13));
+}
 
 const toast = (content: string, type: 'info' | 'success' | 'error' = 'info') => ({ toast: { type, content } });
 type CallbackConfig = { appId: string; reviewerOpenId: string; encryptKey: string; verificationToken: string };
@@ -112,20 +118,22 @@ export function feishuReviewHandler(db: Database, config: CallbackConfig) {
     const headers = signatureHeaders.safeParse({ timestamp: req.get('X-Lark-Request-Timestamp'),
       nonce: req.get('X-Lark-Request-Nonce'), signature: req.get('X-Lark-Signature') });
     let data: unknown;
-    const authenticated = encrypted && headers.success && (() => {
-      const { timestamp, nonce, signature } = headers.data;
-      const receivedAt = Number(timestamp) * (timestamp.length === 10 ? 1000 : 1);
-      const signed = createHash('sha256').update(timestamp + nonce + config.encryptKey).update(req.body).digest('hex');
-      return eq(signature.toLowerCase(), signed) && Math.abs(Date.now() - receivedAt) <= 300000;
-    })();
     try { data = encrypted ? decrypt(config.encryptKey, encrypted.encrypt) : envelope; }
     catch { res.sendStatus(401); return; }
     const verify = challenge.safeParse(data);
     if (verify.success && eq(verify.data.token, config.verificationToken)) { res.json({ challenge: verify.data.challenge }); return; }
-    if (!authenticated) { res.sendStatus(401); return; }
+    if (!encrypted || !headers.success) { res.sendStatus(401); return; }
+    const { timestamp, nonce, signature } = headers.data;
+    const signed = createHash('sha256').update(timestamp + nonce + config.encryptKey).update(req.body).digest('hex');
+    if (!eq(signature.toLowerCase(), signed)) { res.sendStatus(401); return; }
     const click = signedEvent.safeParse(data);
     if (!click.success || click.data.header.app_id !== config.appId ||
         !eq(click.data.header.token, config.verificationToken)) { res.sendStatus(401); return; }
+    // Feishu signs the exact transport timestamp string and documents create_time in microseconds.
+    const createdAt = click.data.header.create_time;
+    const eventTime = epochMillis(timestamp) ??
+      (typeof createdAt === 'string' && /^\d{16}$/.test(createdAt) ? epochMillis(createdAt) : undefined);
+    if (eventTime === undefined || Math.abs(Date.now() - eventTime) > 300_000) { res.sendStatus(401); return; }
     if (click.data.event.operator.open_id !== config.reviewerOpenId) {
       res.json(toast('这张卡片需要由指定审核人操作', 'error')); return;
     }
