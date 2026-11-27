@@ -1,6 +1,7 @@
 import type { validator, Ontology } from './model.js';
 import { valueKinds } from './property-path.js';
 import type { DerivedExpression } from './schema.js';
+import { timeSeriesFormat } from './time-series.js';
 
 /** Check concrete references and expression types before a definition can be published. */
 export function validateDerivedProperties(model: Ontology, validate: typeof validator) {
@@ -23,6 +24,11 @@ export function validateDerivedProperties(model: Ontology, validate: typeof vali
     if (depth > 16) throw new Error('Expression exceeds its depth limit');
     if (node.op === 'literal') return { kinds: [Number.isInteger(node.value) ? 'integer' : 'number'], depth: 0 };
     if (node.op === 'property') return property(type, node.property);
+    if (node.op === 'timeseries') {
+      if (model.propertyPath(type, node.property).format !== timeSeriesFormat)
+        throw new Error('A time series window requires a time series property');
+      return { kinds: ['array'], depth: property(type, node.property).depth };
+    }
     if (node.op === 'linked') {
       let target = type;
       for (const step of node.path) {
@@ -58,6 +64,8 @@ export function validateDerivedProperties(model: Ontology, validate: typeof vali
     try {
       const result = expression(type, field.derived);
       const accepted = valueKinds(field.schema);
+      if (field.derived.op === 'timeseries' && field.schema.format !== timeSeriesFormat)
+        throw new Error('A time series window must return a time series');
       if (!result.kinds.length || result.kinds.some(kind => !accepted.includes(kind)))
         throw new Error('Expression result is incompatible with its declared value type');
       if (field.derived.op === 'literal' && !validate(field.schema).safeParse(field.derived.value).success)

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { satisfies } from './function-versions.js';
+import { timeSeriesFields, validateTimeSeriesFields } from './time-series.js';
 import { compileTypes } from './type-system.js';
 import { expandImports } from './resource-mapping.js';
 import { actionParametersCompatible } from './action-compatibility.js';
@@ -13,7 +14,11 @@ import { ontologySchema, type OntologyDocument, type ObjectRef } from './schema.
 const validators = new WeakMap<object, z.ZodType>();
 export function validator(schema: Record<string, unknown>): z.ZodType {
   let cached = validators.get(schema);
-  if (!cached) { cached = z.fromJSONSchema(schema); validators.set(schema, cached); }
+  if (!cached) {
+    const structure = z.fromJSONSchema(schema), series = timeSeriesFields(schema);
+    cached = series.length ? structure.superRefine((value, context) => validateTimeSeriesFields(series, value, context)) : structure;
+    validators.set(schema, cached);
+  }
   return cached;
 }
 const unique = <T extends { apiName: string }>(items: T[]): Map<string, T> => {

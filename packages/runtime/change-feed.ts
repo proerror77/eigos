@@ -49,7 +49,7 @@ export function queryFootprint(model: Ontology, query: FootprintQuery, watches: 
   };
   const expression = (type: string, node: DerivedExpression): void => {
     if (node.op === 'literal') return;
-    if (node.op === 'property') return property(type, node.property.split('.')[0]!);
+    if (node.op === 'property' || node.op === 'timeseries') return property(type, node.property.split('.')[0]!);
     if (node.op === 'linked') {
       let target = type;
       for (const step of node.path) {
