@@ -90,6 +90,8 @@ export const machineryModelSchema = z.strictObject({
     action: name.optional(),
   })).max(500),
   subprocesses: z.array(z.strictObject({ link: name, process: name })).max(20).optional(),
+  // Processes of other state properties of the same objects, which run alongside this one: one process container.
+  parallel: z.array(name).max(10).optional(),
   metrics: z.strictObject({ node: machineryMetricSchema.optional(), edge: machineryMetricSchema.optional() }).optional(),
 });
 

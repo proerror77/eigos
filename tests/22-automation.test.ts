@@ -662,6 +662,60 @@ test('a dynamic Machinery selection follows the processes as they move, while a 
   } finally { await f.close(); }
 });
 
+test('a process container relates parallel processes of the same objects, aligns nested ones, and refuses cycles', async () => {
+  const f = await processSetup();
+  try {
+    const definition = structuredClone(f.model.document);
+    definition.objectTypes.find(type => type.apiName === 'Route')!.properties.priority = {
+      description: 'Synthetic route priority', schema: { type: 'string', enum: ['low', 'high'] }, required: false,
+    };
+    addProcessLogs(definition, [{ type: 'Route', property: 'priority' }, { type: 'RideRequest', property: 'status' }]);
+    const log = (name: string) => definition.objectTypes.find(type => type.apiName === name)!;
+    log('RouteStateLog').machinery = {
+      states: [{ name: 'open' }, { name: 'stalled' }, { name: 'done' }],
+      transitions: [{ from: null, to: 'open' }, { from: 'open', to: 'stalled' }, { from: 'stalled', to: 'done' }],
+      parallel: ['RoutePriorityLog'], subprocesses: [{ link: 'requests', process: 'RideRequestStatusLog' }],
+    };
+    const refused = async (change: (copy: typeof definition) => void, message: RegExp) => {
+      const copy = structuredClone(definition);
+      change(copy);
+      await assert.rejects(f.metadata.publish(copy, f.capabilities, f.publisher), message);
+    };
+    await refused(copy => { copy.objectTypes.find(type => type.apiName === 'RideRequestStatusLog')!.machinery = {
+      states: [{ name: 'requested' }, { name: 'quoted' }], transitions: [{ from: null, to: 'requested' }],
+      subprocesses: [{ link: 'route', process: 'RouteStateLog' }] }; }, /must not form a cycle: .*RouteStateLog/);
+    await refused(copy => { copy.objectTypes.find(type => type.apiName === 'RouteStateLog')!.machinery!.parallel = ['RouteStateLog']; },
+      /parallel processes require other tracked state properties of the same objects/);
+    await refused(copy => { copy.objectTypes.find(type => type.apiName === 'RouteStateLog')!.machinery!.parallel = ['RideRequestStatusLog']; },
+      /parallel processes require/);
+    const model = await f.metadata.publish(definition, f.capabilities, f.publisher);
+    await setGrants(f.db, principal.owner, businessGrants(model));
+    const graph = new Objects(f.db, model, await Access.load(f.db, principal));
+    const route = (id: string) => ({ type: 'Route', id }), request = (id: string) => ({ type: 'RideRequest', id });
+    const requestedAt = new Date().toISOString();
+    for (const [id, priority, path] of [['container-first', 'high', ['open', 'stalled']], ['container-second', 'low', ['open']]] as const) {
+      await graph.create(route(id), { id, name: id, priority });
+      for (const state of path) await graph.edit(route(id), (await graph.read(route(id))).revision, { state });
+    }
+    for (const [id, status, parent] of [['container-a', 'requested', 'container-first'], ['container-b', 'quoted', 'container-first'],
+      ['container-c', 'quoted', 'container-second']] as const) {
+      await graph.create(request(id), { id, name: id, status, requestedAt });
+      await graph.link({ type: 'RequestRoute', from: request(id), to: route(parent) });
+    }
+    const now = Date.now();
+    const result = await analyzeMachinery(f.db, await Access.load(f.db, principal), model, machineryAnalysisSchema.parse({
+      type: 'RouteStateLog', from: new Date(now - 3600000).toISOString(), to: new Date(now + 60000).toISOString() }));
+    const table = (rows: { state: string; with: { state: string | null; count: number }[] }[]) =>
+      Object.fromEntries(rows.map(row => [row.state, Object.fromEntries(row.with.map(cell => [String(cell.state), cell.count]))]));
+    // The same routes, in their priority process and their state process.
+    assert.deepEqual(result.parallel?.map(item => [item.process, item.property, table(item.states)]),
+      [['RoutePriorityLog', 'priority', { stalled: { high: 1 }, open: { low: 1 } }]]);
+    // The requests each route leads, by their own status, against the route's state.
+    assert.deepEqual(result.alignment?.map(item => [item.link, item.process, item.property, table(item.states)]),
+      [['requests', 'RideRequestStatusLog', 'status', { stalled: { requested: 1, quoted: 1 }, open: { quoted: 1 } }]]);
+  } finally { await f.close(); }
+});
+
 test('definition discovery filters Machinery actions and subprocesses under limited resource grants', async () => {
   const f = await setup();
   try {
