@@ -51,13 +51,15 @@ jobs:
       - name: Check that the binary starts, listens on loopback and runs a component
         run: |
           binary="$RUNNER_TEMP/release/eigos-function-host"
+          protocol=$(sed -nE 's/^const PROTOCOL: u32 = ([0-9]+);$/\1/p' function-host/src/main.rs)
+          [[ "$protocol" =~ ^[1-9][0-9]*$ ]] || { echo 'Missing function host protocol in the selected source' >&2; exit 1; }
           rustup target add wasm32-wasip2
           function-host/fixtures/build.sh "$RUNNER_TEMP/fixtures"
           EIGOS_FUNCTION_HOST_PORT=0 "$binary" > "$RUNNER_TEMP/listening.json" &
           pid=$!
           for _ in $(seq 50); do [[ -s "$RUNNER_TEMP/listening.json" ]] && break; sleep 0.1; done
           port=$(jq -r 'select(.event == "function_host_listening") | .port' "$RUNNER_TEMP/listening.json")
-          curl --fail --silent "http://127.0.0.1:$port/health" | jq -e '.status == "ok" and .protocol == 1'
+          curl --fail --silent "http://127.0.0.1:$port/health" | jq -e --argjson protocol "$protocol" '.status == "ok" and .protocol == $protocol'
           component="$RUNNER_TEMP/fixtures/echo_rust.wasm"
           sha=$(sha256sum "$component" | cut -d' ' -f1)
           curl --fail --silent -X POST -H "x-eigos-sha256: $sha" --data-binary @"$component" "http://127.0.0.1:$port/components" | jq -e '.sha256 == "'"$sha"'"'
