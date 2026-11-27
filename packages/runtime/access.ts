@@ -1,3 +1,4 @@
+import { isScenarioReviewAction } from '../ontology/scenario-definition.js';
 import { accountActionsGroup, accountGroup } from './accounts.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -432,6 +433,10 @@ export class Access {
     this.requireAvailable(model, 'action', name);
     const action = model.actions.get(name);
     this.useModelData(action?.classification);
+    if (!this.principal.memberAccess && action && isScenarioReviewAction(action)) {
+      this.require(model.document.id, 'view_definition', model.document.id);
+      return;
+    }
     this.definition(model, 'action', name);
     this.require(model.document.id, 'apply_action', resource(model.document.id, 'action', name), this.principal.memberAccess);
     if (this.principal.memberAccess && accountSearchActions.has(name) && (action?.function !== accountSearchActions.get(name) ||
@@ -545,7 +550,7 @@ export class Access {
     document.linkTypes = document.linkTypes.filter(link => include('link', link.apiName) && this.canDefine(model, 'link', link.apiName) && objects.has(link.from.type) && objects.has(link.to.type) && modelVisible(link));
     document.functionTypes = document.functionTypes.filter(fn => include('function', fn.apiName) && visibleInCatalogue('function', fn.apiName) && this.canDefine(model, 'function', fn.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'execute_function', resource: resource(model.document.id, 'function', fn.apiName) })) && modelVisible(fn));
     const functions = new Set(document.functionTypes.map(fn => fn.apiName));
-    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
+    document.actionTypes = document.actionTypes.filter(action => include('action', action.apiName) && visibleInCatalogue('action', action.apiName) && this.canDefine(model, 'action', action.apiName) && (!executable || !this.principal.memberAccess && isScenarioReviewAction(action) || this.allows({ ontology: model.document.id, permission: 'apply_action', resource: resource(model.document.id, 'action', action.apiName) })) && (!action.function || functions.has(action.function)) && Object.values(action.objectParameters).every(type => objects.has(type) || interfaces.has(type)) && modelVisible(action));
     const actions = new Set(document.actionTypes.map(action => action.apiName));
     document.dataSources = document.dataSources.filter(source => include('datasource', source.apiName) && this.canDefine(model, 'datasource', source.apiName) && objects.has(source.objectType) && functions.has(source.function) && modelVisible(source));
     if (limited) {

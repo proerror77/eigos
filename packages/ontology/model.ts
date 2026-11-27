@@ -153,6 +153,7 @@ export class Ontology {
           if (Object.keys(rule.properties).some(name => !object.properties[name])) throw new Error('Action writes an undeclared property');
         }
         if (rule.op === 'applyScenario') { for(const name of rule.objectTypes)this.object(name);for(const name of rule.linkTypes)required(this.links,name); }
+        if (rule.op === 'reviewScenario') this.object('OntologyScenario');
         if (rule.op === 'addLink' || rule.op === 'removeLink') {
           const link = required(this.links, rule.link);
           if (rule.from.type !== link.from.type || rule.to.type !== link.to.type) throw new Error('Action link endpoints differ from the Link Type');

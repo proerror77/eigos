@@ -158,15 +158,16 @@ export function createCapabilities(
     ['resolveTaskLocation', resolveTaskLocation],
   ]);
   const didi = didiCapabilities(db, source, () => sources, getFunctions);
+  const scenarioDecisions = db.sandboxEnabled ? transferDecisionSupport(db) : undefined;
   const capabilities = assembleRuntime(db, new Ontology(businessDefinition).resolvedDocument.functionTypes,
     new Map([...handlers, ...didi.handlers]),
     new Map([...didi.projections, ...serviceProjections(services), [transferObservationSource, transferObservationProjection]]),
     { functions: [localEmbeddingVersion, ...(extensions.functions ?? [])],
       effects: new Map([...(extensions.effects ?? []), ...notifications.handlers]), sources: extensions.sources },
-    notifications.committed);
+    notifications.committed, scenarioDecisions);
   sources = capabilities.sources;
   return { ...capabilities, scheduledTerminals: new Map([['CheckDidiRideWatch', closeRideWatchSchedule]]), evaluateRelease: evaluateCalendarJourneyRelease,
-    scenarioDecisions: db.sandboxEnabled ? transferDecisionSupport(db) : undefined,
+    scenarioDecisions,
     taskWorkflow: hotelTaskWorkflow(capabilities.functions), taskPrompt: prepareMapCorrectionPrompt,
     projectTaskResult: publicHotelTaskResult };
 }

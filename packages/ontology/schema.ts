@@ -109,6 +109,18 @@ export const agentProfileSchema = z.strictObject({
   }).refine(hint => hint.action || hint.function, 'An Agent instruction requires an Action or Function')).max(30).optional(),
 });
 
+export const scenarioReviewRule = z.strictObject({
+  op: z.literal('reviewScenario'),
+  scenario: value,
+  expectedRevision: value,
+  review: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('submit'), reviewers: value }),
+    z.strictObject({ kind: z.literal('approve'), snapshot: value, decision: value.optional() }),
+    z.strictObject({ kind: z.literal('reject'), snapshot: value }),
+  ]),
+});
+export type ScenarioReviewRule = z.infer<typeof scenarioReviewRule>;
+
 export const ontologySchema = z.strictObject({
   id: name, version: z.string().min(1), classification: classificationSchema.optional(),
   sharedProperties:z.array(property.extend({apiName:name})).optional(),
@@ -159,6 +171,7 @@ export const ontologySchema = z.strictObject({
       z.strictObject({ op: z.literal('deleteObject'), object: parameter, expectedRevision: value }),
       z.strictObject({ op: z.literal('editStruct'), object: parameter, expectedRevision: value, property:name, fields:z.record(name,value) }),
       z.strictObject({ op: z.literal('applyScenario'), scenario:value, expectedRevision:value, objectTypes:z.array(name),linkTypes:z.array(name) }),
+      scenarioReviewRule,
     ])).min(1).optional(),
     result: reference.optional(), function: name.optional(), functionVersion: z.string().regex(versionRange).optional(),
     effects: z.array(z.strictObject({ name, handler: name, payload: z.record(name, value) })).max(20).optional(),

@@ -1,3 +1,4 @@
+import type { ScenarioDecisionSupport } from './scenarios.js';
 import type { Ontology } from '../ontology/model.js';
 import type { OntologyDocument } from '../ontology/schema.js';
 import { Actions, type CommittedEffects } from './actions.js';
@@ -13,6 +14,7 @@ export function assembleRuntime(
   db: Database, definitions: OntologyDocument['functionTypes'], handlers: ReadonlyMap<string, FunctionHandler>,
   projections: ReadonlyMap<string, SourceProjection> = new Map(), extensions: RuntimeExtensions = {},
   committedEffects?: CommittedEffects,
+  scenarioDecisions?: ScenarioDecisionSupport,
 ) {
   const registered = new Map(projections);
   for (const [name, projection] of extensions.sources ?? []) {
@@ -22,7 +24,7 @@ export function assembleRuntime(
   const functions = new Functions(handlers, definitions, extensions.functions, new ComponentFunctions(db), new ProviderBudgets(db));
   const sources = new Sources(db, functions, registered);
   const effects = new Effects(db, extensions.effects ?? new Map());
-  const actions = new Actions(db, functions, effects, committedEffects);
+  const actions = new Actions(db, functions, effects, committedEffects, scenarioDecisions);
   return {
     functions, sources, effects, actions,
     describe(model: Ontology) {

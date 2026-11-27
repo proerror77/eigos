@@ -4,13 +4,14 @@ import { validator } from '../ontology/model.js';
 import { actionBatchSchema, type ActionCall, type ActionResultRead } from '../ontology/invocation.js';
 import { PublishedOntology } from './metadata.js';
 import { Access } from './access.js';
-import { objectRefSchema, type ObjectRef, type Value } from '../ontology/schema.js';
+import { objectRefSchema, type ObjectRef, type ScenarioReviewRule, type Value } from '../ontology/schema.js';
 import { Database, type Sql } from './database.js';
 import { Objects } from './objects.js';
 import { Functions, type FunctionContext, type ScenarioEvaluation } from './functions.js';
 import { Effects, type ActionEffect } from './effects.js';
-import { Scenarios } from './scenarios.js';
-import { checkScenario, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
+import { Scenarios, type ScenarioDecisionSupport } from './scenarios.js';
+import { scenarioDecisionApprovalSchema } from '../ontology/scenario-decision.js';
+import { checkScenario, lockEdits, recordScenarioAction, type ScenarioMutation } from './scenario-store.js';
 import { JournalObjects, compensate, type ObjectChange, type LinkChange } from './action-journal.js';
 
 import { actionEffects, changeDigest, evaluate } from './action-values.js';
@@ -21,11 +22,14 @@ import { appendTrace } from './execution-trace.js';
 import { capturingDecisionReads } from './decision-evidence.js';
 
 type TaskExecution = NonNullable<FunctionContext['execution']>;
+const reviewTarget = (rule: ScenarioReviewRule, input: Record<string, unknown>) => ({
+  id: String(evaluate(rule.scenario, input)), revision: Number(evaluate(rule.expectedRevision, input)),
+});
 
 export type CommittedEffects = (model: PublishedOntology, owner: string, changes: readonly ObjectChange[]) => Promise<ActionEffect[]>;
 export class Actions {
   constructor(private readonly db: Database, private readonly functions: Functions, private readonly effects?: Effects,
-    private readonly committedEffects?: CommittedEffects) {}
+    private readonly committedEffects?: CommittedEffects, private readonly scenarioDecisions?: ScenarioDecisionSupport) {}
   /**
    * `context` is where the Action takes effect: in a Scenario, or on the live data. A merge replays a Scenario's Actions
    * inside the Scenario's view, but their edits take effect on the live data, so it checks them as live.
@@ -52,6 +56,11 @@ export class Actions {
       const ref = objectRefSchema.parse(input[parameter]);
       if (!model.implements(ref.type, type)) throw new InvalidInput('Action input type does not satisfy its contract');
       await objects.read(ref);
+    }
+    for (const rule of model.action(name).rules ?? []) {
+      if (rule.op !== 'reviewScenario') continue;
+      const { id, revision } = reviewTarget(rule, input);
+      await new Scenarios(this.db).reviewActionOwner(objects.access, model, id, revision, rule.review.kind, objects.client);
     }
     await this.checkSubmission(objects, name, input, signal, scenarioEvaluation, context);
   }
@@ -105,8 +114,8 @@ export class Actions {
         access.action(model, action);
         if (!model.actions.has(action)) throw new NotFound('Action is unavailable');
         const definition = model.action(action);
-        if (definition.function || definition.effects?.length || definition.rules?.some(rule => rule.op === 'applyScenario'))
-          throw new Conflict('Action batches require declarative rules without declared effects or Scenario merges');
+        if (definition.function || definition.effects?.length || definition.rules?.some(rule => rule.op === 'applyScenario' || rule.op === 'reviewScenario'))
+          throw new Conflict('Action batches require declarative rules without declared effects or Scenario lifecycle changes');
         return { requestId, action, input };
       });
       // Lock every request before taking the owner write lock, including when single Actions run in parallel.
@@ -144,6 +153,8 @@ export class Actions {
         throw new Conflict('Prepared Actions require a temporary Scenario evaluation');
     } else await this.requireActive(model, suppliedClient);
     const action = model.action(actionName), input = validator(action.parameters).parse(raw) as Record<string, unknown>;
+    const reviews = action.rules?.filter(rule => rule.op === 'reviewScenario') ?? [];
+    const scenarios = new Scenarios(this.db, this.scenarioDecisions);
     if (scenarioEvaluation && (!model.scenario || execution || action.rules?.some(rule => rule.op === 'applyScenario')))
       throw new Conflict('Scenario evaluation requires a staged Action');
     if (action.effects?.length && !model.scenario) {
@@ -162,7 +173,7 @@ export class Actions {
     const priorResult = (client: Sql = scenarioEvaluation?.client ?? this.db.pool) => this.db.query(`SELECT digest,result FROM ${this.db.schema}.${journal} WHERE owner=$1 AND request_id=$2${model.scenario ? ' AND scenario_id=$3' : ''}`, [principal.owner, requestId, ...(model.scenario ? [model.scenario] : [])], client);
     // Live commits lock only the objects they touch; one whose conflicts objects cannot bound reruns exclusively.
     // Scenario edits, merges, batches and evidence-recording reads keep the exclusive lock.
-    const shared = !suppliedClient && !model.scenario && !capturingDecisionReads() && !action.rules?.some(rule => rule.op === 'applyScenario');
+    const shared = !suppliedClient && !model.scenario && !capturingDecisionReads() && !reviews.length && !action.rules?.some(rule => rule.op === 'applyScenario');
     // A commit waiting behind a long edit lock retries within its deadline; a supplied transaction cannot rerun.
     const commitTransaction = <T>(run: (client: Sql) => Promise<T>) => suppliedClient ? transaction(run)
       : this.db.waitForLocks(() => shared ? this.db.objectScopedTransaction(run, actionName) : transaction(run), signal);
@@ -176,8 +187,18 @@ export class Actions {
           validateCognitive(this.functions, { objects, principal: access.principal, signal }, validation, object),
         scenarioEdits: model.scenario ? [] as ScenarioMutation[] : undefined };
       const objects = model.scenario ? new Objects(this.db, model, access, client,change) : new JournalObjects(this.db,model,access,client,change);
+      const previousReview = reviews.length ? await priorResult(client) : undefined;
+      if (reviews.length && !previousReview?.rowCount) {
+        // Two reviewers may review each other's Scenarios concurrently. Acquire both owner edit locks in the same order.
+        const owners = new Set([principal.owner]);
+        for (const rule of reviews) {
+          const { id, revision } = reviewTarget(rule, input);
+          owners.add(await scenarios.reviewActionOwner(access, model, id, revision, rule.review.kind, client));
+        }
+        for (const owner of [...owners].sort()) await lockEdits(this.db, model, owner, client);
+      }
       await objects.lockWrites();
-      const previous = await priorResult(client);
+      const previous = previousReview ?? await priorResult(client);
       if (previous.rows[0]) {
         if (previous.rows[0].digest !== fingerprint) throw new Conflict('Request ID already used with different action input');
         signal.throwIfAborted(); await access.refresh(client); await beforeCommit?.(client);
@@ -190,6 +211,19 @@ export class Actions {
         else if(rule.op==='removeLink')await objects.unlink({type:rule.link,from:ref(rule.from),to:ref(rule.to)});
         else if(rule.op==='deleteObject')await objects.remove(objectRefSchema.parse(evaluate(rule.object,input)),Number(evaluate(rule.expectedRevision,input)));
         else if(rule.op==='applyScenario')await new Scenarios(this.db).mergeInto(objects,String(evaluate(rule.scenario,input)),Number(evaluate(rule.expectedRevision,input)),{objects:rule.objectTypes,links:rule.linkTypes,validateAction});
+        else if (rule.op === 'reviewScenario') {
+          const { id, revision } = reviewTarget(rule, input), review = rule.review;
+          if (review.kind === 'submit') {
+            await scenarios.inviteReviewers(access, model, id, revision, evaluate(review.reviewers, input) as string[], client);
+          } else {
+            const snapshot = String(evaluate(review.snapshot, input));
+            if (review.kind === 'approve') {
+              const decision = review.decision && evaluate(review.decision, input);
+              await scenarios.approveReview(access, model, id, revision, snapshot,
+                scenarioDecisionApprovalSchema.optional().parse(decision), client);
+            } else await scenarios.rejectReview(access, model, id, revision, snapshot, client);
+          }
+        }
         else if(rule.op==='editStruct'){
           const target=objectRefSchema.parse(evaluate(rule.object,input)),current=await objects.read(target),before=current.properties[rule.property];
           if(!before||typeof before!=='object'||Array.isArray(before))throw new Conflict('Struct property is unavailable');
@@ -346,6 +380,8 @@ export class Actions {
       if(!original)throw new Conflict('The original Action has no reversible edit journal');
       if(original.release!==model.release)throw new Conflict('Undo requires the original publication');
       access.action(model,original.action);
+      if (model.action(original.action).rules?.some(rule => rule.op === 'reviewScenario'))
+        throw new Conflict('Change a Scenario review by submitting a new revision');
       const previous=(await this.db.query(`SELECT original_request_id,result FROM ${this.db.schema}.action_undo_requests WHERE owner=$1 AND request_id=$2`,[access.principal.owner,requestId],client)).rows[0];
       if(previous){
         if(previous.original_request_id!==originalRequestId)throw new Conflict('Undo request ID has different input');

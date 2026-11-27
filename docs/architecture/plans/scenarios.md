@@ -65,7 +65,8 @@
 
 **状态：** `OntologyScenario` 已实现 `Scenario` Interface。查询经同一
 方案元数据读取路径检查所有者和共享读者，并返回最近记录的同步冲突状态。
-审阅提交、批准和驳回 Action 的迁移待继续实现。
+提交审阅、批准和驳回沿用正式 Action 事务，旧接口保留原回执。方案对象
+以当前修订号呈现审阅状态。合并沿用所有者有权执行的已发布 Action。
 
 1. **Scenario 接口：** 定义一个 Interface，属性包括名称、状态、所有者、修订号、过期时间和冲突状态。
    - 方案元数据类型（`OntologyScenario`，见 `scenario-metadata.ts`）实现这个 Interface；

@@ -22,7 +22,7 @@ type ScenarioObjectEdit = {
   base_links: unknown; properties: Properties | null; edited_fields: string[] | null;
 };
 type LiveObject = { revision: string; properties: Properties };
-type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number; workflow_run_id: string | null };
+type ReviewableScenario = { id: string; owner: string; name: string; revision: string; reviewers: string[]; journal_steps: number; workflow_run_id: string | null; review_status: 'approved' | 'rejected' | null; reviewed_revision: string | null };
 type ContinuationRow = ReviewableScenario & {
   release: string; kind: string; expires_at: Date; action_count: number; complete_actions: number; has_changes: boolean;
 };
@@ -94,6 +94,8 @@ export async function initializeScenarioLifecycle(db: Database) {
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS reviewers jsonb NOT NULL DEFAULT '[]';
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS workflow_run_id uuid;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS journal_steps integer NOT NULL DEFAULT 0;
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS review_status text CHECK (review_status IN ('approved','rejected'));
+    ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS reviewed_revision bigint;
     -- S1 automatic sync: the creator's principal, the owner's last commit the Scenario was synced with, and its state.
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS principal jsonb;
     ALTER TABLE ${db.schema}.scenarios ADD COLUMN IF NOT EXISTS sync_position bigint;
@@ -114,6 +116,11 @@ export async function initializeScenarioLifecycle(db: Database) {
       owner text NOT NULL, revision bigint NOT NULL, reviewer text NOT NULL, snapshot text NOT NULL,
       approved_at timestamptz NOT NULL DEFAULT clock_timestamp(),
       PRIMARY KEY(scenario_id,revision,reviewer));
+    ALTER TABLE ${db.schema}.scenario_approvals ADD COLUMN IF NOT EXISTS decision text NOT NULL DEFAULT 'approved'
+      CHECK (decision IN ('approved','rejected'));
+    UPDATE ${db.schema}.scenarios s SET review_status='approved',reviewed_revision=s.revision
+      WHERE s.review_status IS NULL AND EXISTS (SELECT 1 FROM ${db.schema}.scenario_approvals a
+        WHERE a.owner=s.owner AND a.scenario_id=s.id AND a.revision=s.revision AND a.decision='approved');
     CREATE INDEX IF NOT EXISTS objects_scenario_metadata ON ${db.schema}.objects(id,projection,owner) WHERE type='OntologyScenario';`);
   const releases=(await db.query(`SELECT DISTINCT r.* FROM ${db.schema}.releases r JOIN ${db.schema}.scenarios s ON s.release=r.digest
     WHERE s.kind='persisted' AND s.expires_at>now() AND r.projection IS NOT NULL
@@ -223,7 +230,7 @@ export class Scenarios {
           const { name, revision, conflicts, evidenceChanged, snapshot } = await this.reviewDiff(model, row, reviewer, client);
           const approval = await this.db.withTransactionOwner(client, row.owner, () => this.db.query(
             `SELECT 1 FROM ${this.db.schema}.scenario_approvals
-              WHERE owner=$1 AND scenario_id=$2 AND revision=$3 AND reviewer=$4 AND snapshot=$5`,
+              WHERE owner=$1 AND scenario_id=$2 AND revision=$3 AND reviewer=$4 AND snapshot=$5 AND decision='approved'`,
             [row.owner, id, revision, reviewer, snapshot], client,
           ));
           return { id, name, revision, conflicts, evidenceChanged, approved: !conflicts && Boolean(approval.rowCount) };
@@ -246,13 +253,15 @@ export class Scenarios {
       return { ...review, ...(decisionMemory ? { decisionMemory } : {}) };
     });
   }
-  async approveReview(access: Access, model: PublishedOntology, id: string, revision: number, snapshot: string, decision?: ScenarioDecision) {
-    return this.db.transaction(async client => {
+  async approveReview(access: Access, model: PublishedOntology, id: string, revision: number, snapshot: string, decision?: ScenarioDecision, existing?: Sql) {
+    const approve = async (client: Sql) => {
       const row = await this.lockReview(access, model, id, client);
       const review = await this.reviewDiff(model, row, access.principal.owner, client);
       if (review.revision !== revision || review.snapshot !== snapshot || review.conflicts) {
         throw new Conflict('Scenario review changed or has conflicts');
       }
+      if (row.review_status === 'rejected' && Number(row.reviewed_revision) === revision)
+        throw new Conflict('A rejected Scenario revision must be submitted again before approval');
       const reviewer = access.principal.owner;
       const inserted = await this.db.withTransactionOwner(client, row.owner, () => this.db.query<{ approved_at: Date }>(
         `INSERT INTO ${this.db.schema}.scenario_approvals(scenario_id,owner,revision,reviewer,snapshot) VALUES($1,$2,$3,$4,$5)
@@ -266,29 +275,76 @@ export class Scenarios {
         await this.db.withTransactionOwner(client, row.owner, () => support.capture(
           { model, owner: row.owner, reviewer: access, client, review }, decision, inserted.rows[0]?.approved_at));
       }
+      await this.setReviewStatus(model, row, revision, 'approved', client);
       if (inserted.rowCount) await appendTrace(this.db, {
         owner: row.owner, release: model.release, projection: model.projection, scenarioId: id,
       }, { kind: 'approval', revision, snapshot, reviewer }, client);
       await access.refresh(client);
       return { id, revision, reviewer: access.principal.owner, approved: true as const };
-    });
+    };
+    return existing ? approve(existing) : this.db.transaction(approve);
   }
-  private async lockReview(access: Access, model: PublishedOntology, id: string, client: Sql) {
+
+  async rejectReview(access: Access, model: PublishedOntology, id: string, revision: number, snapshot: string, client: Sql) {
+    const row = await this.lockReview(access, model, id, client);
+    const reviewer = access.principal.owner;
+    const review = await this.reviewDiff(model, row, reviewer, client);
+    if (review.revision !== revision || review.snapshot !== snapshot) throw new Conflict('Scenario review changed');
+    if (Number(row.reviewed_revision) === revision) throw new Conflict('This Scenario revision already has a review decision');
+    await this.db.withTransactionOwner(client, row.owner, () => this.db.query(`INSERT INTO ${this.db.schema}.scenario_approvals
+      (scenario_id,owner,revision,reviewer,snapshot,decision) VALUES($1,$2,$3,$4,$5,'rejected')`, [id,row.owner,revision,reviewer,snapshot],client));
+    await this.setReviewStatus(model, row, revision, 'rejected', client);
+    await appendTrace(this.db, { owner: row.owner, release: model.release, projection: model.projection, scenarioId: id },
+      { kind: 'approval', revision, snapshot, reviewer, decision: 'rejected' }, client);
+    await access.refresh(client);
+  }
+
+  private async setReviewStatus(model: PublishedOntology, row: ReviewableScenario, revision: number,
+    state: 'approved' | 'rejected', client: Sql) {
+    await this.db.query(`UPDATE ${this.db.schema}.scenarios SET review_status=$4,reviewed_revision=$3
+      WHERE id=$1 AND owner=$2 AND revision=$3`, [row.id,row.owner,revision,state],client);
+    await syncScenarioMetadata(this.db, model, row.id, client);
+  }
+
+  async reviewActionOwner(access: Access, model: PublishedOntology, id: string, revision: number,
+    kind: 'submit' | 'approve' | 'reject', client: Sql) {
+    if (model.scenario || model.evaluation) throw new Conflict('Scenario review requires a formal live Action');
+    z.uuid().parse(id); z.number().int().positive().parse(revision);
+    let owner = access.principal.owner;
+    if (kind === 'submit') {
+      access.require(model.document.id, 'view_definition', model.document.id);
+      const found = await this.db.query(`SELECT 1 FROM ${this.db.schema}.scenarios
+        WHERE id=$1 AND owner=$2 AND release=$3 AND revision=$4 AND kind='persisted'
+          AND state='open' AND expires_at>clock_timestamp() AND workflow_run_id IS NULL`,[id,owner,model.release,revision],client);
+      if (!found.rowCount) throw new Conflict('Owned Scenario revision has changed or is unavailable for review');
+    } else {
+      const row = await this.reviewOffer(access, model, id, client);
+      if (Number(row.revision) !== revision) throw new Conflict('Scenario review changed');
+      if (Number(row.reviewed_revision) === revision && (row.review_status === 'rejected' || kind === 'reject'))
+        throw new Conflict('This Scenario revision already has a review decision');
+      owner = row.owner;
+    }
+    return owner;
+  }
+
+  private async reviewOffer(access: Access, model: PublishedOntology, id: string, client: Sql, lock = false) {
     z.uuid().parse(id);
     await access.refresh(client);
     access.require(model.document.id, 'view_definition', model.document.id);
     const values = [id, model.release, access.principal.owner];
-    const lookup = `SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id FROM ${this.db.schema}.scenarios
+    const lookup = `SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id,review_status,reviewed_revision FROM ${this.db.schema}.scenarios
       WHERE id=$1 AND release=$2 AND reviewers ? $3 AND kind='persisted' AND state='open' AND expires_at>clock_timestamp()
       AND (workflow_run_id IS NULL OR EXISTS (
         SELECT 1 FROM ${this.db.schema}.workflow_runs run
         WHERE run.id=workflow_run_id AND run.state='waiting-approval'))`;
-    const offered = (await this.db.query<ReviewableScenario>(lookup, values, client)).rows[0];
-    if (!offered) throw new NotFound('Scenario review is unavailable');
-    await lockEdits(this.db, model, offered.owner, client);
-    const row = (await this.db.query<ReviewableScenario>(lookup + ' FOR UPDATE', values, client)).rows[0];
+    const row = (await this.db.query<ReviewableScenario>(lookup + (lock ? ' FOR UPDATE' : ''), values, client)).rows[0];
     if (!row) throw new NotFound('Scenario review is unavailable');
     return row;
+  }
+  private async lockReview(access: Access, model: PublishedOntology, id: string, client: Sql) {
+    const offered = await this.reviewOffer(access, model, id, client);
+    await lockEdits(this.db, model, offered.owner, client);
+    return this.reviewOffer(access, model, id, client, true);
   }
   private async reviewDiff(model: PublishedOntology, row: ReviewableScenario, reviewer: string, client: Sql, verifyEvidence = true) {
     return this.db.withTransactionOwner(client, row.owner, async () => {
@@ -923,6 +979,8 @@ export class Scenarios {
       await checkScenario(this.db, view, owner, client, true);
       const row = (await this.db.query(`SELECT revision FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
       if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
+    if (row.review_status === 'rejected' && Number(row.reviewed_revision) === revision)
+      throw new Conflict('A rejected Scenario revision must be submitted again before merge');
       const changes = await this.changes(owner, id, client);
       let rebased = false;
       for (const item of changes.objects) {
@@ -1015,8 +1073,10 @@ export class Scenarios {
     const { model, owner, access, client } = graph;
     await graph.lockWrites();
     const view = await this.view(access, model, id, client); await checkScenario(this.db, view, owner, client, true);
-    const row = (await this.db.query<ReviewableScenario>(`SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
+    const row = (await this.db.query<ReviewableScenario>(`SELECT id,owner,name,revision,reviewers,journal_steps,workflow_run_id,review_status,reviewed_revision FROM ${this.db.schema}.scenarios WHERE owner=$1 AND id=$2`, [owner, id], client)).rows[0]!;
     if (Number(row.revision) !== revision) throw new Conflict('Scenario changed after review');
+    if (row.review_status === 'rejected' && Number(row.reviewed_revision) === revision)
+      throw new Conflict('A rejected Scenario revision must be submitted again before merge');
     let proposalTask: string | undefined;
     let validateWorkflow: ((candidate: Objects) => Promise<void>) | undefined;
     let evidenceCheck: ReturnType<Scenarios['decisionCheckpoint']> | undefined;
@@ -1053,7 +1113,7 @@ export class Scenarios {
     let approvalSnapshot: string | undefined;
     if (row.reviewers.length) {
       const approvals = (await this.db.query<{ reviewer: string; snapshot: string }>(
-        `SELECT reviewer,snapshot FROM ${this.db.schema}.scenario_approvals WHERE owner=$1 AND scenario_id=$2 AND revision=$3 AND reviewer=ANY($4::text[])`,
+        `SELECT reviewer,snapshot FROM ${this.db.schema}.scenario_approvals WHERE owner=$1 AND scenario_id=$2 AND revision=$3 AND reviewer=ANY($4::text[]) AND decision='approved'`,
         [owner, id, revision, row.reviewers], client,
       )).rows;
       for (const approval of approvals) {
