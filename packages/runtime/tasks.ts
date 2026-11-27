@@ -20,6 +20,7 @@ type InboxTask = Task & { conversation_batch: string; message_count: number; col
 const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
+const claimContended = Symbol('claim contended');
 const headOfConversation = (table: string) => `NOT EXISTS (
   SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.conversation_id=t.conversation_id
     AND sibling.id<>t.id AND sibling.state IN('submitted','working','input-required')
@@ -190,6 +191,16 @@ export class Tasks {
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
+    // Concurrent claimers can each advance this owner's turn once before its share fills.
+    const maxClaimAttempts = Math.max(4, this.ownerSlots);
+    for (let attempt = 0; attempt < maxClaimAttempts; attempt++) {
+      const task = await this.claimOnce(lane);
+      if (task !== claimContended) return task;
+      // Start a fresh transaction so the rejected task and its owner no longer hold locks.
+    }
+    return undefined;
+  }
+  private async claimOnce(lane?: 'scheduled' | 'interactive'): Promise<Task | typeof claimContended | undefined> {
     const scheduled = "t.input ? 'scheduledAction'";
     const kind = lane === 'scheduled' ? ` AND ${scheduled}` : lane === 'interactive' ? ` AND NOT (${scheduled})` : '';
     const table = `${this.db.schema}.tasks`;
@@ -199,8 +210,8 @@ export class Tasks {
     const withinShare = lane === 'scheduled' ? '' : ` AND ((${scheduled}) OR ${running('t.owner')}<$1)`;
     return this.db.transaction(async client => {
       // Owners take turns (06.2). Only interactive tasks are subject to the per-owner slot limit (06.1).
-      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'> & { scheduled: boolean }>(
-        `SELECT t.id,t.owner,t.conversation_id,(${scheduled}) AS scheduled
+      const candidate = (await this.db.query<Pick<Task, 'id' | 'owner' | 'conversation_id'> & { scheduled: boolean; turn_served_at: string | null }>(
+        `SELECT t.id,t.owner,t.conversation_id,(${scheduled}) AS scheduled,turn.served_at::text AS turn_served_at
         FROM ${table} t LEFT JOIN ${this.db.schema}.task_turns turn ON turn.owner=t.owner
         WHERE ((t.state='submitted' AND t.available_at<=now()) OR (t.state='working' AND t.lease_until<now()))
           AND ${atHead}${kind}${withinShare}
@@ -210,8 +221,11 @@ export class Tasks {
       if (!candidate.scheduled) {
         // Serialize interactive claims for the same owner across Workers, then recheck its share.
         await this.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.db.lockKey('task-owner-claim', candidate.owner)], client);
-        const { rows: [busy] } = await this.db.query<{ n: string }>(`SELECT ${running('$1')}::text AS n`, [candidate.owner], client);
-        if (Number(busy!.n) >= this.ownerSlots) return undefined;
+        const { rows: [current] } = await this.db.query<{ n: string; turn_served_at: string | null }>(
+          `SELECT ${running('$1')}::text AS n, (SELECT served_at::text FROM ${this.db.schema}.task_turns
+            WHERE owner=$1) AS turn_served_at`, [candidate.owner], client);
+        // A concurrent claim may have filled this owner's share or moved it behind other waiting owners.
+        if (Number(current!.n) >= this.ownerSlots || current!.turn_served_at !== candidate.turn_served_at) return claimContended;
       }
       if (candidate.conversation_id) {
         // A paused source retry can rejoin while another Worker is selecting a later batch.
