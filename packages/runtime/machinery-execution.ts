@@ -4,7 +4,7 @@ import { compileMachineryExecution, processLogTarget, type ExecutableTransition 
 import { objectRefSchema, ontologyName, type ObjectData, type ObjectRef } from '../ontology/schema.js';
 import type { Access } from './access.js';
 import type { Actions } from './actions.js';
-import type { Database } from './database.js';
+import type { Database, Sql } from './database.js';
 import type { PublishedOntology } from './metadata.js';
 import { Objects } from './objects.js';
 
@@ -65,7 +65,6 @@ export class MachineryExecution {
   async replan(model: PublishedOntology, access: Access, raw: unknown) {
     const { changedObjects } = machineryReplanInput.parse(raw);
     const { byType } = compileMachineryExecution(model);
-    const graph = new Objects(this.db, model, access);
     const parents = new Map<string, Set<string>>();
     for (const [type, edges] of byType) {
       for (const edge of edges) {
@@ -80,19 +79,24 @@ export class MachineryExecution {
         }
       }
     }
-    const subjects = new Map<string, ObjectRef>();
-    const include = (ref: ObjectRef) => subjects.set(JSON.stringify([ref.type, ref.id]), ref);
-    for (const ref of changedObjects) {
-      await graph.read(ref);
-      if (byType.has(ref.type)) include(ref);
-      for (const path of parents.get(ref.type) ?? []) {
-        const related = await graph.readCompleteRelationship(ref, path);
-        if (!related.complete) throw new Conflict('Cannot resolve the complete set of affected processes');
-        for (const item of related.items) include(item.ref);
+    const items = await this.db.transaction(async client => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
+      const graph = new Objects(this.db, model, access, client);
+      const subjects = new Map<string, ObjectRef>();
+      const include = (ref: ObjectRef) => subjects.set(JSON.stringify([ref.type, ref.id]), ref);
+      for (const ref of changedObjects) {
+        await graph.read(ref);
+        if (byType.has(ref.type)) include(ref);
+        for (const path of parents.get(ref.type) ?? []) {
+          const related = await graph.readCompleteRelationship(ref, path);
+          if (!related.complete) throw new Conflict('Cannot resolve the complete set of affected processes');
+          for (const item of related.items) include(item.ref);
+        }
       }
-    }
-    const items = [];
-    for (const object of subjects.values()) items.push(await this.nextActions(model, access, { object }));
+      const updated = [];
+      for (const object of subjects.values()) updated.push(await this.evaluate(model, access, { object }, client));
+      return updated;
+    });
     await access.refresh();
     if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Machinery result permissions changed');
     return { release: model.release, items };
@@ -100,51 +104,55 @@ export class MachineryExecution {
 
   async nextActions(model: PublishedOntology, access: Access, raw: unknown) {
     const input = machineryNextActionsInput.parse(raw);
-    const edges = compileMachineryExecution(model).byType.get(input.object.type) ?? [];
-    const items = await this.db.transaction(async client => {
+    const result = await this.db.transaction(async client => {
       await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
-      const graph = new Objects(this.db, model, access, client);
-      const subject = await graph.read(input.object);
-      const candidates = [] as {
-        process: string; action: string; to: string; input: Record<string, unknown>;
-        status: Availability | 'needs_input'; missing: string[];
-      }[];
-      for (const edge of edges) {
-        if (input.process && input.process !== edge.process.type) continue;
-        try {
-          access.definition(model, 'object', edge.process.type);
-          access.action(model, edge.action);
-        } catch (error) {
-          if (error instanceof PermissionDenied || error instanceof NotFound) continue;
-          throw error;
-        }
-        const state = subject.properties[edge.process.property];
-        if (typeof state === 'string' && edge.from !== state) continue;
-        const parameters: Record<string, unknown> = { [edge.execution.subject]: subject.ref };
-        for (const [name, property] of Object.entries(edge.execution.parameters ?? {})) {
-          const value = subject.properties[property];
-          if (value !== null && value !== undefined) parameters[name] = value;
-        }
-        const required = model.action(edge.action).parameters.required;
-        const requiredFields = Array.isArray(required) ? required as string[] : [];
-        const missing = requiredFields.filter(name => !Object.hasOwn(parameters, name));
-        let status: Availability | 'needs_input' = await checkTransition(graph, subject, edge);
-        if (status === 'ready' && missing.length) status = 'needs_input';
-        if (status === 'ready') {
-          try {
-            await this.actions.validateSubmission(access, model, { action: edge.action, input: parameters }, client, AbortSignal.timeout(5000));
-          } catch (error) {
-            if (error instanceof Conflict) status = 'blocked';
-            else if (error instanceof PermissionDenied || error instanceof NotFound || error instanceof z.ZodError) status = 'needs_check';
-            else throw error;
-          }
-        }
-        candidates.push({ process: edge.process.type, action: edge.action, to: edge.to, input: parameters, status, missing });
-      }
-      return candidates;
+      return this.evaluate(model, access, input, client);
     });
     await access.refresh();
     if (!await access.canReturn(access.dataRequirements())) throw new PermissionDenied('Machinery result permissions changed');
-    return { object: input.object, release: model.release, items };
+    return result;
+  }
+
+  private async evaluate(model: PublishedOntology, access: Access, input: z.infer<typeof machineryNextActionsInput>, client: Sql) {
+    const edges = compileMachineryExecution(model).byType.get(input.object.type) ?? [];
+    const graph = new Objects(this.db, model, access, client);
+    const subject = await graph.read(input.object);
+    const candidates = [] as {
+      process: string; action: string; to: string; input: Record<string, unknown>;
+      status: Availability | 'needs_input'; missing: string[];
+    }[];
+    for (const edge of edges) {
+      if (input.process && input.process !== edge.process.type) continue;
+      try {
+        access.definition(model, 'object', edge.process.type);
+        access.action(model, edge.action);
+      } catch (error) {
+        if (error instanceof PermissionDenied || error instanceof NotFound) continue;
+        throw error;
+      }
+      const state = subject.properties[edge.process.property];
+      if (typeof state === 'string' && edge.from !== state) continue;
+      const parameters: Record<string, unknown> = { [edge.execution.subject]: subject.ref };
+      for (const [name, property] of Object.entries(edge.execution.parameters ?? {})) {
+        const value = subject.properties[property];
+        if (value !== null && value !== undefined) parameters[name] = value;
+      }
+      const required = model.action(edge.action).parameters.required;
+      const requiredFields = Array.isArray(required) ? required as string[] : [];
+      const missing = requiredFields.filter(name => !Object.hasOwn(parameters, name));
+      let status: Availability | 'needs_input' = await checkTransition(graph, subject, edge);
+      if (status === 'ready' && missing.length) status = 'needs_input';
+      if (status === 'ready') {
+        try {
+          await this.actions.validateSubmission(access, model, { action: edge.action, input: parameters }, client, AbortSignal.timeout(5000));
+        } catch (error) {
+          if (error instanceof Conflict) status = 'blocked';
+          else if (error instanceof PermissionDenied || error instanceof NotFound || error instanceof z.ZodError) status = 'needs_check';
+          else throw error;
+        }
+      }
+      candidates.push({ process: edge.process.type, action: edge.action, to: edge.to, input: parameters, status, missing });
+    }
+    return { object: input.object, release: model.release, items: candidates };
   }
 }
