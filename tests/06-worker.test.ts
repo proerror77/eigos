@@ -253,7 +253,10 @@ test('one confirmation resumes the original Action using current supplier receip
       .map(row => row.properties.newState), ['awaiting-input', 'confirmed', 'completed']);
     assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.execution_trace
       WHERE task_id=$1 AND event->>'kind'='model' AND event->>'state'='started'`, [task.id])).rows[0]!.count, 1);
-    assert.equal((await f.db.query(`SELECT count(*)::int AS count FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [task.id])).rows[0]!.count, 0);
+    const replies = (await f.db.query(`SELECT id,request->>'purpose' AS purpose,request->>'capability' AS capability,response
+      FROM ${f.db.schema}.pa_requests WHERE task_id=$1`, [task.id])).rows;
+    assert.deepEqual(replies, [{ id: pending.pending!.id, purpose: 'input', capability: 'task.input.places',
+      response: { kind: 'select', places } }]);
     assert.equal(f.provider.flags.orderCreates, 0);
   } finally { await f.close(); await harness.close(); }
 });
