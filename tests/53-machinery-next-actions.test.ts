@@ -6,6 +6,7 @@ import { Access, businessGrants, setGrants } from '../packages/runtime/access.js
 import { ChangeSubscriptions } from '../packages/runtime/change-subscriptions.js';
 import { MachineryWatchPlanner } from '../packages/runtime/machinery-watch.js';
 import { ScheduledActions } from '../packages/runtime/scheduled-actions.js';
+import { ontologyServices } from '../packages/runtime/services.js';
 import { ObservationInterests } from '../packages/runtime/observation-interests.js';
 import { MachineryExecution } from '../packages/runtime/machinery-execution.js';
 import { Objects } from '../packages/runtime/objects.js';
@@ -154,6 +155,17 @@ test('commit windows replan only the affected journey, wake once and revisit its
     await scan();
     assert.equal(evaluations.mock.callCount(),0);
     await graph.edit(hotel,1,{state:'ready'});
+    // Fail after schedule reevaluation. The cursor, notification and schedule must all roll back.
+    const send = t.mock.method(f.tasks,'submit',async () => { throw new Error('simulated delivery interruption'); });
+    await f.db.query(`UPDATE ${s}.change_subscriptions SET last_scan=CASE WHEN id=$1 THEN NULL ELSE now()+interval '1 hour' END`,[first.id]);
+    await assert.rejects(subscriptions.scanOne(), /simulated delivery interruption/);
+    assert.deepEqual(await events(),[]);
+    const saved = await f.db.query(`SELECT position::text FROM ${s}.change_subscriptions WHERE id=$1`,[first.id]);
+    assert.equal(saved.rows[0]!.position,first.position);
+    const held = await f.db.query(`SELECT count(*)::int AS total FROM ${s}.scheduled_actions WHERE machinery_retry_at IS NOT NULL`);
+    assert.equal(held.rows[0]!.total,0);
+    send.mock.restore();
+    evaluations.mock.resetCalls();
     await scan();
     assert.deepEqual(evaluations.mock.calls.map(c=>c.arguments[2].object),[journey]);
     const [changed] = await events();
@@ -194,15 +206,26 @@ test('commit windows replan only the affected journey, wake once and revisit its
     await f.db.query(`UPDATE ${s}.change_subscriptions SET last_scan=NULL`);
     await Promise.all([restarted.scanOne(),subscriptions.scanOne()]);
     assert.equal((await events()).length,count);
+    await schedules.enqueue(graph,{ id:'held-across-release',action:'CompleteSyntheticJourney',
+      arguments:{journey,revision:1},runAt,deadline });
+    await graph.edit(hotel,4,{state:'pending'});
+    await scan();
+    const finalEventCount = (await events()).length;
     const unfinished = await f.db.query(`SELECT id FROM ${s}.tasks WHERE owner=$1 AND state IN ('submitted','working','input-required')`,[principal.owner]);
     for (const row of unfinished.rows) await f.tasks.cancel(principal,row.id);
     const next = structuredClone(model.document);
     next.version += '-next';
+    const process = next.objectTypes.find(type => type.apiName===journey.type+'StateLog')!;
+    for (const transition of process.machinery!.transitions) delete transition.execution;
     await f.metadata.publish(next,f.capabilities,f.publisher);
     await f.db.query(`UPDATE ${s}.change_subscriptions SET last_scan=NULL`);
     await restarted.scanOne();
     assert.deepEqual(await subscriptions.list(access),[]);
-    assert.equal((await events()).length,count);
+    assert.equal((await events()).length,finalEventCount);
+    await f.db.query(`UPDATE ${s}.scheduled_actions SET run_at=now(),machinery_retry_at=now() WHERE id='held-across-release'`);
+    assert.equal(await schedules.promoteOne(),true);
+    const heldAcross = await f.db.query(`SELECT state,task_id FROM ${s}.scheduled_actions WHERE id='held-across-release'`);
+    assert.deepEqual(heldAcross.rows,[{state:'blocked',task_id:null}]);
   } finally { await f.close(); }
 });
 
@@ -216,7 +239,8 @@ test('a revoked process read stops event delivery without terminating the Indexe
     await graph.create(journey,{id:journey.id,name:'journey',state:'pending'});
     const subscriptions = new ChangeSubscriptions(f.db,f.tasks,
       new MachineryWatchPlanner(f.db,f.metadata,new MachineryExecution(f.db,f.capabilities.actions)));
-    await subscriptions.watchMachinery(access,model,{object:journey,requestId:'watched',conversationId:'process'});
+    const services = ontologyServices(f.db, f.metadata, f.capabilities, f.capabilities.functions, f.capabilities.effects, f.capabilities.actions);
+    await services.get('watch_machinery_process')!.invoke(principal, {object:journey,requestId:'watched',conversationId:'process'});
     await graph.edit(journey,1,{state:'done'});
     await setGrants(f.db,principal.owner,[]);
     assert.equal(await subscriptions.scanOne(),true);

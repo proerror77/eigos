@@ -68,7 +68,7 @@ export class MachineryWatchPlanner {
     try {
       const access = await Access.load(this.db,principal,client);
       const signature = await this.signature(model,access,watch.object,client);
-      return { end: change.position, signature, access } as const;
+      return { end: change.position, signature } as const;
     } catch (error) {
       if (error instanceof PermissionDenied || error instanceof NotFound) return { stopped: true } as const;
       throw error;

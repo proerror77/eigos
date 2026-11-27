@@ -226,6 +226,12 @@ export class ScheduledActions {
       } catch {
         return fail('Current action or permissions are unavailable');
       }
+      if (row.machinery_retry_at && row.body.plannedRelease !== model.release) {
+        const original = await this.metadata.get(row.body.plannedRelease, client);
+        const transitions = (publication: PublishedOntology) => compileMachineryExecution(publication).byAction.get(row.body.action) ?? [];
+        if (digest(transitions(original)) !== digest(transitions(model)))
+          return fail('Published Machinery transitions changed; review and authorize a new plan');
+      }
       if (row.machinery_retry_at || await this.hasProcessWatch(model, row.owner, row.body, client)) {
         const ready = await this.db.withTransactionOwner(client, row.owner,
           () => this.refreshTransition(model, principal, row.id, row.body, client));

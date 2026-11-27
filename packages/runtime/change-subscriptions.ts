@@ -114,38 +114,35 @@ export class ChangeSubscriptions {
 
   private async scanMachinery(row: Row, watch: NonNullable<SubscriptionFootprint['machinery']>) {
     const principal = storedPrincipal.parse(row.principal), s = this.db.schema;
-    const change = await this.db.transaction(async client => {
-      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', [], client);
-      const through = await latestCommit(this.db,row.owner,client);
-      return this.planner!.inspect(principal,watch,row.position,through,client);
-    });
-    if (!change) return;
-    if ('stopped' in change) {
-      await this.db.query(`UPDATE ${s}.change_subscriptions SET cancelled_at=now()
-        WHERE id=$1 AND position=$2 AND cancelled_at IS NULL`,[row.id,row.position]);
-      return;
-    }
-    const advance = async (client: Sql) => {
-      if (change.access && !await change.access.canReturn(change.access.dataRequirements(),client))
-        throw new Conflict('Machinery permissions changed');
-      const updated = await this.db.query(`UPDATE ${s}.change_subscriptions SET position=$3,plan_digest=coalesce($4,plan_digest)
-        WHERE id=$1 AND position=$2 AND cancelled_at IS NULL`,[row.id,row.position,change.end,change.signature ?? null],client);
-      if (!updated.rowCount) throw new Conflict('Subscription changed');
+    await this.db.transaction(async client => {
+      await this.db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', [], client);
+      const locked = await this.db.query(`SELECT 1 FROM ${s}.change_subscriptions
+        WHERE id=$1 AND owner=$2 AND position=$3 AND cancelled_at IS NULL FOR UPDATE SKIP LOCKED`,
+        [row.id, row.owner, row.position], client);
+      if (!locked.rowCount) return;
+      const through = await latestCommit(this.db, row.owner, client);
+      const change = await this.planner!.inspect(principal, watch, row.position, through, client);
+      if (!change) return;
+      if ('stopped' in change) {
+        await this.db.query(`UPDATE ${s}.change_subscriptions SET cancelled_at=now() WHERE id=$1`, [row.id], client);
+        return;
+      }
       if (change.signature) {
-        await this.planner!.replanSchedules(row.owner,watch,client);
-        // The original observation planner owns schedule changes and checks its stored authority.
+        await this.planner!.replanSchedules(row.owner, watch, client);
+        // The original observation planner owns schedule changes and rechecks its stored authority.
         await this.db.query(`UPDATE ${s}.observation_interests SET next_scan=least(next_scan,now())
           WHERE owner=$1 AND release=$2 AND state='watching' AND ((plan->'object')::text=($3::jsonb)::text OR attached=$3::jsonb)`,
-          [row.owner,watch.release,watch.object],client);
+          [row.owner, watch.release, watch.object], client);
+        if (change.signature !== row.plan_digest) {
+          const message = JSON.stringify({ event: 'machinery_replanned', subscription: row.id, object: watch.object,
+            release: watch.release, commits: { after: row.position, through: change.end } });
+          await this.tasks.submit(principal, { requestId: `subscription:${row.id}:${row.position}`, conversationId: row.conversation_id,
+            message }, { expectedRelease: watch.release, transaction: client });
+        }
       }
-    };
-    try {
-      if (change.signature && change.signature !== row.plan_digest) {
-        await this.tasks.submit(principal,{ requestId: `subscription:${row.id}:${row.position}`, conversationId:row.conversation_id,
-          message:JSON.stringify({ event:'machinery_replanned', subscription:row.id, object:watch.object, release:watch.release,
-            commits:{ after:row.position, through:change.end } }) },{ expectedRelease:watch.release, admit:advance });
-      } else await this.db.transaction(advance);
-    } catch (error) { if (!(error instanceof Conflict)) throw error; }
+      await this.db.query(`UPDATE ${s}.change_subscriptions SET position=$2,plan_digest=coalesce($3,plan_digest) WHERE id=$1`,
+        [row.id, change.end, change.signature ?? null], client);
+    });
   }
 
   /**
@@ -169,7 +166,7 @@ export class ChangeSubscriptions {
         try { await this.scanMachinery(claimed, claimed.footprint.machinery); }
         catch (error) {
           // Concurrent schedule or publication changes can require a fresh snapshot. The cursor has not moved.
-          if (!['40001','40P01','55P03'].includes((error as {code?:string}).code ?? '')) throw error;
+          if (!(error instanceof Conflict) && !['40001','40P01','55P03'].includes((error as {code?:string}).code ?? '')) throw error;
         }
         return;
       }
