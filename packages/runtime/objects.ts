@@ -1,3 +1,4 @@
+import { scenarioInterfaceName } from '../ontology/scenario-definition.js';
 import type { CognitiveStep } from './cognitive-workflow.js';
 import { scenarioMetadataRead, scenarioMetadataQuery, scenarioMetadataType } from './scenario-metadata.js';
 import { capturingDecisionReads, observeDecisionRead, observedObject, observedObjects, observedPage } from './decision-evidence.js';
@@ -618,10 +619,11 @@ export class Objects {
   }
   /** `among` restricts the query to those object ids of its type. */
   async queryStored(input: Query, among?: readonly string[]):Promise<{items:ObjectData[];cursor?:string}> {
-    if (input.type === scenarioMetadataType) {
+    if (input.type === scenarioMetadataType || input.type === scenarioInterfaceName && this.model.interfaces.has(scenarioInterfaceName)) {
       this.requireExclusive('set query');
       if (input.intervalOverlap) throw new Conflict('Time windows require stored date-time properties');
-      return scenarioMetadataQuery(this, input);
+      if (input.type === scenarioInterfaceName) this.access.definition(this.model, 'interface', input.type);
+      return scenarioMetadataQuery(this, input, among);
     }
     const args = querySchema.parse(input);
     // A read of one source's relationship is bounded by object locks; any other set query is not.
