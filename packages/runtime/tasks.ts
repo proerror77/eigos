@@ -20,7 +20,6 @@ const batchWindowMs = 2000;
 const maxBatchMessages = 16;
 const maxBatchLength = 16000;
 const claimContended = Symbol('claim contended');
-const maxClaimAttempts = 4;
 const headOfConversation = (table: string) => `NOT EXISTS (
   SELECT 1 FROM ${table} sibling WHERE sibling.owner=t.owner AND sibling.conversation_id=t.conversation_id
     AND sibling.id<>t.id AND sibling.state IN('submitted','working','input-required')
@@ -216,6 +215,8 @@ export class Tasks {
     });
   }
   async claim(lane?: 'scheduled' | 'interactive'): Promise<Task | undefined> {
+    // Concurrent claimers can each advance this owner's turn once before its share fills.
+    const maxClaimAttempts = Math.max(4, this.ownerSlots);
     for (let attempt = 0; attempt < maxClaimAttempts; attempt++) {
       const task = await this.claimOnce(lane);
       if (task !== claimContended) return task;
