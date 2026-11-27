@@ -17,6 +17,7 @@ import { Scenarios, createScenarioSchema } from './scenarios.js';
 import { Objects, querySchema } from './objects.js';
 import { Actions } from './actions.js';
 import { Functions } from './functions.js';
+import { ProviderBudgetExceeded } from './provider-budgets.js';
 import { SemanticSearch, semanticSearchViewSchema } from './semantic.js';
 import { Sources } from './sources.js';
 import { currentTaskExecution, Tasks, taskPrincipal, type Task } from './tasks.js';
@@ -269,7 +270,13 @@ export class OntologyAgent {
           } else step.outcome = 'completed';
           return output;
         } catch (error) {
-          step.outcome = error instanceof ModelEgressDenied ? 'blocked' : 'failed';
+          if (error instanceof ProviderBudgetExceeded) {
+            closing = true;
+            step.outcome = 'paused';
+            reject!(error);
+          } else {
+            step.outcome = error instanceof ModelEgressDenied ? 'blocked' : 'failed';
+          }
           if (error instanceof ModelEgressDenied || error instanceof PermissionDenied && this.driver.provider) {
             if (proof) await recordModelTrace({ kind: 'egress', state: 'blocked', policyDigest: proof,
               code: error instanceof PermissionDenied ? 'tool_permission_denied' : blockCode });
@@ -501,7 +508,7 @@ export class OntologyAgent {
       return new TaskResult({ ...(result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }), elapsedMs: Date.now() - task.created_at.getTime(),
         execution: { model: this.driver.model, release: model.release, durationMs, sqlStatements: queryCount(), steps } }, await access.finalDataRequirements());
     } catch (error) {
-      const state = error instanceof Clarification ? 'paused' : outerSignal.aborted ? 'canceled' : 'failed';
+      const state = error instanceof Clarification || error instanceof ProviderBudgetExceeded ? 'paused' : outerSignal.aborted ? 'canceled' : 'failed';
       await recordModelTrace({ kind: 'model', state, model: this.driver.model, attempt, durationMs: Math.round(performance.now() - started) });
       throw error;
     } finally { stopped.abort(); await execution.catch(() => {}); }
