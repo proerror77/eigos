@@ -1,3 +1,4 @@
+import { analyzeProposal, visibleProposalEvidence, type ProposalEvidence } from './machinery-proposal.js';
 import {resourceGroups} from '../ontology/resource-mapping.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -26,11 +27,12 @@ export async function initializeGovernance(db: Database) {
       id uuid PRIMARY KEY, ontology text NOT NULL, project text, name text NOT NULL, author text NOT NULL,
       base_release text NOT NULL REFERENCES ${db.schema}.releases(digest), body jsonb NOT NULL,
       revision integer NOT NULL DEFAULT 1, state text NOT NULL DEFAULT 'draft', candidate text REFERENCES ${db.schema}.releases(digest),
-      reviewer text, reviewed_digest text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());`);
+      reviewer text, reviewed_digest text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+    ALTER TABLE ${db.schema}.ontology_branches ADD COLUMN IF NOT EXISTS machinery_evidence jsonb;`);
 }
 interface Branch {
   id: string; ontology: string; project: string | null; name: string; author: string; base_release: string;
-  body: OntologyDocument; revision: number; state: string; candidate: string | null; reviewer: string | null; reviewed_digest: string | null;
+  machinery_evidence: ProposalEvidence | null; body: OntologyDocument; revision: number; state: string; candidate: string | null; reviewer: string | null; reviewed_digest: string | null;
 }
 const resources = (document: OntologyDocument) => {
   const expanded=new Ontology(document).resourceDocument;
@@ -83,7 +85,7 @@ export class Governance {
       if (before.get(name) !== after.get(name) && before.has(name) && !assigned.has(name)) throw new Conflict('Branch edits exceed the selected project');
     }
   }
-  async create(access: Access, raw: unknown) {
+  async create(access: Access, raw: unknown, evidence?: ProposalEvidence) {
     const input = branchCreateSchema.parse(raw), base = await this.metadata.active(input.ontology);
     if (input.baseRelease && input.baseRelease !== base.release) throw new Conflict('Ontology changed; refresh the proposed definition');
     access.require(input.ontology, 'view_definition', input.ontology);
@@ -94,7 +96,13 @@ export class Governance {
     await this.db.transaction(async client => {
       await access.refresh(client);
       if (branch.project && !(await this.db.query(`SELECT 1 FROM ${this.db.schema}.ontology_projects WHERE ontology=$1 AND id=$2`, [branch.ontology,branch.project], client)).rowCount) throw new NotFound('Ontology project is unavailable');
-      await this.db.query(`INSERT INTO ${this.db.schema}.ontology_branches(id,ontology,project,name,author,base_release,body) VALUES($1,$2,$3,$4,$5,$6,$7)`, [id,input.ontology,branch.project,input.name,access.principal.owner,base.release,body], client);
+      if (evidence) {
+        const active = await this.metadata.active(input.ontology,client,true);
+        if (active.release !== evidence.release || base.release !== evidence.release || !await access.canReturn(evidence.requirements,client))
+          throw new Conflict('Machinery evidence changed before the proposal was saved');
+      }
+      await this.db.query(`INSERT INTO ${this.db.schema}.ontology_branches(id,ontology,project,name,author,base_release,body,machinery_evidence)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id,input.ontology,branch.project,input.name,access.principal.owner,base.release,body,evidence ?? null], client);
     });
     return this.read(access,id);
   }
@@ -102,7 +110,11 @@ export class Governance {
     const row = await this.row(id);
     // Branch bodies include unchanged resources from the whole Ontology.
     access.require(row.ontology, 'view_definition', row.ontology);
-    this.authorize(access,row,'edit_definition'); await access.refresh(); return row;
+    this.authorize(access,row,'edit_definition'); await access.refresh();
+    const { machinery_evidence: evidence, ...branch } = row;
+    const proposalEvidence = evidence && await visibleProposalEvidence(this.db,access,await this.metadata.get(evidence.release),evidence,
+      branch.base_release===evidence.release ? branch.body.objectTypes.find(type=>type.apiName===evidence.process)?.machinery : undefined);
+    return { ...branch, ...(proposalEvidence ? { proposalEvidence } : {}) };
   }
   async list(access: Access, ontology: string) {
     identifier.parse(ontology); access.require(ontology,'view_definition',ontology);
@@ -184,14 +196,40 @@ export class Governance {
       return {id:row.id,revision:row.revision+1,state:'draft',baseRelease:current.release};
     });
   }
+  async refreshMachineryEvidence(access: Access, id: string, revision: number, query: ProposalEvidence['query']) {
+    const row = await this.row(id);
+    this.authorize(access,row,'edit_definition');
+    access.require(row.ontology,'view_definition',row.ontology);
+    const type = row.machinery_evidence?.process;
+    const proposed = row.body.objectTypes.find(object=>object.apiName===type)?.machinery;
+    if (!type || !proposed || row.revision !== revision || row.state==='merged') throw new Conflict('Select the current Machinery proposal');
+    const base = await this.metadata.get(row.base_release);
+    const evidence = await analyzeProposal(this.db,access,base,query,type,proposed);
+    return this.db.transaction(async client => {
+      await access.refresh(client);
+      this.authorize(access,row,'edit_definition');
+      if (!await access.canReturn(evidence.requirements,client)) throw new PermissionDenied('Machinery evidence permissions changed');
+      const result = await this.db.query(`UPDATE ${this.db.schema}.ontology_branches SET machinery_evidence=$3,
+        revision=revision+1,state='draft',candidate=NULL,reviewer=NULL,reviewed_digest=NULL,updated_at=now()
+        WHERE id=$1 AND revision=$2 AND state<>'merged' RETURNING revision`,[id,revision,evidence],client);
+      if (!result.rowCount) throw new Conflict('The Machinery proposal changed during analysis');
+      return {id,revision:result.rows[0]!.revision,state:'draft'};
+    });
+  }
+
   private async reviewDigest(row: Branch, client: Sql) {
     const candidate=(await this.db.query(`SELECT source_fingerprint,projection_fingerprint FROM ${this.db.schema}.releases WHERE digest=$1`,[row.candidate],client)).rows[0];
-    return digest({body:row.body,release:row.candidate,base:row.base_release,projection:candidate});
+    return digest({body:row.body,release:row.candidate,base:row.base_release,projection:candidate,...(row.machinery_evidence ? {evidence:digest(row.machinery_evidence)} : {})});
   }
   async review(access: Access, raw: unknown) {
     const input=branchReviewSchema.parse(raw);
     return this.db.transaction(async client=>{
       const row=await this.row(input.id,client,true);this.authorize(access,row,'manage_definition');
+      if(row.machinery_evidence && (row.base_release!==row.machinery_evidence.release ||
+        digest(row.body.objectTypes.find(object=>object.apiName===row.machinery_evidence!.process)?.machinery ?? null)!==row.machinery_evidence.modelDigest))
+        throw new Conflict('Refresh the Machinery evidence for this revision before review');
+      if(row.machinery_evidence && [row.author,row.machinery_evidence.owner].includes(access.principal.owner))
+        throw new Conflict('Machinery proposals require independent review');
       if(row.state!=='submitted'||row.revision!==input.revision||row.candidate!==input.release)throw new Conflict('Review requires the exact submitted candidate');
       const candidate=await this.metadata.get(input.release,client);
       if(candidate.digest!==new Ontology(row.body).digest)throw new Conflict('Candidate definition differs');

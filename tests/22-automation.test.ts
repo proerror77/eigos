@@ -1977,3 +1977,61 @@ test('aborting dispatch ends idle scan and run loops promptly',async()=>{
   await delay(10);const started=performance.now();controller.abort();await dispatch;
   assert.ok(performance.now()-started<1000);
 });
+
+test('a Machinery proposal binds observed deviations and dwell to an independently reviewed publication', async () => {
+  const f = await processSetup();
+  try {
+    const definition = structuredClone(f.model.document);
+    const base = { states: [{name:'open'},{name:'stalled'},{name:'done',terminal:true}],
+      transitions:[{from:null,to:'open'},{from:'open',to:'done'}] };
+    definition.objectTypes.find(o=>o.apiName==='RouteStateLog')!.machinery = base;
+    const model = await f.metadata.publish(definition,f.capabilities,f.publisher);
+    const grants = [...businessGrants(model), {resource:'Eigos',permission:'manage_definition' as const}];
+    await setGrants(f.db,principal.owner,grants);
+    const reviewer = {...principal,owner:'independent-reviewer'};
+    await setGrants(f.db,reviewer.owner,grants);
+    const access = await Access.load(f.db,principal), graph = new Objects(f.db,model,access);
+    for (const state of ['open','stalled','done']) await f.actions.apply(access,model,'ChangeRouteState',
+      {route:f.source,revision:(await graph.read(f.source)).revision,state},randomUUID());
+    const history = async () => (await f.db.query(`SELECT count(*)::int AS rows,
+      md5(string_agg(row_to_json(h)::text,'' ORDER BY sequence)) AS fingerprint FROM ${f.db.schema}.edit_history h
+      WHERE release=$1 AND owner=$2 AND type='Route' AND id=$3`,[model.release,principal.owner,f.source.id])).rows[0]!;
+    const originalHistory = await history();
+    assert(originalHistory.rows > 0);
+    const services = ontologyServices(f.db,f.metadata,f.capabilities,f.capabilities.functions,f.capabilities.effects,f.actions);
+    const proposed = { ...base, transitions:[...base.transitions,{from:'open',to:'stalled'},{from:'stalled',to:'done'}] };
+    const type='RouteStateLog', from=new Date(Date.now()-3600000).toISOString(), to=new Date().toISOString();
+    const branch = await services.get('machinery_propose_model')!.invoke(principal,{type,name:'Inspect observed route delays',release:model.release,
+      model:proposed,analysis:{type,from,to}}) as {id:string;revision:number;proposalEvidence:{scope:string;summary:{
+        deviationCases:number;candidateDeviationCases:number;bottlenecks:{state:string;completedP95Ms:number|null}[];affectedEdges:unknown[]}}};
+    assert.equal(branch.proposalEvidence.scope,'recorded');
+    assert.equal(branch.proposalEvidence.summary.deviationCases,1);
+    assert.equal(branch.proposalEvidence.summary.candidateDeviationCases,0);
+    assert.equal(branch.proposalEvidence.summary.affectedEdges.length,2);
+    assert(branch.proposalEvidence.summary.bottlenecks.some(b=>b.state==='stalled' && b.completedP95Ms!==null));
+    const reviewedView = await services.get('get_branch')!.invoke(reviewer,{id:branch.id}) as typeof branch;
+    assert.equal(reviewedView.proposalEvidence.scope,'reviewer');
+    assert.equal(reviewedView.proposalEvidence.summary.deviationCases,0);
+    assert(!('machinery_evidence' in reviewedView));
+    const edited = structuredClone(model.document);
+    edited.objectTypes.find(o=>o.apiName===type)!.machinery = {...proposed,states:proposed.states.map(s=>s.name==='open'?{...s,dwellSeconds:600}:s)};
+    const updated = await services.get('update_branch')!.invoke(principal,{id:branch.id,revision:branch.revision,body:edited}) as {id:string;revision:number};
+    const stale = await services.get('get_branch')!.invoke(principal,{id:branch.id}) as typeof branch;
+    assert.equal(stale.proposalEvidence.scope,'earlier_revision');
+    const staleCandidate = await services.get('prepare_branch')!.invoke(principal,{id:updated.id,revision:updated.revision}) as {id:string;revision:number;release:string};
+    await assert.rejects(services.get('review_branch')!.invoke(reviewer,{id:branch.id,revision:staleCandidate.revision,release:staleCandidate.release}),/Refresh the Machinery evidence/);
+    const refreshed = await services.get('refresh_machinery_proposal_evidence')!.invoke(principal,{id:branch.id,revision:staleCandidate.revision,analysis:{type,from,to}}) as {revision:number};
+    const prepared = await services.get('prepare_branch')!.invoke(principal,{id:branch.id,revision:refreshed.revision}) as {id:string;revision:number;release:string};
+    assert.equal((await f.metadata.active()).release,model.release);
+    const review = { id:prepared.id,revision:prepared.revision,release:prepared.release };
+    await assert.rejects(services.get('review_branch')!.invoke(principal,review),/independent review/);
+    const approved = await services.get('review_branch')!.invoke(reviewer,review) as typeof prepared;
+    await services.get('merge_branch')!.invoke(reviewer,{id:approved.id,revision:approved.revision,release:approved.release});
+    assert.equal((await f.metadata.active()).release,prepared.release);
+    assert.deepEqual(await history(),originalHistory);
+    const source = await f.db.query(`SELECT body FROM ${f.db.schema}.releases WHERE digest=$1`,[model.release]);
+    assert.deepEqual(source.rows[0]!.body.objectTypes.find((item:{apiName:string})=>item.apiName===type).machinery,
+      model.object(type).machinery);
+    assert.equal((await f.metadata.active()).object(type).machinery!.states.find(s=>s.name==='open')!.dwellSeconds,600);
+  } finally { await f.close(); }
+});
