@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { Conflict, SourceReadFailure, digest } from '../../core/identity.js';
 import { json } from '../../ontology/service-contracts.js';
-import { ActionPARequestRequired, PARequestRequired } from '../../runtime/clarification.js';
+import { ActionPARequestRequired, PARequestRequired, type ActionInputPurpose } from '../../runtime/clarification.js';
 import { PARequests } from '../../runtime/pa.js';
 import { currentTaskExecution, type Task, type Tasks } from '../../runtime/tasks.js';
 import type { Sql } from '../../runtime/database.js';
@@ -25,13 +25,13 @@ export const didiPAReceipt = didiReceiptSchema.omit({ bindingId: true, environme
 
 export async function askDidiPA<T extends z.ZodType>(
   tasks: Tasks, task: Task, operation: string, capability: string, input: Record<string, unknown>, schema: T,
-  beforeDispatch?: (client: Sql) => Promise<void>,
+  beforeDispatch?: (client: Sql) => Promise<void>, purpose: ActionInputPurpose = 'observation',
 ) {
   try {
     const reply = await new PARequests(tasks).requestWithId(task, operation, capability, input, json(schema), undefined, beforeDispatch);
     return { ...reply, response: schema.parse(reply.response) };
   } catch (error) {
-    if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions);
+    if (error instanceof PARequestRequired) throw new ActionPARequestRequired(error.message, error.choices, error.permissions, purpose);
     throw error;
   }
 }
@@ -45,7 +45,7 @@ export async function authorizeDidiPA(tasks: Tasks, task: Task, purpose: 'order'
     provider: 'DiDi', purpose, tools,
     authorizationUrl: didiMcpConsole, authorizationLabel: '申请或开通滴滴 MCP Key',
     instruction: 'Check your own DiDi MCP connection for the required tools. If it is missing, show the official authorization link in this conversation and keep this request pending while the user sets up their personal connection. Tell the user to return here after setup. Reply connected with an opaque reference for that connection only after checking it. Keep the key in the PA; never send it to EIGOS or ask the user to paste it into the chat.',
-  }, authorizationReply);
+  }, authorizationReply, undefined, 'authorization');
   return reply.response;
 }
 

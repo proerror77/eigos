@@ -22,7 +22,15 @@ Action 发单前按原起终点和所选车型向滴滴重新估价。价格变�
 
 从 `DidiImmediateRide` 可以沿 `route`、`order` 和 `approval` 回查路线、原单和 PA 输入审批。Machinery 可从即时叫车日志下钻到审批和原单，再沿 `watches` 查看跟单过程。
 
-该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车不需要创建定时行程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
+### 原单核对
+
+通过 `DidiImmediateRide.state` 分别查看供应商已受理待核验的 `submitted`、结果未知的 `unknown` 和已独立回查的 `ordered`。原 Task 的终态记录执行任务的结果。司机到达与行程完成继续看 `DidiRideOrder.watches`。已接受补参或观察回复时，`ActionConfirmation` 的 `confirmed` 记录本轮输入已接收。确认叫车使用独立的 `authorization` 请求，批准摘要和有效期显示在 `approvedQuote`。
+
+`ReconcileDidiImmediateRide` 接受原叫车对象 `{ ride }` 或原任务 `{ originalTaskId }`。平台连接在实际派发前登记有截止时间的回查排程。Worker 读已保存的原回执，按其订单号回查并更新同一对象及其 Machinery 历史。后续回查沿用原任务关联和当前权限。暂时缺少可关联的订单号时，操作保持未知。
+
+个人 PA 可通过同一 Action 核对原任务，使用 `DidiPA.answer` 响应 `didi.reconcile_order`。SDK 读取同一私有目录保存的原回执，或使用原 PA 已经传回的受理凭据，再按确切编号查询。缺少受理凭据时，请在原滴滴账号人工核实。PA 核对只需要原连接上的订单查询权限。
+
+该 Action 复用原 Task、PA 请求、来源读回和外部操作回执。即时叫车使用现有 Action 和回查排程。[Palantir Function-backed Actions](https://www.palantir.com/docs/foundry/action-types/function-actions-overview) · [Interface Action 约束](https://www.palantir.com/docs/foundry/interfaces/interface-action-type-constraints) · [滴滴 MCP](https://mcp.didichuxing.com/api)
 
 ## 取消已发订单
 

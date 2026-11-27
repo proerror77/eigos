@@ -1,3 +1,5 @@
+import { reconcileImmediateRideAction, reconcileImmediateRideFunction } from './didi-immediate-ride.js';
+
 /** Explicit DiDi pilot grants. PA quotation and tracking are read-only at the supplier. */
 export const didiPAAccountResources = new Set([
   'Eigos/source/Didi', 'Eigos/source/Amap', 'Eigos/source/PALocation',
@@ -17,6 +19,10 @@ export const didiPAOrderAccountResources = new Set([
   ...didiPAAccountResources,
   'Eigos/object/DidiImmediateRide',
   'Eigos/object/ActionConfirmation',
+  'Eigos/object/ActionConfirmationStateLog',
+  'Eigos/object/DidiImmediateRideStateLog',
+  'Eigos/function/' + reconcileImmediateRideFunction,
+  'Eigos/action/' + reconcileImmediateRideAction,
   'Eigos/function/bookDidiImmediateRide',
   'Eigos/function/bookDidiRideWithEndpoints',
   'Eigos/function/readDidiImmediateRide',

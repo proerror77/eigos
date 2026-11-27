@@ -9,7 +9,8 @@ import { Worker } from '../apps/worker/worker.js';
 import { createCapabilities } from '../packages/capabilities/index.js';
 import { didiPAReadCapability, didiPAReadTool, didiMcpConsole, didiPAAuthorizeCapability, withDidiPAReads } from '../packages/capabilities/didi/pa-read.js';
 import { didiPAOrderAccountResources, didiPAAccountResources } from '../packages/ontology/didi-pa-access.js';
-import { didiPAOrderCapability } from '../packages/capabilities/didi/pa-order.js';
+import { reconcileImmediateRideAction } from '../packages/ontology/didi-immediate-ride.js';
+import { didiPAOrderCapability, didiPAReconcileCapability } from '../packages/capabilities/didi/pa-order.js';
 import { didiEndpoint } from '../packages/capabilities/didi/contracts.js';
 import { DidiPA } from '../packages/sdk/didi-pa.js';
 import { Access, businessGrants, setGrants, syncAccountGrants } from '../packages/runtime/access.js';
@@ -34,7 +35,7 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
   }));
   const reference = digest('the customer PA connection');
   const orderId = 'synthetic-private-pa-order';
-  let sent = 0, checked = 0, loseReply = false;
+  let sent = 0, checked = 0, loseReply = false, readbackAvailable = false;
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await client.callTool({ name, arguments: args });
     assert(!result.isError, JSON.stringify(result.content));
@@ -68,6 +69,7 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
       async query(id) {
         assert.equal(id, orderId);
         checked++;
+        if (!readbackAvailable) throw new Error('Synthetic order readback unavailable');
         return { ...order(), state: 'reported', independentRead: true };
       },
     },
@@ -140,15 +142,31 @@ test('a waitlist-approved rider starts a DiDi Action over A2A and confirms one o
     assert(await worker.runOne('interactive'));
     const done = await call('get_task', { taskId: task.id });
     assert.equal(done.state, 'completed', done.error ?? JSON.stringify(done.result));
-    assert.equal(done.result.state, 'ordered');
+    assert.equal(done.result.state, 'submitted');
     assert.equal(done.result.sourceTaskId, task.id);
     assert.equal(done.result.order.orderId, orderId);
     assert.equal(done.result.order.evidence, 'pa_reported');
-    assert.equal(done.result.order.independentRead, true);
+    assert.equal(done.result.order.independentRead, false);
     assert.equal((await a2a('SendMessage', { message })).task.id, task.id);
     assert.equal((await a2a('GetTask', { id: task.id })).artifacts[0].parts[0].data.order.orderId, orderId);
     assert.equal(await worker.runOne('interactive'), false);
     assert.deepEqual([sent, checked], [1, 1]);
+    const recovery = await call('complete_with_action', { requestId: 'reconcile-original',
+      action: { action: reconcileImmediateRideAction, input: { originalTaskId: task.id } },
+      read: { function: 'readDidiImmediateRide', resultParameter: 'ride' },
+    });
+    const readback = await finishResponse(recovery.id, didiPAReconcileCapability);
+    assert.equal(readback.input.originalTaskId, task.id);
+    assert.equal(readback.input.acknowledgement.created.orderId, orderId);
+    readbackAvailable = true;
+    await pa.answer(recovery.id, signal);
+    assert(await worker.runOne('interactive'));
+    const verified = await call('get_task', { taskId: recovery.id });
+    assert.equal(verified.state, 'completed', verified.error ?? JSON.stringify(verified.result));
+    assert.equal(verified.result.state, 'ordered');
+    assert.equal(verified.result.order.orderId, orderId);
+    assert.equal(verified.result.order.independentRead, true);
+    assert.deepEqual([sent, checked], [1, 2]);
     const recorded = await f.db.query(`SELECT state FROM ${f.schema}.external_operations WHERE task_id=$1`, [task.id]);
     assert.deepEqual(recorded.rows, [{ state: 'confirmed' }]);
   } finally {

@@ -34,6 +34,7 @@ export const immediateRideTerms = z.strictObject({
   pickup: location, destination: location, expiresAt: time, fares: z.array(immediateFare).min(1).max(50),
 });
 export const immediateRideRef = z.strictObject({ ride: objectRefSchema });
+export const reconcileImmediateRideInput = z.union([immediateRideRef, z.strictObject({ originalTaskId: z.uuid() })]);
 export const immediateRideState = z.enum(['ordered', 'submitted', 'unknown', 'declined', 'quote_expired', 'price_changed', 'quote_unavailable']);
 const order = z.strictObject({
   ref: objectRefSchema, orderId: z.string().min(1).max(500), status: z.string(), independentRead: z.boolean(),
@@ -86,16 +87,16 @@ export function didiImmediateRideDefinition(parameters: Record<string, unknown>)
       parameters: json(immediateRideRef), returns: json(immediateRideResult), dependencies: scope,
     }, {
       apiName: reconcileImmediateRideFunction, description: reconcileDescription, source: 'Didi', edits: true,
-      parameters: json(immediateRideRef), returns: json(objectRefSchema), dependencies: {
-        ...scope, objectTypes: [...scope.objectTypes, 'Route', 'Place', 'PersonalPlaceVersion'],
-        linkTypes: [...scope.linkTypes, 'ImmediateRideRoute', 'RouteOrigin', 'RouteDestination',
+      parameters: json(reconcileImmediateRideInput), returns: json(objectRefSchema), dependencies: {
+        ...scope, objectTypes: [...scope.objectTypes, 'Route', 'Place', 'PersonalPlaceVersion', 'ActionConfirmation'],
+        linkTypes: [...scope.linkTypes, immediateApprovalLink, 'ImmediateRideRoute', 'RouteOrigin', 'RouteDestination',
           'RouteOriginPersonalPlace', 'RouteDestinationPersonalPlace'],
       },
     }],
     actionTypes: [{ apiName: bookImmediateRideAction, description, parameters,
       objectParameters: {}, submissionCriteria: [], function: functionName }, {
       apiName: reconcileImmediateRideAction, description: reconcileDescription,
-      parameters: json(immediateRideRef), objectParameters: { ride: immediateRideType }, submissionCriteria: [],
+      parameters: json(reconcileImmediateRideInput), objectParameters: {}, submissionCriteria: [],
       typeClasses: [{ kind: 'observation', name: 'readback' }], function: reconcileImmediateRideFunction,
     }],
   };

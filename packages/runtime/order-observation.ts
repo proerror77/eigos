@@ -26,11 +26,12 @@ export class OrderObservation {
     return digest([this.namespace, this.refreshAction, original]);
   }
 
-  async enqueue(ctx: FunctionContext, original: ObjectRef, client: Sql) {
+  async enqueue(ctx: FunctionContext, original: ObjectRef, client: Sql,
+    args: Record<string, unknown> = { [this.targetParameter]: original }) {
     const graph = new Objects(this.db, ctx.objects.model, ctx.objects.access, client);
     const now = Date.now();
     await this.schedules.enqueue(graph, {
-      id: this.scheduleId(original), action: this.refreshAction, arguments: { [this.targetParameter]: original },
+      id: this.scheduleId(original), action: this.refreshAction, arguments: args,
       runAt: new Date(now + minute).toISOString(),
       deadline: new Date(now + observationWindow).toISOString(),
       sourceTaskId: ctx.taskId,

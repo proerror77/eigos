@@ -7,7 +7,7 @@ import { readPrivateSourceFile } from '../core/private-source.js';
 import { didiToolInputs } from '../capabilities/didi/contracts.js';
 import { DidiReadError, type DidiMcpConnector } from '../capabilities/didi/connector.js';
 import type { DidiOperations, RideOrder } from '../capabilities/didi/operations.js';
-import { didiPAOrderCapability, didiPAOrderInput, didiPAOrderObservation, didiPAOrderReply,
+import { didiPAOrderCapability, didiPAOrderInput, didiPAOrderObservation, didiPAOrderReply, didiPAReconcileCapability, didiPAReconcileInput,
   type DidiPAOrderInput } from '../capabilities/didi/pa-order.js';
 import { didiMcpConsole, didiPAAuthorizeCapability, didiPAConnectionRef, didiPAReadCapability,
   didiPAReadTool, didiPAReceipt } from '../capabilities/didi/pa-read.js';
@@ -86,6 +86,28 @@ export class DidiPA {
         const denied = error instanceof DidiReadError && ['AUTH_REJECTED', 'PRIVATE_CREDENTIAL_UNAVAILABLE'].includes(error.code);
         return { status: denied ? 'authorization_required' : 'unavailable' };
       }
+    }
+    if (request.capability === didiPAReconcileCapability) {
+      const input = didiPAReconcileInput.parse(request.input);
+      const identity = proof(input);
+      if (!connection || connection.reference !== input.connectionRef) return { ...identity, status: 'unknown' };
+      const receipt = join(this.options.privateDirectory, digest(['didi-order', input.originalTaskId]) + '.json');
+      let local: Reply | undefined;
+      try {
+        local = didiPAOrderReply.parse(JSON.parse(await readPrivateSourceFile(receipt)));
+      } catch (error) { if (!missing(error)) throw error; }
+      if (local && digest(proof(local)) !== digest(identity))
+        throw new Conflict('The DiDi PA journal contains a different order for this task');
+      if (local?.status === 'submitted' && input.acknowledgement &&
+          digest(local.created) !== digest(input.acknowledgement.created))
+        throw new Conflict('The original DiDi acknowledgements disagree');
+      const original = local?.status === 'submitted' ? local : input.acknowledgement;
+      if (!original) return { ...identity, status: 'unknown' };
+      const checked = await connection.orders.query(original.created.orderId, signal).catch(() => undefined);
+      signal.throwIfAborted();
+      if (checked?.orderId !== original.created.orderId || checked.state !== 'reported' ||
+          !checked.independentRead || checked.evidence !== 'live') return original;
+      return { ...original, readback: observation(checked) };
     }
     if (request.capability !== didiPAOrderCapability || !permitDispatch)
       throw new Conflict('Use the DiDi order runner only for a pending order the user already approved');

@@ -258,6 +258,35 @@ test('reconciliation recovers the saved acknowledgement and reads the exact orig
   }
 });
 
+test('a scheduled readback projects a durable receipt after the original task is canceled before its Action commit', async () => {
+  const f = await setup();
+  try {
+    const task = await f.submit();
+    const offer = await f.paused(task.id);
+    const source = f.provider.source.orders!, query = source.query.bind(source);
+    source.query = async (orderId, signal) => {
+      await f.tasks.cancel(principal, task.id);
+      return query(orderId, signal);
+    };
+    await f.reply(task.id, offer);
+    assert.equal((await f.next(task.id)).state, 'canceled');
+    assert.equal(f.provider.flags.orderCreates, 1);
+    const graph = new Objects(f.db, f.model, f.access);
+    assert.equal((await graph.query({ type: 'DidiImmediateRide' })).items.length, 0);
+    source.query = query;
+    await f.db.query(`UPDATE ${f.schema}.scheduled_actions SET run_at=now() WHERE body->>'sourceTaskId'=$1`, [task.id]);
+    assert(await f.worker.runOne('scheduled'));
+    const [ride] = (await graph.query({ type: 'DidiImmediateRide' })).items;
+    assert.equal(ride?.properties.sourceTaskId, task.id);
+    assert.equal(ride?.properties.state, 'ordered');
+    const [original] = await graph.follow(ride!.ref, 'order');
+    assert.equal(original?.properties.orderId, 'synthetic-original-order');
+    assert.equal(f.provider.flags.orderCreates, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 test('moving a saved endpoint after a fare is reviewed prevents dispatch of that original booking', async () => {
   const f = await setup(true);
   try {

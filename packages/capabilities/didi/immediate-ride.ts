@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { Conflict, NotFound, digest } from '../../core/identity.js';
+import { Conflict, NotFound, SourceReadFailure, digest } from '../../core/identity.js';
 import {
   bookImmediateRideAction, immediateApprovalLink, immediateFare, immediateOrderLink, immediateRideApprovalCapability, immediateRideConfirmation,
-  immediateRideApproval, immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType, reconcileImmediateRideFunction,
+  immediateRideApproval, immediateRideRecord, immediateRideRef, immediateRideTerms, immediateRideType, reconcileImmediateRideAction, reconcileImmediateRideFunction, reconcileImmediateRideInput,
 } from '../../ontology/didi-immediate-ride.js';
 import { bookWithEndpoints, bookWithEndpointsFunction, immediateRideRouteLink, resolvedRideEndpoints,
   type ResolvedRideEndpoints } from '../../ontology/didi-ride-endpoints.js';
@@ -14,6 +14,8 @@ import { actionConfirmationRef } from '../../runtime/action-confirmation.js';
 import type { Database } from '../../runtime/database.js';
 import { ExternalOperations, UnknownExternalOperation } from '../../runtime/external-operations.js';
 import type { Functions, FunctionContext, FunctionHandler } from '../../runtime/functions.js';
+import { OrderObservation } from '../../runtime/order-observation.js';
+import { PermissionDenied } from '../../runtime/access.js';
 import { Objects } from '../../runtime/objects.js';
 import { PARequests } from '../../runtime/pa.js';
 import type { Sources } from '../../runtime/sources.js';
@@ -21,7 +23,7 @@ import type { DidiSource, SourceResolver, SourceResult } from './functions.js';
 import { prepareRideInquiry } from './inquiry.js';
 import { rideOrderSchema, type RideOrder } from './operations.js';
 import { authorizeDidiPA, didiPAConnection } from './pa-read.js';
-import { completeDidiPAOrder, didiPAOrderInput, didiPAOrderInstruction, didiPAOrderTools, savedDidiPAOrder, type DidiPAOrderInput } from './pa-order.js';
+import { completeDidiPAOrder, didiPAOrderInput, didiPAOrderInstruction, didiPAOrderTools, reconcileDidiPAOrder, savedDidiPAOrder, type DidiPAOrderInput } from './pa-order.js';
 
 const offerLifetime = 300_000;
 const coordinates = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
@@ -77,6 +79,7 @@ export function immediateDidiRideFunctions(
   db: Database, resolve: SourceResolver, sources: () => Sources, functions: () => Functions,
 ): ReadonlyMap<string, FunctionHandler> {
   const operations = new ExternalOperations(db);
+  const followup = new OrderObservation(db, reconcileImmediateRideAction, 'originalTaskId');
   const finishPA = async (context: FunctionContext, ride: ObjectRef, input: DidiPAOrderInput,
     guard?: Parameters<typeof completeDidiPAOrder>[3]) => {
     const result = await completeDidiPAOrder(db, context, input, guard);
@@ -168,6 +171,12 @@ export function immediateDidiRideFunctions(
       const receipt = await operations.run<DispatchReceipt>(task.owner, key, ride, async client => {
         await context.assertDispatch!(client);
         await guard(new Objects(db, context.objects.model, context.objects.access, client));
+        if (context.objects.model.actions.has(reconcileImmediateRideAction)) {
+          let allowed = true;
+          try { context.objects.access.action(context.objects.model, reconcileImmediateRideAction); }
+          catch (error) { if (!(error instanceof PermissionDenied)) throw error; allowed = false; }
+          if (allowed) await followup.enqueue(context, ride, client, { originalTaskId: task.id });
+        }
       }, async () => {
         const original = await orders.create(fresh, context.signal, async () => {
           await context.assertCurrent?.();
@@ -224,41 +233,56 @@ export function immediateDidiRideFunctions(
     [bookWithEndpointsFunction, book(bookWithEndpoints, true)],
     [reconcileImmediateRideFunction, async (raw, context) => {
       if (context.objects.model.scenario) throw new Conflict('Reconciliation requires the live Ontology');
-      const { ride } = immediateRideRef.parse(raw);
-      const booking = await readRide(context.objects, ride);
-      if (booking.state !== 'submitted' && booking.state !== 'unknown') return context.edit!(ride, async () => {});
-      const unchanged = () => context.edit!(ride, async () => {});
-      if (context.principal.memberAccess) return unchanged();
+      const input = reconcileImmediateRideInput.parse(raw);
+      const ride = 'ride' in input ? input.ride : immediateRef(input.originalTaskId);
+      const booking = await findRide(context.objects, ride);
+      const taskId = 'originalTaskId' in input ? input.originalTaskId : booking?.sourceTaskId;
+      if (!taskId || immediateRef(taskId).id !== ride.id) throw new Conflict('Reference the original DiDi ride or task');
+      const scheduled = followup.task(context, ride);
+      const pending = (graph: Objects) => scheduled && followup.advance(graph, scheduled, 'unavailable');
+      const unchanged = (mayRetry = false) => {
+        if (!booking && !scheduled) throw new Conflict('The original DiDi dispatch lacks a recoverable acknowledgement');
+        return context.edit!(ride, async graph => { if (mayRetry) await pending(graph); });
+      };
+      if (booking && booking.state !== 'submitted' && booking.state !== 'unknown') return unchanged();
+      if (context.principal.memberAccess) {
+        const recovered = await reconcileDidiPAOrder(db, context, taskId, immediateOperation(taskId));
+        if (!recovered) return unchanged();
+        const { input: terms, value, state, bindingId, requestId } = recovered;
+        return projectReconciliation(context, ride, taskId, {
+          pickup: terms.pickup, destination: terms.destination, selectedFare: terms.fare,
+          sourceAuthority: bindingId, state, updatedEstimateMinor: null,
+          approvedQuote: { quoteDigest: terms.quoteDigest, expiresAt: terms.expiresAt, requestId },
+        }, { value, bindingId }, terms.endpoints);
+      }
       let recovered;
       try {
         recovered = await operations.recover<DispatchReceipt>(context.principal.owner,
-          immediateOperation(booking.sourceTaskId), ride, context.objects);
+          immediateOperation(taskId), ride, context.objects);
       } catch (error) {
-        if (error instanceof UnknownExternalOperation) return unchanged();
+        if (error instanceof UnknownExternalOperation) return unchanged(true);
         throw error;
       }
       if (!recovered) return unchanged();
       const receipt = dispatchReceipt.parse(recovered);
-      const source = await resolve(context.principal.owner,
-        { bindingId: receipt.bindingId, orderId: receipt.order.orderId, readOnly: true });
+      let source: DidiSource;
+      try {
+        source = await resolve(context.principal.owner,
+          { bindingId: receipt.bindingId, orderId: receipt.order.orderId, readOnly: true });
+      } catch (error) {
+        if (scheduled && error instanceof SourceReadFailure) return unchanged(true);
+        throw error;
+      }
       const checked = await readOriginalOrder(context, receipt, source);
-      if (!checked) return unchanged();
-      return context.edit!(ride, async graph => {
-        const row = await graph.read(ride), current = immediateRideRecord.parse(row.properties);
-        if (current.state !== 'submitted' && current.state !== 'unknown') return;
-        if (current.sourceTaskId !== booking.sourceTaskId ||
-            current.sourceAuthority && current.sourceAuthority !== receipt.sourceAuthority)
-          throw new Conflict('The original ride connection changed');
-        await source.assertCurrent();
-        const patch = { state: 'ordered', pickup: receipt.pickup, destination: receipt.destination,
-          selectedFare: receipt.fare, sourceAuthority: receipt.sourceAuthority,
-          ...(receipt.approvedQuote ? { approvedQuote: receipt.approvedQuote } : {}),
-          ...(receipt.endpoints && savedRideRevisions(receipt.endpoints) ? { locationClassification: privateLocation } : {}) };
-        if (receipt.endpoints && !(await graph.follow(ride, 'route')).length)
-          await storeRoute(graph, ride, receipt.endpoints, receipt.pickup, receipt.destination);
-        await storeOrder(graph, ride, { value: checked, bindingId: receipt.bindingId }, receipt.sourceAuthority);
-        await graph.edit(ride, row.revision, patch);
-      });
+      return projectReconciliation(context, ride, taskId, {
+        state: checked ? 'ordered' : 'submitted', pickup: receipt.pickup, destination: receipt.destination,
+        selectedFare: receipt.fare, sourceAuthority: receipt.sourceAuthority, updatedEstimateMinor: null,
+        ...(receipt.approvedQuote ? { approvedQuote: receipt.approvedQuote } : {}),
+      }, { value: checked ?? receipt.order, bindingId: receipt.bindingId }, receipt.endpoints, async graph => {
+        if (!scheduled) return;
+        const latest = await findRide(graph, ride);
+        await followup.advance(graph, scheduled, latest?.state === 'ordered' ? 'terminal' : 'unavailable');
+      }, () => source.assertCurrent());
     }],
     ['readDidiImmediateRide', async (raw, context) => {
       const { ride } = immediateRideRef.parse(raw);
@@ -329,21 +353,54 @@ async function storeOrder(graph: Objects, ride: ObjectRef, order: { value: RideO
   if (!original) await graph.link({ type: immediateOrderLink, from: ride, to: ref });
 }
 
+async function findRide(graph: Reader, ride: ObjectRef) {
+  try { return await readRide(graph, ride); }
+  catch (error) { if (!(error instanceof NotFound)) throw error; }
+}
+
+async function storeNewRide(graph: Objects, ride: ObjectRef, taskId: string, fields: Fields,
+  order?: { value: RideOrder; bindingId: string }, endpoints?: ResolvedRideEndpoints, approvalRequestId?: string) {
+  const classified = endpoints && savedRideRevisions(endpoints) ? { locationClassification: privateLocation } : {};
+  await graph.create(ride, { ...fields, ...classified, id: ride.id, name: '滴滴即时叫车', sourceTaskId: taskId });
+  if (approvalRequestId && graph.model.links.has(immediateApprovalLink))
+    await graph.link({ type: immediateApprovalLink, from: ride, to: actionConfirmationRef(approvalRequestId) });
+  if (endpoints) await storeRoute(graph, ride, endpoints, fields.pickup!, fields.destination!);
+  if (order) await storeOrder(graph, ride, order, fields.sourceAuthority);
+}
+
+function projectReconciliation(context: FunctionContext, ride: ObjectRef, originalTaskId: string, fields: Fields,
+  order: { value: RideOrder; bindingId: string }, endpoints?: ResolvedRideEndpoints,
+  afterProject?: (graph: Objects) => Promise<void>, assertCurrent?: () => Promise<void>) {
+  return context.edit!(ride, async graph => {
+    const row = await graph.read(ride).catch(error => { if (!(error instanceof NotFound)) throw error; });
+    if (!row) {
+      await assertCurrent?.();
+      await storeNewRide(graph, ride, originalTaskId, fields, order, endpoints, fields.approvedQuote?.requestId);
+    } else {
+      const current = immediateRideRecord.parse(row.properties);
+      if (current.sourceTaskId !== originalTaskId ||
+          current.sourceAuthority && current.sourceAuthority !== fields.sourceAuthority)
+        throw new Conflict('The original ride connection changed');
+      if (current.state === 'unknown' || current.state === 'submitted' && fields.state === 'ordered') {
+        await assertCurrent?.();
+        if (endpoints && !(await graph.follow(ride, 'route')).length)
+          await storeRoute(graph, ride, endpoints, fields.pickup!, fields.destination!);
+        await storeOrder(graph, ride, order, fields.sourceAuthority);
+        await graph.edit(ride, row.revision, { ...fields,
+          ...(endpoints && savedRideRevisions(endpoints) ? { locationClassification: privateLocation } : {}) });
+      }
+    }
+    await afterProject?.(graph);
+  });
+}
+
 function save(context: FunctionContext, ride: ObjectRef, fields: Fields,
   order?: { value: RideOrder; bindingId: string }, endpoints?: ResolvedRideEndpoints) {
   const { task } = interactiveTask(context);
   return context.edit!(ride, async graph => {
-    const existing = await readRide(graph, ride).catch(error => {
-      if (error instanceof NotFound) return undefined;
-      throw error;
-    });
-    if (existing) return;
-    const personalPlaceRevisions = endpoints && savedRideRevisions(endpoints);
-    const classified = personalPlaceRevisions ? { locationClassification: privateLocation } : {};
-    await graph.create(ride, { ...fields, ...classified, id: ride.id, name: '滴滴即时叫车', sourceTaskId: task.id });
-    if (task.input.placeContinuation?.requestId === context.operationId && graph.model.links.has(immediateApprovalLink))
-      await graph.link({ type: immediateApprovalLink, from: ride, to: actionConfirmationRef(context.operationId!) });
-    if (endpoints) await storeRoute(graph, ride, endpoints, fields.pickup!, fields.destination!);
-    if (order) await storeOrder(graph, ride, order, fields.sourceAuthority);
+    if (await findRide(graph, ride)) return;
+    const wait = task.input.placeContinuation;
+    await storeNewRide(graph, ride, task.id, fields, order, endpoints,
+      wait?.requestId === context.operationId ? wait?.requestId : undefined);
   });
 }
