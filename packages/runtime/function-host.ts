@@ -74,11 +74,23 @@ export class FunctionHostClient {
     }) as FunctionUpload;
   }
 
-  /** Calls the component with SHA-256 `sha256` on a JSON `input`. A refused call throws; a call that ran returns its outcome. */
-  async invoke(sha256: string, input: string, limits: FunctionLimits, signal?: AbortSignal): Promise<FunctionOutcome> {
+  /**
+   * Calls the component with SHA-256 `sha256` on a JSON `input`. A refused call throws; a call that ran returns its
+   * outcome. `callback` is where the call reads the Ontology, on a host of protocol 2.
+   */
+  async invoke(sha256: string, input: string, limits: FunctionLimits, signal?: AbortSignal,
+    callback?: { url: string; token: string }): Promise<FunctionOutcome> {
     return await this.request('/invoke', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sha256, input, limits }), signal,
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sha256, input, limits, ...(callback ? { callback } : {}) }), signal,
     }) as FunctionOutcome;
+  }
+
+  private protocol?: Promise<number>;
+  /** Whether the host answers protocol `level`: 2 adds the Ontology callback. A restarted host is reached by a new client. */
+  async supports(level: number) {
+    this.protocol ??= this.health().then(health => health.protocol, () => 0);
+    return await this.protocol >= level;
   }
 
   /** Stops a host this client started. */
