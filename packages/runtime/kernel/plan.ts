@@ -55,7 +55,8 @@ export type KernelSet =
   | { op: 'refs'; refs: ObjectRef[]; enrich?: false }
   | { op: 'union' | 'intersect'; sets: KernelSet[] }
   | { op: 'except'; left: KernelSet; right: KernelSet }
-  | { op: 'traverse'; set: KernelSet; steps: KernelMove[][] };
+  | { op: 'traverse'; set: KernelSet; steps: KernelMove[][] }
+  | { op: 'boundedTraverse'; set: KernelSet; steps: KernelMove[][]; limit: number };
 /** One step of a derived relationship path; a link whose label the principal may not see reaches nothing. */
 export type KernelStep = { link: string; forward: boolean; target: string; visible?: false };
 /** A derived value as the kernel computes it; see `kernel/src/main.rs`. */
@@ -641,7 +642,8 @@ async function compile(scope: Scope, graph: Objects, node: SetExpression, depth:
         steps.push(moves);
         types = next;
       }
-      return { set: { op: 'traverse', set: start.set, steps }, types };
+      return { set: node.frontierLimit === undefined ? { op: 'traverse', set: start.set, steps }
+        : { op: 'boundedTraverse', set: start.set, steps, limit: node.frontierLimit }, types };
     }
     case 'saved':
     case 'machinery':

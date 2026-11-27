@@ -636,6 +636,7 @@ enum SetNode {
   Except { left: Box<SetNode>, right: Box<SetNode> },
   /// Each step lists one move per possible source type; a set's objects of other types do not continue.
   Traverse { set: Box<SetNode>, steps: Vec<Vec<Move>> },
+  BoundedTraverse { set: Box<SetNode>, steps: Vec<Vec<Move>>, limit: usize },
 }
 
 #[derive(Deserialize)]
@@ -1102,6 +1103,50 @@ fn distinct_union(ctx: &SessionContext, frames: Vec<DataFrame>) -> Result<DataFr
   iter.try_fold(first, |acc, next| acc.union(next)).map_err(internal)?.distinct().map_err(internal)
 }
 
+/// Cardinality estimates order work; authorization, membership and read evidence are evaluated for every operand.
+fn estimated_rows(snapshot: &Snapshot, node: &SetNode) -> usize {
+  let population = |kind: &str| snapshot.types.get(kind).map_or(0, |t| t.base_rows.saturating_add(t.changed.len()));
+  match node {
+    SetNode::Empty => 0,
+    SetNode::Refs { refs, .. } => refs.len(),
+    SetNode::Scan { r#type, filter, .. } => match filter {
+      Some(Predicate::Const { value: false }) => 0,
+      Some(Predicate::Eq { column, .. }) if column == "$id" => 1,
+      Some(Predicate::In { column, values }) if column == "$id" => values.len(),
+      _ => population(r#type),
+    },
+    SetNode::Union { sets } => sets.iter().map(|s| estimated_rows(snapshot,s)).fold(0,usize::saturating_add),
+    SetNode::Intersect { sets } => sets.iter().map(|s| estimated_rows(snapshot,s)).min().unwrap_or(0),
+    SetNode::Except { left, .. } => estimated_rows(snapshot,left),
+    SetNode::Traverse { set, steps } | SetNode::BoundedTraverse { set, steps, .. } => {
+      steps.iter().fold(estimated_rows(snapshot,set), |current, step| {
+        step.iter().map(|m| {
+          let edges = snapshot.edges.get(&m.link).map_or(0, |link| link.base_rows.saturating_add(link.changed.len()));
+          current.saturating_mul(edges).div_ceil(population(&m.source).max(1)).min(population(&m.target))
+        }).fold(0,usize::saturating_add)
+      })
+    }
+  }
+}
+
+/// Consume visible target batches only up to the first excess distinct identity. Never return a truncated complete set.
+async fn bounded_frontier(ctx: &SessionContext, frames: Vec<DataFrame>, limit: usize) -> Result<DataFrame, Failure> {
+  let mut seen = HashSet::new();
+  for frame in frames {
+    let frame = frame.select(vec![cast(column("$type"), DataType::Utf8), cast(column("$id"), DataType::Utf8)]).map_err(internal)?;
+    let mut stream = frame.execute_stream().await.map_err(internal)?;
+    while let Some(batch) = stream.try_next().await.map_err(internal)? {
+      let types = batch.column(0).as_string::<i32>();
+      let ids = batch.column(1).as_string::<i32>();
+      for row in 0..batch.num_rows() {
+        seen.insert((types.value(row).to_owned(),ids.value(row).to_owned()));
+        if seen.len() > limit { return Err(fallback("traversal exceeds the selected frontier limit")); }
+      }
+    }
+  }
+  refs_frame(ctx,&seen.into_iter().collect::<Vec<_>>())
+}
+
 /// Evaluates a set node and records the rows the reference reads for it: a scan's matches (every readable row when its
 /// filter reads derived values), the existing references, and every traversal step's targets.
 fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> futures_util::future::BoxFuture<'a, Result<DataFrame, Failure>> {
@@ -1133,15 +1178,24 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
         distinct_union(ctx, frames)
       }
       SetNode::Intersect { sets } => {
-        let mut iter = sets.iter();
+        let mut operands: Vec<_> = sets.iter().collect();
+        operands.sort_by_cached_key(|s| estimated_rows(snapshot,s));
+        let mut iter = operands.into_iter();
         let first = iter.next().ok_or_else(|| invalid("Empty intersection"))?;
         let mut frame = set_frame(snapshot, owner, first).await?;
-        for s in iter { frame = frame.intersect(set_frame(snapshot, owner, s).await?).map_err(internal)?; }
-        frame.distinct().map_err(internal)
+        for other in iter {
+          frame = frame.join(set_frame(snapshot,owner,other).await?, JoinType::LeftSemi, &["$key"], &["$key"], None).map_err(internal)?;
+        }
+        Ok(frame)
       }
-      SetNode::Except { left, right } => set_frame(snapshot, owner, left).await?
-        .except(set_frame(snapshot, owner, right).await?).map_err(internal)?.distinct().map_err(internal),
-      SetNode::Traverse { set, steps } => {
+      SetNode::Except { left, right } => {
+        let left_small = estimated_rows(snapshot,left) <= estimated_rows(snapshot,right);
+        let a = set_frame(snapshot,owner,left).await?;
+        let b = set_frame(snapshot,owner,right).await?;
+        if left_small { a.join(b, JoinType::LeftAnti, &["$key"], &["$key"], None).map_err(internal) }
+        else { b.join(a, JoinType::RightAnti, &["$key"], &["$key"], None).map_err(internal) }
+      }
+      SetNode::Traverse { set, steps } | SetNode::BoundedTraverse { set, steps, .. } => {
         let mut current = set_frame(snapshot, owner, set).await?;
         for step in steps {
           let mut frames = Vec::new();
@@ -1161,7 +1215,10 @@ fn set_frame<'a>(snapshot: &'a Snapshot, owner: &'a Ctx, node: &'a SetNode) -> f
             owner.read(&m.target, if m.candidates { reached } else { targets.clone() }, true)?;
             frames.push(as_refs(targets, &m.target)?);
           }
-          current = distinct_union(ctx, frames)?;
+          current = match node {
+            SetNode::BoundedTraverse { limit, .. } => bounded_frontier(ctx,frames,*limit).await?,
+            _ => distinct_union(ctx,frames)?,
+          };
         }
         Ok(current)
       }

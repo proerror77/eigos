@@ -104,6 +104,24 @@ test('the query kernel returns the reference result for every supported Object S
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
+test('bounded traversal detects an oversized intermediate step even when the final set contracts', { skip: !binary }, async () => {
+  const f = await setup();
+  try {
+    const start = { op:'refs', objects:[place('p1')] };
+    const path = [{link:'departingRoutes'},{link:'origin'}];
+    const traverse = (frontierLimit:number) => ({op:'traverse',set:start,path,frontierLimit});
+    const exact = { set:traverse(3),limit:1 };
+    const ref = await f.sets.evaluate(f.access,f.model,exact);
+    const result = await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,exact as never);
+    assert(result);
+    assert.deepEqual(values(result.items),values(ref.items));
+    assert.equal(result.total,1);
+    const tooWide = {set:traverse(2),limit:1};
+    assert.equal(await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,tooWide as never),undefined);
+    await assert.rejects(f.sets.evaluate(f.access,f.model,tooWide),/frontier limit/);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
 test('the query kernel aggregates like the reference', { skip: !binary }, async () => {
   const f = await setup();
   try {

@@ -775,7 +775,7 @@ export class Objects {
     };
   }
   /** Object Set frontiers have already been read within this transaction. Recheck both endpoints in the join. */
-  async followSet(sourceType: string, ids: string[], link: string, as: string | undefined, maximum: number) {
+  async followSet(sourceType: string, ids: string[], link: string, as: string | undefined, maximum: number, explicitFrontier = false) {
     this.requireExclusive('set query');
     const nav = this.model.navigation(sourceType, link, as);
     if ([sourceType, nav.target].some(type => type === scenarioMetadataType || processLogTarget(this.model, type))
@@ -801,7 +801,7 @@ export class Objects {
       WHERE l.owner=$1 AND l.projection=$2 AND l.type=$5 AND l.${from}_type=$3 AND l.${from}_id=ANY($4::text[])
         AND s.type=$3 AND ${sourcePolicy} AND o.type=$6 AND ${targetPolicy}
       ORDER BY o.type,o.id LIMIT $7`, values, this.client);
-    if (result.rows.length > maximum) throw new Conflict('Object set exceeds the complete evaluation limit');
+    if (result.rows.length > maximum) throw new Conflict(explicitFrontier ? 'Traversal exceeds the selected frontier limit' : 'Object set exceeds the complete evaluation limit');
     const records = result.rows.map(row => this.row(row));
     await this.linkedSecurityReads(records);
     return records.map(record => this.visible(record));

@@ -334,7 +334,11 @@ export async function followWithKernel(kernel: KernelClient, model: PublishedOnt
   if (!version) return undefined;
   const plan = await compileFollow(model, access, graph, input.ref, input.link, input.view);
   if (!plan) return undefined;
-  const response = await kernel.page(access.principal.owner, plan, 0, input.maximum + 1, version);
+  // One source and a single-valued link already bound the frontier by construction.
+  const many = model.navigation(input.ref.type,input.link,input.view).cardinality === 'many';
+  const bounded = many && plan.set.op === 'traverse'
+    ? { ...plan, set: { ...plan.set, op: 'boundedTraverse' as const, limit: input.maximum } } : plan;
+  const response = await kernel.page(access.principal.owner, bounded, 0, input.maximum + 1, version);
   if (!response || !observeReads(access, model, plan, response.reads) || response.total > input.maximum) return undefined;
   const refs = [...response.refs].sort((left, right) => Buffer.compare(Buffer.from(left.id), Buffer.from(right.id)));
   const objects = await hydrate(graph, refs);
