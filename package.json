@@ -35,6 +35,7 @@
     "start:indexer": "node --env-file-if-exists=.env dist/apps/indexer/main.js",
     "dev:indexer": "node --env-file-if-exists=.env --import tsx apps/indexer/main.ts",
     "embeddings:warm": "node --env-file-if-exists=.env --import tsx scripts/warm-embeddings.ts",
+    "package:vm": "node scripts/package-vm.mjs",
     "build:engine": "node scripts/build-engine.mjs"
   },
   "dependencies": {

@@ -1,0 +1,21 @@
+[Unit]
+Description=EIGOS %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=eigos
+Group=eigos
+WorkingDirectory=/opt/eigos/current
+EnvironmentFile=/etc/eigos/installation.env
+ExecStart=/usr/bin/node apps/eigos-vm.js %i
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+StateDirectory=eigos
+Environment=EIGOS_STATE_DIR=/var/lib/eigos
+
+[Install]
+WantedBy=multi-user.target
