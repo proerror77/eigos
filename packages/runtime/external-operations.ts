@@ -3,6 +3,7 @@ import { Conflict, digest } from '../core/identity.js';
 import { Database, type Sql } from './database.js';
 import { PermissionDenied, type Requirement } from './access.js';
 import type { Objects } from './objects.js';
+import { ActionWriteBudgets } from './provider-budgets.js';
 
 type Reader = Pick<Objects, 'access' | 'read'>;
 
@@ -15,7 +16,10 @@ export class UnknownExternalOperation extends Conflict {}
 /** Provider mutations are recorded before dispatch. A lost response is an
  * unresolved original operation, never permission to submit another order. */
 export class ExternalOperations {
-  constructor(private readonly db: Database) {}
+  private readonly writeBudgets: ActionWriteBudgets;
+  constructor(private readonly db: Database) {
+    this.writeBudgets = new ActionWriteBudgets(db);
+  }
   async inspect(owner: string, key: string, client?: Sql) {
     const row = (
       await this.db.query(
@@ -147,5 +151,7 @@ export class ExternalOperations {
     );
     if (!claimed.rowCount)
       throw new UnknownExternalOperation('Original external operation already exists; inspect it without resubmitting');
+    // The claim and the charge commit together. A replay, permission failure or exhausted burst cannot spend a token.
+    await this.writeBudgets.take(owner, client);
   }
 }

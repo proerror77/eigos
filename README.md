@@ -39,7 +39,11 @@ Worker 的并发和公平（运行时预算 06.1、06.2）：
 
 供应商速率（06.3）用 `EIGOS_PROVIDER_RATES` 配置，例如 `{"Didi":{"perMinute":60,"burst":2}}`。键是已发布 Function 的 `source` 名称，区分大小写。Gateway 和 Worker 应读相同的配置。每个 owner 和 source 共享一个 PostgreSQL 令牌桶，合法调用消耗一个令牌，未列出的 source 不限速。预算耗尽时，Worker 延后任务到可重试时刻，直接 HTTP 调用返回 429，MCP 工具错误的结构化状态为 429。
 
-升级时建好 `provider_budgets`，给配置了速率且调用 source Function 的 Gateway、Worker 和 Indexer 数据库角色授予 SELECT、INSERT、UPDATE。`EIGOS_DB_POOL_MAX` 按进程配置主 PostgreSQL 连接池，默认 8。若增加 Worker 槽数，也要核对连接池容量。当前速率预算覆盖声明 `source` 的 Function 调用，直接由 Action 发起的供应商写入仍有各自的执行约束。
+累计调用数配额可通过 `EIGOS_PROVIDER_QUOTAS` 单独启用，例如 `{"Didi":{"period":"day","calls":500}}`。每个 owner 和 source 在 UTC 自然日（`day`）或自然月（`month`）内共享额度。预算统计获准发起的调用，包括供应商后续失败的尝试。配置同时启用另一个速率预算时，两个预算均通过才记用量。未配置的供应商无需修改。
+
+外部 Action 写入可用 `EIGOS_ACTION_WRITE_RATES` 单独启用，例如 `{"Eigos/CancelDidiRideOrder":{"perMinute":10,"burst":2}}`。键为 Ontology ID 和 Action 名。账本按 owner 与 Action 隔离。同步外部派发在记录首次派发的同一事务扣减，已确认操作的回放不再扣减。提交后排队的副作用在调用处理器前扣减，额度不足时保留原副作用和幂等键，延后执行。
+
+升级时建好 `provider_budgets`、`provider_quotas` 和 `action_write_budgets`。给开启相应预算的 Gateway、Worker 和 Indexer 数据库角色授予 SELECT、INSERT、UPDATE。各进程应使用相同的预算配置。`EIGOS_DB_POOL_MAX` 按进程配置主 PostgreSQL 连接池，默认 8。若增加 Worker 槽数，也要核对连接池容量。
 
 每次 CI 都会构建这两个镜像，但不发布。`scripts/container-smoke.sh` 以非 root 用户、在没有任何配置的情况下运行 Gateway、Worker 和 Indexer 的入口。每个入口都必须先加载完全部依赖，并停在配置检查上，才算通过。镜像只能手动发布：在 Actions 中运行 Release images，并填写 main 上 CI 已通过的完整提交号。镜像推送到 `ghcr.io/<仓库>/gateway` 和 `ghcr.io/<仓库>/worker`，标签为 `sha-<提交号>`。同一标签不会被覆盖，部署仍须单独授权。
 
