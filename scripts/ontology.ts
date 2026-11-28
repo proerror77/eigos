@@ -26,6 +26,9 @@ if (process.env.EIGOS_SOLUTION_MANIFEST === undefined &&
       if (typeof module.project !== 'function') throw new Error('Transformation module must export project(ref, properties)');
       transform = module.project as ProjectionTransform;
     }
+    if ((await metadata.get(targetRelease)).document.id !== installation.model.document.id) {
+      throw new Error('Select a release from this installation');
+    }
     const published = await metadata.rollback(targetRelease, bindings, access, transform ? { transform } : undefined);
     await installation.afterActivation?.(db, published);
     console.log(JSON.stringify({

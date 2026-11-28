@@ -1,10 +1,10 @@
 {
   "version": "0.3.0",
-  "source": "dbd04c2223a30cb5d6aabfde5b62a8116a2e758c",
+  "source": "5b8a42ce5a28d097adb798660b78544d32e8361e",
   "artifacts": {
-    "mdn-foundry-engine-0.3.0.tgz": "9fb086ebc9d8c00ebec21d25075a3801fad024d33c4580ada1f948407546d86c",
+    "mdn-foundry-engine-0.3.0.tgz": "ec6840624627c1cba34dc8531669ea09bf25bcc04003d8bf34c1fcc4f03cdb95",
     "mdn-foundry-sdk-0.3.0.tgz": "69114b8fe20dd5e303d53b08d6f5d601475cc8d02e005df2876df055ac39d789",
-    "mdn-foundry-native-src-0.3.0.tar.gz": "e497bd98f46df774cc68dfffcc8671b034f4ceb1f2d07ae4d7dd23203898c9f2"
+    "mdn-foundry-native-src-0.3.0.tar.gz": "8f0cf37000a3d8df044177fff7148dfe6ce9c030decffd6a9120463bc0588a35"
   },
   "repository": "proerror77/MDN-Man-Do-Nothing-Foundry"
 }

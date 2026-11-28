@@ -187,6 +187,23 @@ test('ontology rollback prepares a fresh candidate projection from a retired rel
     assert.notEqual(output.release, nextEigos.release);
     const activeAfterCli = await f.metadata.active('Eigos');
     assert.equal(activeAfterCli.release, output.release);
+
+    // Reject rolling back a release belonging to a different ontology
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        ['--import', 'tsx', 'scripts/ontology.ts', 'rollback', v2.release],
+        {
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.EIGOS_TEST_DATABASE_URL,
+            EIGOS_PG_SCHEMA: f.schema,
+          },
+          timeout: 20000,
+        },
+      ),
+      /Select a release from this installation/,
+    );
   } finally {
     await f.close();
   }
