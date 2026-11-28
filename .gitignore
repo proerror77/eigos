@@ -68,3 +68,5 @@ __pycache__/
 /packages/sdk/*.d.ts
 /scripts/*.js
 /scripts/*.d.ts
+/packages/function-test/*.js
+/packages/function-test/*.d.ts
