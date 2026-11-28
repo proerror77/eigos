@@ -43,6 +43,7 @@ jobs:
         with:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
+      - run: node scripts/materialize-foundry.mjs
       - name: Build the kernel from the exact source
         run: |
           cargo build --release --locked --manifest-path kernel/Cargo.toml

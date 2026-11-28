@@ -8,6 +8,8 @@ EIGOS 通过共享 PostgreSQL 本体提供对象集查询、Function 和 Action�
 
 客户独立环境的制品、数据库角色、安装回执及双环境验收见 [EIGOS VM 安装指南](docs/guides/installed-engine.md#linux-vm-发行与隔离验收)。
 
+引擎和通用 SDK 由 [MDN Man Do Nothing Foundry](https://github.com/proerror77/MDN-Man-Do-Nothing-Foundry) 独立交付。EIGOS 的依赖锁和仓库外 PA 接入见 [Foundry SDK](docs/guides/foundry-sdk.md)。
+
 ## 启动
 
 使用 Node.js 22.22.3、PostgreSQL 17 和 npm。

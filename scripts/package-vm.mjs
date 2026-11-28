@@ -12,6 +12,10 @@ const core = join(root, 'engine'),
   solution = join(root, 'solution');
 await cp('dist/engine', core, { recursive: true });
 for (const name of ['package.json', 'package-lock.json', '.npmrc']) await cp(name, join(core, name));
+// The installed VM already contains its locked compiled modules.
+const runtimePackage = JSON.parse(await readFile(join(core,'package.json'),'utf8'));
+delete runtimePackage.scripts.postinstall;
+await writeFile(join(core,'package.json'),JSON.stringify(runtimePackage)+'\n');
 const common = await inventory(core);
 for (const dir of ['apps', 'packages']) {
   // The compiled EIGOS entry and trusted connectors resolve shared modules in the installed Engine.

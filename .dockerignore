@@ -3,7 +3,10 @@
 !package-lock.json
 !.npmrc
 !tsconfig.json
-!tsconfig.engine.json
+!vendor/
+!vendor/mdn-foundry/
+!vendor/mdn-foundry/**
+!scripts/materialize-foundry.mjs
 !Dockerfile
 !.dockerignore
 !apps/

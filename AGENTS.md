@@ -4,7 +4,7 @@
 
 ## 架构
 
-- 语义定义集中在 `packages/ontology/`，运行层在 `packages/runtime/`，来源连接器在 `packages/capabilities/`。Gateway、Worker 和 Indexer 共用同一个 PostgreSQL schema，按发布定义解释对象与操作；供应商的业务步骤写在连接器和已发布的 Function、Action 里。
+- EIGOS 业务定义位于 `packages/ontology/` 和 `packages/solutions/eigos/`，来源连接器位于 `packages/capabilities/`。通用 Engine、SDK、Kernel 与 Function Host 在 MDN Man Do Nothing Foundry 仓库维护；本仓库通过 `vendor/mdn-foundry/manifest.json` 锁定制品，安装后展开的上游模块用于编译与运行。Gateway、Worker 和 Indexer 共用同一个 PostgreSQL schema，按发布定义解释对象与操作；供应商的业务步骤写在连接器和已发布的 Function、Action 里。
 - 改变 Ontology、Interface、Action、Machinery、Scenario、动态排程或自动化的语义或契约前，先读架构文档的对应小节和它引用的 Palantir 官方文档，再映射到现有实现。EIGOS 按 Palantir 的同名概念实现这些语义，所以在 PR 描述里写明依据链接和实现边界。不改变语义或契约的修复不需要重新查阅。
 - 复用发布模型、调用契约、权限和 Action 执行，不新增平行引擎或领域专用运行协议。单项能力直接调用 Function 或 Action；跨服务依赖由 Agent 或已发布逻辑协调，有时间或资源取舍时用排程，需要比较或审阅拟议编辑时才用 Scenario。
 

@@ -22,6 +22,7 @@ export async function grantVmRuntime(db: Database, role: string, client: Sql) {
     GRANT SELECT ON ALL TABLES IN SCHEMA ${s} TO ${grantee};
     GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${s} TO ${grantee};
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${tables('objects links source_values object_edits tasks task_turns pa_requests source_calls external_operations scheduled_actions observation_interests action_effects action_undo_requests index_streams index_transactions materializations materialized_links materialized_objects process_notifications workflows workflow_steps workflow_runs object_rules rule_matches change_subscriptions scenarios scenario_actions scenario_sessions scenario_links scenario_objects scenario_approvals semantic_indexes semantic_vectors provider_budgets function_invocations')} TO ${grantee};
+    GRANT INSERT,UPDATE ON ${s}.resource_reservations TO ${grantee};
     GRANT INSERT ON ${tables('actions action_changes task_inbox_events edit_history link_history change_commits execution_trace machinery_history')} TO ${grantee};
     GRANT INSERT(owner,email_hash), UPDATE(approved_at,revoked_at,email_hash,agent_token_hash) ON ${s}.accounts TO ${grantee};
     GRANT UPDATE(redeemed_by) ON ${s}.member_invitations TO ${grantee};

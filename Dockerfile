@@ -1,8 +1,10 @@
 FROM node:22.22.3-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
+COPY vendor/mdn-foundry ./vendor/mdn-foundry
+COPY scripts/materialize-foundry.mjs ./scripts/
 RUN npm ci --no-audit --no-fund
-COPY tsconfig.json tsconfig.engine.json ./
+COPY tsconfig.json ./
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts

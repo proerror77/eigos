@@ -56,11 +56,11 @@ test('runtime modules stay provider-neutral outside listed compatibility contrac
   const provider = /\.\.\/capabilities\/[\w-]+|hotel\w*|amap\w*|didi\w*|fliggy|meituan|dianping|rollinggo|\bluma\b|luckin|stripe|taobao|shopify|xiaohongshu|variflight|flightradar|fr24|mapPlace\w*/gi;
   // Existing clients and persisted tasks still send these public request and clarification fields.
   const compatibility: Record<string, string[]> = {
-    'clarification.ts': ['Amap', 'amapPlaceAmendmentSchema', 'DiDi', 'MapPlace', 'mapPlaceCorrectionSchema', 'mapPlaceCorrectionsSchema'],
-    'task-input.ts': ['HotelWorkflow', 'mapPlaceCorrections', 'mapPlaceCorrectionsSchema'],
+    'clarification.js': ['Amap', 'amapPlaceAmendmentSchema', 'DiDi', 'MapPlace', 'mapPlaceCorrectionSchema', 'mapPlaceCorrectionsSchema'],
+    'task-input.js': ['HotelWorkflow', 'mapPlaceCorrections', 'mapPlaceCorrectionsSchema'],
   };
   const directory = new URL('../packages/runtime/', import.meta.url);
-  for (const file of readdirSync(directory).filter(name => name.endsWith('.ts'))) {
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.js'))) {
     const found = new Set([...readFileSync(new URL(file, directory), 'utf8').matchAll(provider)].map(match => match[0]));
     assert.deepEqual([...found].sort(), [...(compatibility[file] ?? [])].sort(), file);
   }
