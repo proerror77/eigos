@@ -889,7 +889,7 @@ async function renderFunctionInvocations() {
           item.status === 'returned' ? '成功' : item.errorCode,
           item.durationMs + ' ms', item.hostMs === null ? null : item.hostMs + ' ms',
           item.fuelUsed?.toLocaleString(), item.modelUsage?.map(row => row.alias + ' · 输入 ' + row.inputTokens + ' / 输出 ' + row.outputTokens
-            + (row.reportedCalls < row.calls ? '（' + (row.calls - row.reportedCalls) + ' 次未报告）' : '')).join('，'), callbackText(item.callbacks),
+            + (row.reportedCalls < row.calls ? '（' + (row.calls - row.reportedCalls) + ' 次无完整报告）' : '')).join('，'), callbackText(item.callbacks),
         ]),
       ) : empty('过去 30 天没有此函数的调用记录。'),
       ...(data.cursor ? [button('更早的调用', () => load(data.cursor))] : []),
