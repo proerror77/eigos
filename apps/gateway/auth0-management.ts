@@ -1,13 +1,18 @@
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 
-/** What the account portal asks of the Auth0 Management API. The client behind it needs the `update:users` scope. */
+/** What the account portal asks of the Auth0 Management API. The client behind it needs `update:users` (and `delete:grants` for grant revocation). */
 export interface Auth0Management {
   /**
    * Has Auth0 send the verification email of the Auth0 user `subject` again, for the member portal client, so that its link leads back to
    * the portal. The portal logs the message of a plain `Error` that this rejects with, so such a message names no token, secret or user.
    */
   resendVerification(subject: string): Promise<void>;
+  /**
+   * Revokes Auth0 OAuth grants for `subject` (for example after an account-linking merge). Uses the same sanitized error contract as
+   * `resendVerification`: any plain `Error` message names only the HTTP status, never a token, secret or user.
+   */
+  revokeUserGrants?(subject: string): Promise<void>;
 }
 
 const tokenAnswer = z.object({ access_token: z.string().min(1), expires_in: z.number() });
@@ -54,6 +59,17 @@ export function auth0Management(config: Config, fetcher: typeof fetch = fetch): 
       // A token that Auth0 rejects is dropped, so that the next request asks for a new one instead of waiting for the old one to expire.
       if (response.status === 401) held = undefined;
       if (!response.ok) throw new Error(`Auth0 verification email request failed with status ${response.status}`);
+    },
+    async revokeUserGrants(subject) {
+      const url = new URL('api/v2/grants', base);
+      url.searchParams.set('user_id', subject);
+      const response = await fetcher(url, {
+        method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
+        headers: { Authorization: `Bearer ${await token()}` },
+      });
+      await response.body?.cancel();
+      if (response.status === 401) held = undefined;
+      if (!response.ok) throw new Error(`Auth0 grant revocation request failed with status ${response.status}`);
     },
   };
 }

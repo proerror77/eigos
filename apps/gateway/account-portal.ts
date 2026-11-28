@@ -4,7 +4,7 @@ import { createRemoteJWKSet, errors, jwtVerify, SignJWT, type JWTVerifyGetKey } 
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { digest } from '../../packages/core/identity.js';
-import { Accounts, emailDigest, newAccountSecret } from '../../packages/runtime/accounts.js';
+import { Accounts, emailDigest, newAccountSecret, type Account } from '../../packages/runtime/accounts.js';
 import type { Auth0Management } from './auth0-management.js';
 import { betaAccountPage, type BetaStep } from './beta-account-page.js';
 import { rateLimit } from './rate-limit.js';
@@ -145,9 +145,72 @@ const copyPrompts = `for (const button of document.querySelectorAll('[data-copy-
 }`;
 const copyPromptHash = createHash('sha256').update(copyPrompts).digest('base64');
 
+async function ensureApproved(accounts: Accounts, owner: string, current?: Account) {
+  const account = current ?? await accounts.account(owner);
+  if (account && account.status === 'active' && !account.approved_at && !account.revoked_at) {
+    await accounts.approve(owner);
+    return accounts.account(owner);
+  }
+  return account;
+}
+
+function copyableField(id: string, label: string, value: string, multiline = false) {
+  const control = multiline
+    ? `<textarea id="${id}" rows="8" readonly>${attribute(value)}</textarea>`
+    : `<input id="${id}" readonly value="${attribute(value)}">`;
+  return `<div class="token-field"><label for="${id}">${label}</label>${control}
+    <div class="actions"><button type="button" data-copy-prompt="${id}" hidden>复制${label}</button>
+    <span class="copy-status" aria-live="polite"></span></div></div>`;
+}
+
+function renderConnectedContent(config: Config, account: Account, issuedToken?: string) {
+  const mcpUrl = new URL('/mcp', config.PUBLIC_URL).href;
+  const a2aUrl = new URL('/a2a', config.PUBLIC_URL).href;
+  const agentCardUrl = new URL('/.well-known/agent-card.json', config.PUBLIC_URL).href;
+  const tokenPanel = issuedToken ? (() => {
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        eigos: {
+          url: mcpUrl,
+          headers: { Authorization: `Bearer ${issuedToken}` },
+        },
+      },
+    }, null, 2);
+    return `<section class="token-panel" aria-labelledby="token-heading">
+      <h2 id="token-heading">新的接入令牌已生成</h2>
+      <p>令牌只显示一次，请保存到客户端的凭据配置。</p>
+      ${copyableField('agent-auth-header', 'Authorization 请求头', `Authorization: Bearer ${issuedToken}`)}
+      ${copyableField('mcp-json-config', 'MCP JSON 配置', mcpConfig, true)}
+      ${copyableField('a2a-endpoint', 'A2A 地址', a2aUrl)}
+      ${copyableField('agent-card-url', 'Agent Card', agentCardUrl)}
+      <p class="actions"><a class="secondary" href="/account">返回账号页</a></p>
+    </section>`;
+  })() : '';
+  const connection = account.has_agent_token
+    ? '<p>重新生成后，旧的接入令牌立即失效。</p><button>重新生成接入令牌</button>'
+    : '<button class="primary">生成永久接入令牌</button>';
+  const direct = `<h3>永久接入令牌（适用所有 MCP / A2A 客户端）</h3><p>把接入令牌保存到自己 Agent 的客户端凭据设置。</p>
+    <form method="post" action="/account/agent-token">${connection}</form>`;
+  const oauthBody = account.revoked_at
+    ? '<p>已撤销 Agent 接入。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>'
+    : account.approved_at ? `<p>在支持的客户端添加远程 HTTPS MCP，使用 EIGOS 账号完成 OAuth。</p>
+      <dl><dt>MCP 地址</dt><dd><code>${attribute(mcpUrl)}</code></dd>
+      <dt>OAuth Client ID</dt><dd><code>${attribute(config.OAUTH_MEMBER_MCP_CLIENT_ID ?? '')}</code></dd>
+      <dt>A2A 地址</dt><dd><code>${attribute(a2aUrl)}</code></dd>
+      <dt>Agent Card</dt><dd><code>${attribute(agentCardUrl)}</code></dd></dl>`
+      : '<form method="post" action="/account/approve"><button>授权 Grok</button></form>';
+  const revoke = account.approved_at && !account.revoked_at
+    ? '<form method="post" action="/account/revoke"><button>撤销 Agent 接入</button></form>' : '';
+  return `<p class="lead">Beta 账号已开通。</p>${tokenPanel}<div class="connections">
+    <section>${direct}</section>
+    <details${account.revoked_at ? ' open' : ''}><summary>OAuth 连接（支持 MCP OAuth / Grok）</summary>${oauthBody}</details>
+    ${revoke}</div>`;
+}
+
 function setupGuide(publicUrl: string) {
   const mcpUrl = new URL('/mcp', publicUrl).href, a2aUrl = new URL('/a2a', publicUrl).href;
-  const install = `请帮我连接 EIGOS Agent。支持 A2A 时使用 ${a2aUrl}，支持远程 MCP 时使用 ${mcpUrl}。使用接入令牌时，请指导我把 Authorization 请求头保存在客户端凭据设置，值为 Bearer 加一个空格和我的令牌。不要让我把令牌贴到聊天里。如果我用 Grok OAuth，请提示我在 EIGOS 账号页点「授权 Grok」，再回 Grok 完成连接。连好后请发起一次只读测试。`;
+  const agentCardUrl = new URL('/.well-known/agent-card.json', publicUrl).href;
+  const install = `请帮我连接 EIGOS Agent。支持远程 MCP 时使用 ${mcpUrl}，支持 A2A 时使用 ${a2aUrl}（Agent Card: ${agentCardUrl}）。使用接入令牌时，请指导我把 Authorization 请求头保存在客户端凭据设置，值为 Bearer 加一个空格和我的令牌。不要让我把令牌贴到聊天里。如果我用 MCP OAuth 或 Grok 连接，账号开通后已自动启用 OAuth，可以直接添加 ${mcpUrl} 完成登录。连好后请发起一次只读测试。`;
   const tryQuery = '请通过 EIGOS 查询上海市今天的天气，并查找上海博物馆人民广场馆附近的咖啡店。请分别标注数据来源。如果某项查询失败，告诉我返回的错误，不要猜测。';
   const prompt = (id: string, label: string, value: string) => `<div class="card prompt"><label for="${id}">${label}</label>
     <textarea id="${id}" rows="4" readonly>${attribute(value)}</textarea>
@@ -157,15 +220,15 @@ function setupGuide(publicUrl: string) {
     <h2 id="setup-heading">安装 EIGOS</h2>
     <p>选择你的客户端，连接一次后可在原对话查询和跟进任务。</p>
     <div class="guide-grid">
-      <article class="card"><h3>Grok</h3><ol>
-        <li>在本页点击「授权 Grok」。</li>
-        <li>打开 <a href="https://grok.com/connectors">Grok 连接器</a>，选择新建自定义连接器，填入 <code>${attribute(mcpUrl)}</code>。</li>
-        <li>如果需要 OAuth Client ID，使用授权后本页显示的值。用同一个 EIGOS 账号登录。</li>
-      </ol></article>
       <article class="card"><h3>A2A 或支持自定义请求头的 MCP</h3><ol>
-        <li>在本页点击「生成接入令牌」。</li>
-        <li>A2A 使用 <code>${attribute(a2aUrl)}</code>。远程 MCP 使用 <code>${attribute(mcpUrl)}</code>。</li>
+        <li>在本页点击「生成永久接入令牌」。</li>
+        <li>复制页面提供的 MCP JSON 配置，或使用 A2A 地址 <code>${attribute(a2aUrl)}</code> 与 Agent Card <code>${attribute(agentCardUrl)}</code>。</li>
         <li>在凭据设置中添加请求头 <code>Authorization</code>，值为 <code>Bearer &lt;接入令牌&gt;</code>。</li>
+      </ol></article>
+      <article class="card"><h3>MCP OAuth / Grok</h3><ol>
+        <li>账号开通后已自动启用 OAuth 连接，无需额外授权步骤。</li>
+        <li>打开 <a href="https://grok.com/connectors">Grok 连接器</a> 或其他支持 OAuth 的 MCP 客户端，填入 <code>${attribute(mcpUrl)}</code>。</li>
+        <li>如果需要 OAuth Client ID，展开本页「OAuth 连接」查看。用同一个 EIGOS 账号登录。</li>
       </ol></article>
     </div>
     </section>
@@ -243,23 +306,27 @@ export function mountAccountPortal(app: express.Express, config: Config, account
   });
   app.get('/account', async (req, res) => {
     const session = await accounts.session(cookie(req, sessionCookie, sessionShape));
-    const account = session && await accounts.account(session.owner);
+    const account = session ? await ensureApproved(accounts, session.owner) : undefined;
     const status = typeof req.query.status === 'string' && Object.hasOwn(statuses, req.query.status)
       ? req.query.status as keyof typeof statuses : undefined;
+    const pageMode = config.EIGOS_SIGNUP === 'open' ? 'open' : 'invite';
     let content: string, explains: keyof typeof statuses | undefined, step: BetaStep | undefined;
     let heading = 'EIGOS 账号';
     if (!session) {
-      if (config.EIGOS_SIGNUP === 'invite') {
+      if (config.EIGOS_SIGNUP === 'invite' || config.EIGOS_SIGNUP === 'open') {
         step = 1;
         if (status === 'verify' || status === 'resent') {
           heading = '验证你的邮箱';
           content = '<p class="actions"><a class="button primary" href="/account/login">已验证，继续登录</a></p>';
         } else {
           heading = '接入 EIGOS Beta';
+          const note = config.EIGOS_SIGNUP === 'invite'
+            ? '验证邮箱后自动加入 Waiting List。审核通过后，回到本页连接 Agent。'
+            : '验证邮箱并登录后自动开通，即可直接连接你的 Agent。';
           content = `<p class="lead">开通后，用你常用的 AI 助手查询天气、地点、餐厅、机票和酒店。</p>
             <p class="actions"><a class="button primary" href="/account/login">邮箱登录 <span aria-hidden="true">↗</span></a>
             <a class="secondary" href="/account/login?signup=1">首次使用，注册</a></p>
-            <p class="lead">验证邮箱后自动加入 Waiting List。审核通过后，回到本页连接 Agent。</p>`;
+            <p class="lead">${note}</p>`;
         }
       } else content = '<p><a href="/account/login?signup=1">注册</a> · <a href="/account/login">登录</a></p>';
     } else if (!account) {
@@ -288,20 +355,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     else {
       step = 3;
       heading = '连接你的 AI 助手';
-      const connection = account.has_agent_token
-        ? '<p>重新生成后，旧的接入令牌立即失效。</p><button>重新生成接入令牌</button>'
-        : '<button class="primary">生成接入令牌</button>';
-      const direct = `<h3>A2A 或 MCP</h3><p>把接入令牌保存到自己 Agent 的客户端凭据设置。</p>
-        <form method="post" action="/account/agent-token">${connection}</form>`;
-      const oauth = account.revoked_at
-        ? '<p>已撤销 Agent 接入。</p><form method="post" action="/account/approve"><button>重新授权 Grok</button></form>'
-        : account.approved_at ? `<p>在支持的客户端添加远程 HTTPS MCP，使用 EIGOS 账号完成 OAuth。</p>
-          <dl><dt>MCP 地址</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd><dt>OAuth Client ID</dt><dd><code>${config.OAUTH_MEMBER_MCP_CLIENT_ID}</code></dd></dl>`
-          : '<form method="post" action="/account/approve"><button>授权 Grok</button></form>';
-      const revoke = account.approved_at && !account.revoked_at
-        ? '<form method="post" action="/account/revoke"><button>撤销 Agent 接入</button></form>' : '';
-      content = `<p class="lead">Beta 账号已开通。</p><div class="connections">
-        <section>${direct}</section><section><h3>Grok OAuth</h3>${oauth}${revoke}</section></div>`;
+      content = renderConnectedContent(config, account);
     }
     // A status the page body already spells out is not repeated as a banner.
     const banner = status && status !== explains ? `<p role="status">${statuses[status]}</p>` : '';
@@ -316,7 +370,7 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     // Browser form navigation must preserve Origin for the POST checks. The OIDC callback remains no-referrer.
     const body = banner + content + resend;
     res.set('Referrer-Policy', 'same-origin').type('html').send(step
-      ? betaAccountPage(heading, body, step, guide, footer)
+      ? betaAccountPage(heading, body, step, guide, footer, pageMode)
       : page(heading, body + footer));
   });
   app.get('/account/login', flowLimit, (req, res) => {
@@ -363,6 +417,11 @@ export function mountAccountPortal(app: express.Express, config: Config, account
       // Whoever just proved they own the account authorizes its agents again: an agent that someone connected before the merge, for
       // example to an address they registered first, loses its access here. The account page then offers to authorize again.
       await accounts.revoke(result.owner);
+      if (management?.revokeUserGrants) {
+        try { await management.revokeUserGrants(result.subject); } catch (error) {
+          logFailure('Auth0 grant revocation failed', error);
+        }
+      }
       const { action, token } = await resumeLogin(config.OAUTH_ISSUER!, linkKey, attempt.link);
       // Auth0 now resumes the sign-in it paused and sends the browser back to this callback with that sign-in's own state, so the
       // first attempt goes back into the login cookie, bound to the account it merges into. A browser keeps the last Set-Cookie of a
@@ -398,6 +457,8 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     const opened = await accounts.provision(result.owner, emailHash);
     if (opened === 'invite_required') {
       await accounts.apply({ owner: result.owner, email_hash: emailHash }, result.email, '');
+    } else if (typeof opened === 'object') {
+      await ensureApproved(accounts, result.owner, opened);
     }
     const session = await accounts.startSession(result.owner, result.email, previous);
     res.cookie(sessionCookie, session, { ...cookieOptions, maxAge: sessionAge });
@@ -429,17 +490,23 @@ export function mountAccountPortal(app: express.Express, config: Config, account
     if (req.path === '/account/activate') {
       const code = z.string().regex(/^[A-Za-z0-9_-]{43}$/).safeParse(req.body?.code);
       const outcome = code.success ? await accounts.activate(session, code.data) : 'invalid';
+      if (outcome === 'activated') await ensureApproved(accounts, session.owner);
       redirect(res, outcome === 'activated' ? undefined : outcome === 'operator_account' ? 'operator'
         : config.EIGOS_SIGNUP === 'closed' ? 'closed' : 'invite'); return;
     }
     if (req.path === '/account/agent-token') {
       const credential = await accounts.issueAgentToken(session.owner);
       if (!credential) { res.sendStatus(403); return; }
-      res.type('html').send(page('Agent 接入令牌', `<p>令牌只显示一次，请保存到客户端的凭据配置。</p>
-        <dl><dt>MCP</dt><dd><code>${new URL('/mcp', config.PUBLIC_URL).href}</code></dd>
-        <dt>A2A</dt><dd><code>${new URL('/a2a', config.PUBLIC_URL).href}</code></dd>
-        <dt>请求头</dt><dd><code>Authorization: Bearer ${credential}</code></dd></dl>
-        <p><a href="/account">返回账号页</a></p>`));
+      const account = await accounts.account(session.owner);
+      if (!account) { res.sendStatus(403); return; }
+      const guide = setupGuide(config.PUBLIC_URL);
+      const footer = '<form method="post" action="/account/logout"><button>退出登录</button></form>';
+      const body = renderConnectedContent(config, account, credential);
+      res.set({
+        'Content-Security-Policy': `${portalPolicy}; script-src 'sha256-${copyPromptHash}'`,
+        'Referrer-Policy': 'same-origin',
+      }).type('html').send(betaAccountPage('连接你的 AI 助手', body, 3, guide, footer,
+        config.EIGOS_SIGNUP === 'open' ? 'open' : 'invite'));
       return;
     }
     if (req.path === '/account/approve') await accounts.approve(session.owner);
