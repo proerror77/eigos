@@ -101,7 +101,7 @@ function setup(scopes = ['ontology:read', 'ontology:write', 'tasks:read', 'tasks
   };
   return { ui, buttons, fields, events, dialog: () => dialog };
 }
-const moduleUrl = new URL('../apps/workbench/observation-interests.js', import.meta.url).href;
+const moduleUrl = new URL('../apps/ontology-workbench/observation-interests.js', import.meta.url).href;
 test('the Machinery interests dashboard shows absent wakeups, time bounds and persisted reasons on later pages', async () => {
   const { renderInterestList } = await import(moduleUrl),
     f = setup(),
@@ -132,6 +132,7 @@ test('the Machinery interests dashboard shows absent wakeups, time bounds and pe
 test('an original object with no prior observations can authorize flight handoff only after reviewing its exact sources, budget and scope', async () => {
   const { showObjectInterests } = await import(moduleUrl),
     f = setup();
+  Object.assign(f.ui, {observationPreset:(await import(new URL('../apps/workbench/flight-watch.js', import.meta.url).href)).flightWatch});
   await showObjectInterests(f.ui, processModel, object);
   assert.equal(f.events[0]!.name, 'read_object');
   assert.equal(f.events[1]!.name, 'observation_interests');

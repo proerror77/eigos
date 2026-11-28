@@ -70,3 +70,5 @@ __pycache__/
 /scripts/*.d.ts
 /packages/function-test/*.js
 /packages/function-test/*.d.ts
+
+/apps/ontology-workbench/
