@@ -104,11 +104,17 @@ test('invited accounts use OAuth and portable MCP/A2A access with shared Beta ca
     assert.equal((await g.form('agent-token', bob.cookie, new URLSearchParams(), 'https://other.example')).status, 403);
     const issue = async (cookie = bob.cookie) => {
       const response = await g.form('agent-token', cookie);
-      assert.equal(response.status, 200);
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get('location'), '/account');
       assert.equal(response.headers.get('cache-control'), 'no-store');
-      const html = await response.text();
-      assert.match(html, /<code>https:\/\/127\.0\.0\.1\/a2a<\/code>/);
-      const match = html.match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/);
+      const flash = response.headers.getSetCookie().find(value => value.startsWith('__Host-eigos-account-token='))?.split(';')[0];
+      assert(flash, 'PRG token issuance sets the flash cookie');
+      const pageRes = await fetch(g.url + '/account', { headers: { Cookie: `${cookie}; ${flash}` } });
+      assert.equal(pageRes.status, 200);
+      assert.equal(pageRes.headers.get('cache-control'), 'no-store');
+      const html = await pageRes.text();
+      assert.match(html, /id="token-a2a-url" readonly value="https:\/\/127\.0\.0\.1\/a2a"/);
+      const match = html.match(/id="agent-token" readonly value="(eigos_agent_[A-Za-z0-9_-]{43})"/);
       assert(match?.[1], 'a Beta account receives its credential once');
       assert(!(await g.page(cookie)).includes(match[1]));
       return match[1];

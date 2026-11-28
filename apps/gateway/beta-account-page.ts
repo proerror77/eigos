@@ -74,7 +74,7 @@ const styles = `
   .token-field { margin-top: .85rem; }
   .token-field label { display: block; font-weight: 650; font-size: .9rem; }
   .token-field :is(input, textarea) { margin-top: .3rem; font: .85rem/1.45 ui-monospace, monospace; }
-  .token-panel .actions { margin-top: .55rem; }
+  .token-panel .actions, .token-field .actions { margin-top: .55rem; }
   .hero-main .copy-status { color: #cbd0d2; }
   code { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
   dt { font-weight: 650; }
@@ -105,14 +105,15 @@ const styles = `
 `;
 
 const inviteSteps = ['验证邮箱并登录', 'Waiting List · 等待审核', '连接自己的 Agent'] as const;
-const openSteps = ['验证邮箱并登录', '自动开通账号', '连接自己的 Agent'] as const;
+const openSteps = ['验证邮箱并登录', '连接自己的 Agent'] as const;
 export type BetaStep = 1 | 2 | 3;
 
 export function betaAccountPage(heading: string, content: string, step: BetaStep, guide: string, footer: string,
   mode: 'invite' | 'open' = 'invite') {
   const steps = mode === 'open' ? openSteps : inviteSteps;
+  const activeStep = mode === 'open' && step === 3 ? 2 : step;
   const pathHeading = mode === 'open' ? '接入流程' : '内测流程';
-  const timeline = steps.map((label, index) => `<li${index + 1 === step ? ' aria-current="step"' : ''}>
+  const timeline = steps.map((label, index) => `<li${index + 1 === activeStep ? ' aria-current="step"' : ''}>
     <span class="step-number" aria-hidden="true">0${index + 1}</span><span class="step-label">${label}</span></li>`).join('');
   return `<!doctype html>
   <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

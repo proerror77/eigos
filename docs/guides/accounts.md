@@ -5,7 +5,7 @@ EIGOS Beta 账号采用两步极简接入流程：
 1. **注册并验证邮箱**：在 `/account` 用 Google 或邮箱密码通过 Auth0 登录。账号页仅接受带 `email_verified: true` 的签名 ID Token。
    - **`invite` 模式（默认，正式 Beta）**：首次验证登录后自动加入 Waiting List，用户在账号页查看审核状态；运营通过命令行或飞书审批卡片放行（或用户兑换仍有效的旧邀请码）后，账号激活并**自动完成 Agent 接入授权**，刷新同一页即可直接连接。
    - **`open` 模式（开发或开放注册）**：首次验证登录后立即激活并**自动完成 Agent 接入授权**，直接进入连接页，界面体验与 `invite` 模式一致。
-2. **一键连接你的 PA（MCP / A2A）**：账号激活后，无需再先手动点击「授权 Grok」。在账号页点击「生成接入令牌」，页面内直接高亮显示永久接入令牌（`eigos_agent_*`）、一键复制的 **MCP JSON 客户端配置** 以及 **A2A 接入地址与 Agent Card**；同时也已准备好 **OAuth 连接**（支持 MCP OAuth / Grok）。
+2. **一键连接你的 PA（MCP / A2A）**：账号激活后，无需再先手动点击「启用 OAuth 连接」。在账号页点击「生成永久接入令牌」，网关通过 60 秒一次性加密 Flash Cookie（`__Host-eigos-account-token`）配合 `303 /account`（PRG，刷新安全）展示这一次完整令牌（`eigos_agent_*`），提供一键复制的 **MCP JSON 客户端配置**、**永久令牌 (Bearer Token)** 以及 **MCP / A2A 接入地址与 Agent Card**；同时也已准备好 **OAuth 连接**（支持 MCP OAuth / Grok，A2A 客户端请使用永久接入令牌）。
 
 运营用管理角色运行 `npm run account -- applications` 查看待审核名单。审核原记录后执行 `npm run account -- approve-waitlist <owner> <verified-email>`。开户与审核记录在同一事务提交并绑定已审核的身份和邮箱。重复批准同一账号可安全重试。已发出且有效的旧邀请码仍可兑换。
 
@@ -23,7 +23,7 @@ EIGOS Beta 账号采用两步极简接入流程：
 
 ### 1. 一键生成永久接入令牌（推荐，适用所有 MCP / A2A 客户端）
 
-1. 登录账号页 `/account`，点击「生成接入令牌」。页面内直接高亮显示这一次完整令牌（仅显示一次），并提供一键复制按钮：
+1. 登录账号页 `/account`，点击「生成永久接入令牌」。提交后通过 PRG（`303 /account` + 60 秒一次性读取即清的加密 Cookie `__Host-eigos-account-token`）展示这一次完整令牌（仅显示一次，刷新页面不会重复签发或使令牌失效），并提供一键复制按钮：
    - **MCP JSON 配置片段**：可直接粘贴到支持远程 Streamable HTTP MCP 的客户端配置中：
      ```json
      {
@@ -37,8 +37,8 @@ EIGOS Beta 账号采用两步极简接入流程：
        }
      }
      ```
-   - **A2A 接入信息**：A2A 端点 `https://<gateway>/a2a` 与 Agent Card `https://<gateway>/.well-known/agent-card.json`，请求头使用 `Authorization: Bearer <接入令牌>`。
-2. 账号页可随时重新生成（旧令牌立即失效）或点击「撤销 Agent 接入」停用当前接入。客户端可用 `GET /identity` 核对接入身份。
+   - **永久令牌 (Bearer Token)** 与 **MCP / A2A 接入信息**：A2A 端点 `https://<gateway>/a2a` 与 Agent Card `https://<gateway>/.well-known/agent-card.json`，请求头使用 `Authorization: Bearer <接入令牌>`。**A2A 客户端目前请使用永久接入令牌（`eigos_agent_*`），暂不支持 MCP OAuth。**
+2. 账号页可随时重新生成（旧令牌立即失效），或展开「管理 / 撤销接入」并点击「确认撤销 Agent 接入」停用当前接入。客户端可用 `GET /identity` 核对接入身份。
 
 ### 2. MCP 架构（消费者 `/mcp` 与运营者 `/mcp/builder`）
 
@@ -65,17 +65,17 @@ EIGOS Beta 账号采用两步极简接入流程：
 
 ### 注册方式
 
-- 账号页的「注册」链接是 `/account/login?signup=1`，「登录」链接是 `/account/login`。
+- 账号页提供统一的「使用 Google 或邮箱登录 / 注册」入口（`/account/login`，同时兼容 `/account/login?signup=1` 直接打开注册页）。
 - 可用两种方式：Google（`google-oauth2` 连接）和邮箱密码（`auth0` 数据库连接）。
 - 邮箱密码注册后，Auth0 发验证邮件。验证之前，账号页只提示先验证邮箱，不开通账号。用户验证后重新登录。配置了 `OAUTH_MANAGEMENT_CLIENT_ID` 和 `OAUTH_MANAGEMENT_CLIENT_SECRET` 时，页面上还有「重新发送验证邮件」按钮，见「重发验证邮件」。
 - 同一个已验证邮箱只对应一个账号。没验证过邮箱的用户不合并。
 - 原来的账号是最先成为 EIGOS 账号的那个。已验证的用户第一次拿到 EIGOS 的 claim 时，Action 在它的 `app_metadata.eigos_since` 记下时间，以后不再改。比较两个用户时，有这个时间的排在没有的前面，时间早的排在前面；都没有时，创建早的排在前面。邮箱可能在创建很久以后才验证，所以只看创建时间，会把一个从没用过 EIGOS、甚至是别人抢先注册的账号当成原来的账号。
 - 用另一种方式再登录同一个邮箱时，如果有排在它前面、门户也能登录的已验证用户，要先并入那个用户，顺序是：
-  1. Auth0 Action 暂停这次登录，把浏览器送到合并页 `/account/link`。
-  2. 用户点「用原来的方式登录」（`/account/link/continue`），用原来的方式再登录一次。
-  3. 账号页确认这次登录是原来的那个账号，显示「继续」按钮。用户点「继续」，浏览器用 POST 把确认结果交回 Auth0，Auth0 才继续被暂停的登录。
+  1. Auth0 Action 暂停这次登录，把浏览器送到合并页 `/account/link`，页面按原连接名提示使用「Google 账号」或「邮箱密码」。
+  2. 用户点「用 Google 账号登录」或「用邮箱密码登录」（`/account/link/continue`），用原来的方式再登录一次。
+  3. 账号页确认这次登录是原来的那个账号，通过受 CSP SHA-256 哈希约束的极简脚本自动用 POST 把确认结果交回 Auth0（同时保留「继续」按钮作为无脚本回退），Auth0 才继续被暂停的登录。
   4. 两种方式合并成一个用户，对应原来那个账号的 owner。从账号页发起的登录，合并后回到账号页。
-- 账号页在第 3 步确认了原来那个账号，就撤销它在 EIGOS 侧的 Agent 授权（包括接入令牌和 OAuth 授权），并在配置了 Management API 客户端时一并尝试调用 Auth0 Management API 撤销该用户在 Auth0 的 grants（`DELETE /api/v2/grants?user_id=...`；调用失败只记日志，不阻断合并流程）。之后账号页显示「重新授权 Grok」。用户没点「继续」，授权也已经撤销。合并之前连接到这个账号的 Agent，要等刚刚证明了账号归属的人重新授权才能再用。
+- 账号页在第 3 步确认了原来那个账号，就撤销它在 EIGOS 侧的 Agent 授权（包括接入令牌和 OAuth 授权），并在配置了 Management API 客户端时一并尝试调用 Auth0 Management API 撤销该用户在 Auth0 的 grants（`DELETE /api/v2/grants?user_id=...`；调用失败只记日志，不阻断合并流程）。之后账号页显示「重新启用 Agent 接入」。用户没完成跳转，授权也已经撤销。合并之前连接到这个账号的 Agent，要等刚刚证明了账号归属的人重新启用才能再用。
 - 登录的不是原账号，或登录没有完成时，账号页显示「合并没有完成，请用原来的方式重新登录。」，用户重新登录。Auth0 继续登录之后，回到账号页的不是原来那个账号时，也是这个提示，不开会话，也不开户。
 
 ### 开户模式
@@ -104,10 +104,10 @@ EIGOS Beta 账号采用两步极简接入流程：
 
 ### Grok / MCP OAuth
 
-账号开通后已**自动授权**，可直接选用 Grok 或其他支持远程 MCP OAuth 的客户端（授权码流程 + S256 PKCE，取得 `https://<gateway>/mcp` 的访问令牌），无需再先手动点「授权 Grok」。账号页的 OAuth 折叠区直接展示 MCP 地址 `https://<gateway>/mcp` 和 OAuth Client ID。
+账号开通后已**自动授权**，可直接选用 Grok 或其他支持远程 MCP OAuth 的客户端（授权码流程 + S256 PKCE，取得 `https://<gateway>/mcp` 的访问令牌），无需再先手动点「启用 OAuth 连接」。账号页的 OAuth 折叠区提供一键复制的 MCP 地址 `https://<gateway>/mcp` 和 OAuth Client ID（A2A 客户端请使用永久接入令牌）。
 
-- 点「撤销 Agent 接入」后，Gateway 立即拒绝通用接入令牌和 OAuth 令牌。
-- 撤销后可以点「重新授权 Grok」。重新授权之前签发的令牌，包括撤销之前和撤销期间签发的，继续被拒绝。所以撤销或重新授权之后，用户都要在客户端里重新连接，拿重新授权之后签发的令牌。
+- 展开「管理 / 撤销接入」并点「确认撤销 Agent 接入」后，页面跳转到 `/account?status=revoked`，Gateway 立即拒绝通用接入令牌和 OAuth 令牌。
+- 撤销后可以点「重新启用 Agent 接入」（跳转到 `/account?status=approved`）。重新启用之前签发的令牌，包括撤销之前和撤销期间签发的，继续被拒绝。所以撤销或重新启用之后，用户都要重新生成永久令牌或在 OAuth 客户端里重新连接，拿重新启用之后签发的令牌。
 - 停用账号同样立即拒绝它的令牌，见「运营者命令」。
 - 同一个邮箱的另一个用户要并入这个账号，账号页确认了这个账号时，EIGOS 侧授权被撤销（且在配置 Management API 时尝试同步撤销 Auth0 grants），见「注册方式」。
 
@@ -273,7 +273,7 @@ Action 的行为：
 - 合并时 Action 和账号页的分工：
   1. 找到排在当前用户前面的已验证用户时，Action 暂停登录，转到 `LINK_URL`，这时不写 tenant claim。
   2. 用户在合并页用原来的方式再登录。
-  3. 账号页确认这次登录是原来的那个已验证账号，撤销这个账号的 Grok 授权，然后显示「继续」按钮。用户点「继续」，浏览器用 POST 把 `session_token` 送到 `<OAUTH_ISSUER>continue?state=<暂停登录的 state>`。`session_token` 是用 `EIGOS_ACCOUNT_LINK_SECRET` 签名的 HS256 JWT，claims 是 `sub`（被合并的用户）、`state` 和 `primary`（原来的用户），5 分钟有效。页面不运行脚本，所以要用户点一下。
+  3. 账号页确认这次登录是原来的那个已验证账号，撤销这个账号的 Agent 接入授权，然后通过受 CSP SHA-256 哈希约束的极简脚本自动用 POST 把 `session_token` 送到 `<OAUTH_ISSUER>continue?state=<暂停登录的 state>`（保留「继续」按钮作为无脚本回退）。`session_token` 是用 `EIGOS_ACCOUNT_LINK_SECRET` 签名的 HS256 JWT，claims 是 `sub`（被合并的用户）、`state` 和 `primary`（原来的用户），5 分钟有效。
   4. Auth0 继续登录。Action 按暂停时的规则再核对一遍原来的用户：已验证，邮箱相同，在 `EIGOS_CONNECTIONS` 里的连接上有身份，排在当前用户前面。它还没有 `eigos_since` 时，Action 先通过 Management API 给它写上，再合并两个身份，把登录切换到原来的用户，最后写 claim。
   5. 合并没完成时登录被拒绝，用户看到提示「合并没有完成，请用原来的方式重新登录。」
   6. 被暂停的登录如果是从账号页发起的，Auth0 继续之后会回到账号页。账号页这时只接受原来那个用户的已验证登录，回来的是别人时不开会话，也不开户。

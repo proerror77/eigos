@@ -224,8 +224,10 @@ test('open sign-up provisions and auto-approves a verified account at the first 
     assert.equal(account?.revoked_at, null);
     const html = await g.page(alice.cookie);
     assert.match(html, /生成永久接入令牌/);
-    assert.match(html, /撤销 Agent 接入/);
-    assert.match(html, /<code>https:\/\/127\.0\.0\.1\/mcp<\/code>/);
+    assert.match(html, /管理 \/ 撤销接入/);
+    assert.match(html, /确认撤销 Agent 接入/);
+    assert.match(html, /id="oauth-mcp-url" readonly value="https:\/\/127\.0\.0\.1\/mcp"/);
+    assert.match(html, /aria-current="step">\s*<span[^>]+>02<\/span><span[^>]+>连接自己的 Agent/);
   } finally { await g.close(); await f.close(); }
 });
 
@@ -253,11 +255,13 @@ test('revoked Grok access can be authorized again and old addresses redirect', a
   const f = await fixture(), g = await accountGateway(f, { signup: 'open' });
   try {
     const { cookie } = await g.login('frank', 'frank@example.test');
-    await g.form('approve', cookie);
-    await g.form('revoke', cookie);
-    assert.match(await g.page(cookie), /重新授权 Grok/);
-    await g.form('approve', cookie);
-    assert.match(await g.page(cookie), /撤销 Agent 接入/);
+    assert.equal((await g.form('approve', cookie)).headers.get('location'), '/account?status=approved');
+    assert.equal((await g.form('revoke', cookie)).headers.get('location'), '/account?status=revoked');
+    const revokedHtml = await g.page(cookie);
+    assert.match(revokedHtml, /重新启用 Agent 接入/);
+    assert.doesNotMatch(revokedHtml, /Beta 账号已开通。/);
+    assert.equal((await g.form('approve', cookie)).headers.get('location'), '/account?status=approved');
+    assert.match(await g.page(cookie), /确认撤销 Agent 接入/);
     for (const path of ['/members', '/members/login', '/'])
       assert.equal((await fetch(g.url + path, { redirect: 'manual' })).headers.get('location'), '/account');
     const statuses = [];
@@ -348,10 +352,11 @@ test('the account page shows where each account stands', async () => {
     assert.equal(anonymous.headers.get('referrer-policy'), 'same-origin');
     assert.match(html, /<title>EIGOS 账号<\/title>/);
     assert.match(html, /id="account-heading">接入 EIGOS Beta<\/h1>/);
-    assert.match(html, /class="button primary" href="\/account\/login">邮箱登录/);
-    assert.match(html, /href="\/account\/login\?signup=1">首次使用，注册<\/a>/);
+    assert.match(html, /class="button primary" href="\/account\/login">使用 Google 或邮箱登录 \/ 注册/);
+    assert.doesNotMatch(html, /首次使用，注册/);
     assert.match(html, /验证邮箱并登录后自动开通，即可直接连接你的 Agent。/);
-    assert.match(html, /自动开通账号/);
+    assert.doesNotMatch(html, /自动开通账号/);
+    assert.match(html, /02<\/span><span[^>]+>连接自己的 Agent/);
     assert.doesNotMatch(html, /退出登录/);
     const closedAnonymous = await fetch(closed.url + '/account');
     assert.doesNotMatch(closedAnonymous.headers.get('content-security-policy')!, /script-src/);
@@ -365,33 +370,38 @@ test('the account page shows where each account stands', async () => {
     assert.match(fresh, /Beta 账号已开通。/);
     assert.match(fresh, /<button class="primary">生成永久接入令牌<\/button>/);
     assert.match(fresh, /<summary>OAuth 连接（支持 MCP OAuth \/ Grok）<\/summary>/);
-    assert.match(fresh, /<code>https:\/\/127\.0\.0\.1\/mcp<\/code>/);
-    assert.match(fresh, /<code>grok<\/code>/);
-    assert.match(fresh, /<code>https:\/\/127\.0\.0\.1\/a2a<\/code>/);
-    assert.match(fresh, /<code>https:\/\/127\.0\.0\.1\/\.well-known\/agent-card\.json<\/code>/);
-    assert.match(fresh, /<button>撤销 Agent 接入<\/button>/);
+    assert.match(fresh, /id="oauth-mcp-url" readonly value="https:\/\/127\.0\.0\.1\/mcp"/);
+    assert.match(fresh, /id="oauth-client-id" readonly value="grok"/);
+    assert.match(fresh, /id="a2a-endpoint" readonly value="https:\/\/127\.0\.0\.1\/a2a"/);
+    assert.match(fresh, /id="agent-card-url" readonly value="https:\/\/127\.0\.0\.1\/\.well-known\/agent-card\.json"/);
+    assert.match(fresh, /A2A 客户端请使用永久接入令牌/);
+    assert.match(fresh, /<summary>管理 \/ 撤销接入<\/summary>/);
+    assert.match(fresh, /<button>确认撤销 Agent 接入<\/button>/);
     assert.match(fresh, /复制安装提示词/);
     assert.match(fresh, /复制首条测试提示词/);
     assert.match(fresh, /<button>退出登录<\/button>/);
-    await open.form('revoke', erin.cookie);
+    assert.equal((await open.form('revoke', erin.cookie)).headers.get('location'), '/account?status=revoked');
     const revoked = await open.page(erin.cookie);
+    assert.doesNotMatch(revoked, /Beta 账号已开通。/);
+    assert.match(revoked, /Agent 接入已撤销。/);
     assert.match(revoked, /<details open>/);
-    assert.match(revoked, /已撤销 Agent 接入。/);
-    assert.match(revoked, /<button>重新授权 Grok<\/button>/);
-    assert.doesNotMatch(revoked, /<button>撤销 Agent 接入<\/button>/);
-    await open.form('approve', erin.cookie);
+    assert.match(revoked, /<button class="primary">重新启用 Agent 接入<\/button>/);
+    assert.doesNotMatch(revoked, /确认撤销 Agent 接入/);
+    assert.match(await banner('?status=revoked', erin.cookie), /<p role="status">已撤销 Agent 接入，现有永久令牌与 OAuth 授权均已失效。<\/p>/);
+    assert.equal((await open.form('approve', erin.cookie)).headers.get('location'), '/account?status=approved');
     const reapproved = await open.page(erin.cookie);
-    assert.match(reapproved, /<button>撤销 Agent 接入<\/button>/);
+    assert.match(reapproved, /<button>确认撤销 Agent 接入<\/button>/);
+    assert.match(await banner('?status=approved', erin.cookie), /<p role="status">已重新启用 Agent 接入。<\/p>/);
     await open.accounts.suspend(open.owner('erin'), 'synthetic');
     const suspended = await open.page(erin.cookie);
     assert.match(suspended, /这个账号已停用，请联系 EIGOS 支持。/);
-    assert.doesNotMatch(suspended, /Grok<\/button>/, 'a suspended account is told so before anything about Grok');
+    assert.doesNotMatch(suspended, /重新启用 Agent 接入|Grok<\/button>/, 'a suspended account is told so before anything about Agent access');
     assert.doesNotMatch(suspended, /setup-heading/);
 
     const inviteLanding = await fetch(invite.url + '/account');
     const landing = await inviteLanding.text();
-    assert.match(landing, /class="button primary" href="\/account\/login">邮箱登录/);
-    assert.match(landing, /href="\/account\/login\?signup=1">首次使用，注册<\/a>/);
+    assert.match(landing, /class="button primary" href="\/account\/login">使用 Google 或邮箱登录 \/ 注册/);
+    assert.doesNotMatch(landing, /首次使用，注册/);
     assert.match(landing, /验证邮箱后自动加入 Waiting List/);
     assert.match(landing, /aria-current="step">\s*<span[^>]+>01<\/span><span[^>]+>验证邮箱并登录/);
     assert.doesNotMatch(landing, /审核后使用邀请码开通/);
@@ -463,19 +473,31 @@ test('verified sign-in joins the waitlist and opens Agent controls only after th
     assert.ok((await invite.accounts.account(owner))?.approved_at, 'refreshing /account auto-approves the newly approved waitlist account');
     assert.equal(await hasBetaReadAccess(f.db, owner), true);
     const tokenRes = await invite.form('agent-token', repeated.cookie);
-    assert.equal(tokenRes.status, 200);
-    assert.equal(tokenRes.headers.get('cache-control'), 'no-store');
-    assert.equal(tokenRes.headers.get('referrer-policy'), 'same-origin');
-    const tokenHtml = await tokenRes.text();
+    assert.equal(tokenRes.status, 303);
+    assert.equal(tokenRes.headers.get('location'), '/account');
+    const tokenCookieName = '__Host-eigos-account-token=';
+    const setTokenCookie = tokenRes.headers.getSetCookie().find(value => value.startsWith(tokenCookieName))!;
+    assert.ok(setTokenCookie, 'POST /account/agent-token seals the new token in a flash cookie');
+    for (const flag of [/; Max-Age=60(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(setTokenCookie, flag);
+    assert.doesNotMatch(setTokenCookie, /Domain=/i);
+    const flashPair = setTokenCookie.split(';')[0]!;
+    const tokenPageRes = await fetch(invite.url + '/account', { headers: { Cookie: `${repeated.cookie}; ${flashPair}` } });
+    assert.equal(tokenPageRes.status, 200);
+    assert.equal(tokenPageRes.headers.get('cache-control'), 'no-store');
+    assert.equal(tokenPageRes.headers.get('referrer-policy'), 'same-origin');
+    assert.ok(tokenPageRes.headers.getSetCookie().some(value => value.startsWith(`${tokenCookieName};`)), 'flash cookie is cleared on first read');
+    const tokenHtml = await tokenPageRes.text();
     assert.match(tokenHtml, /id="account-heading">连接你的 AI 助手<\/h1>/);
     assert.match(tokenHtml, /aria-current="step">\s*<span[^>]+>03<\/span>/);
     assert.match(tokenHtml, /id="token-heading">新的接入令牌已生成<\/h2>/);
-    assert.match(tokenHtml, /data-copy-prompt="agent-auth-header"/);
     assert.match(tokenHtml, /data-copy-prompt="mcp-json-config"/);
-    assert.match(tokenHtml, /data-copy-prompt="a2a-endpoint"/);
-    assert.match(tokenHtml, /data-copy-prompt="agent-card-url"/);
-    const tokenMatch = tokenHtml.match(/id="agent-auth-header" readonly value="Authorization: Bearer (eigos_agent_[A-Za-z0-9_-]+)"/);
-    assert.ok(tokenMatch?.[1], 'in-page Authorization header includes the new agent token');
+    assert.match(tokenHtml, /data-copy-prompt="agent-token"/);
+    assert.match(tokenHtml, /data-copy-prompt="token-mcp-url"/);
+    assert.match(tokenHtml, /data-copy-prompt="token-a2a-url"/);
+    assert.match(tokenHtml, /data-copy-prompt="token-agent-card-url"/);
+    assert.match(tokenHtml, /<details><summary>重新生成接入令牌<\/summary>/);
+    const tokenMatch = tokenHtml.match(/id="agent-token" readonly value="(eigos_agent_[A-Za-z0-9_-]+)"/);
+    assert.ok(tokenMatch?.[1], 'in-page Bearer Token field includes the new agent token');
     const mcpJsonMatch = tokenHtml.match(/<textarea id="mcp-json-config"[^>]*>([\s\S]*?)<\/textarea>/);
     assert.ok(mcpJsonMatch?.[1]);
     const unescapedJson = mcpJsonMatch[1].replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
@@ -491,10 +513,19 @@ test('verified sign-in joins the waitlist and opens Agent controls only after th
     const tokenScript = tokenHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     assert.ok(tokenScript);
     const tokenScriptHash = createHash('sha256').update(tokenScript).digest('base64');
-    assert.equal(tokenRes.headers.get('content-security-policy')!.split('; ').at(-1), `script-src 'sha256-${tokenScriptHash}'`);
+    assert.equal(tokenPageRes.headers.get('content-security-policy')!.split('; ').at(-1), `script-src 'sha256-${tokenScriptHash}'`);
+    // Refreshing /account after the flash cookie is cleared hides the token panel without invalidating the token.
+    const refreshedHtml = await invite.page(repeated.cookie);
+    assert.doesNotMatch(refreshedHtml, /id="token-heading"/);
+    assert.equal((await invite.call('/identity', tokenMatch[1])).status, 200, 'refreshing /account does not invalidate the issued token');
     assert.equal(await hasBetaReadAccess(f.db, owner), true);
     assert.equal(await invite.accounts.approveApplication(owner, email), true);
     assert.equal((await invite.accounts.applications()).length, 0);
+    // Another user cannot read a flash cookie bound to a different owner.
+    const bystander = await invite.login('bystander', 'bystander@example.test');
+    const bystanderRes = await fetch(invite.url + '/account', { headers: { Cookie: `${bystander.cookie}; ${flashPair}` } });
+    assert.ok(bystanderRes.headers.getSetCookie().some(value => value.startsWith(`${tokenCookieName};`)));
+    assert.doesNotMatch(await bystanderRes.text(), new RegExp(tokenMatch[1]));
     const duplicate = await invite.login('second-subject', email);
     assert.match(await invite.page(duplicate.cookie), /你已加入 Waiting List/);
     await assert.rejects(invite.accounts.approveApplication(invite.owner('second-subject'), email), /already approved/);
@@ -711,7 +742,7 @@ test('the link page continues the Auth0 login only after the original account si
     assert.equal(bad.headers.get('location'), '/account?status=link');
     const page = await fetch(g.url + '/account/link?state=orig&session_token=' + await sessionToken(), { redirect: 'manual' });
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /用原来的方式登录/);
+    assert.match(await page.text(), /用 Google 账号登录/);
     const linkCookie = page.headers.getSetCookie().find(c => c.startsWith('__Host-eigos-account-link='))!.split(';')[0]!;
     const start = await fetch(g.url + '/account/link/continue', { redirect: 'manual', headers: { Cookie: linkCookie } });
     const authorize = new URL(start.headers.get('location')!);
@@ -800,9 +831,15 @@ test('the link page shows its fixed copy and keeps the context in a sealed five-
     assert.match(page.headers.get('content-type')!, /^text\/html/);
     const html = await page.text();
     assert.match(html, /<h1>合并账号<\/h1>/);
-    assert.match(html, /这个邮箱已经有 EIGOS 账号。为了确认是你本人，请用原来的方式再登录一次，登录后两个登录方式会合并成一个账号。/);
-    assert.match(html, /<a [^>]*href="\/account\/link\/continue"[^>]*>用原来的方式登录<\/a>/);
+    assert.match(html, /这个邮箱已经有 EIGOS 账号。为了确认是你本人，请用原来的 Google 账号 再登录一次，登录后两个登录方式会合并成一个账号。/);
+    assert.match(html, /<a [^>]*href="\/account\/link\/continue"[^>]*>用 Google 账号登录<\/a>/);
     for (const given of [token, 'google-oauth2', 'auth0|new', 'paused-state-1']) assert.equal(html.includes(given), false, 'the page repeats nothing it was given: ' + given);
+    // Non-Google connections prompt for email/password sign-in without echoing the raw connection name.
+    const dbToken = await linkToken({ primary: 'auth0|old', connection: 'Username-Password-Authentication' });
+    const dbPage = await fetch(g.url + '/account/link?' + new URLSearchParams({ state: 'paused-state-2', session_token: dbToken }), { redirect: 'manual' });
+    const dbHtml = await dbPage.text();
+    assert.match(dbHtml, /<a [^>]*href="\/account\/link\/continue"[^>]*>用邮箱密码登录<\/a>/);
+    assert.equal(dbHtml.includes('Username-Password-Authentication'), false);
 
     const set = page.headers.getSetCookie().find(value => value.startsWith(linkCookieName))!;
     for (const flag of [/; Max-Age=300(;|$)/, /; Path=\/(;|$)/, /; HttpOnly/, /; Secure/, /; SameSite=Lax/]) assert.match(set, flag);
@@ -910,12 +947,15 @@ test('the original account signing in gets a page that posts a five-minute token
     assert.match(right.response.headers.get('content-type')!, /^text\/html/);
     assert.equal(right.response.headers.get('cache-control'), 'no-store');
     const policy = right.response.headers.get('content-security-policy')!;
-    assert.match(policy, /default-src 'none'/, 'no script runs, so the user presses the button');
+    assert.match(policy, /default-src 'none'/);
     assert.match(policy, /form-action 'self' https:\/\/identity\.example;/, 'the form goes to Auth0, and Auth0 answers with a redirect back here');
     assert.equal(right.response.headers.get('referrer-policy'), 'strict-origin', 'Auth0 learns where the post comes from, never the address with the code');
     const html = await right.response.text();
     assert.match(html, /<button>继续<\/button>/);
-    assert.doesNotMatch(html, /<script/i);
+    const resumeScript = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.equal(resumeScript, 'document.forms[0]?.submit();');
+    const resumeScriptHash = createHash('sha256').update(resumeScript).digest('base64');
+    assert.match(policy, new RegExp(`script-src 'sha256-${resumeScriptHash.replace(/[+/=]/g, '\\$&')}'`));
     const { action, fields } = right.resume!;
     assert.equal(action.origin + action.pathname, 'https://identity.example/continue');
     assert.deepEqual([...action.searchParams.keys()], ['state'], 'the token goes in the body, not in the address');
@@ -973,7 +1013,9 @@ test('a finished merge withdraws the agent access of the account it merges into,
     // The resumed sign-in lands on the account page in its usual re-authorize state.
     const resumed = await g.callback(authorize, pairOf(cookieAfter(merged.response, loginCookieName)!), primary, email);
     assert.equal(resumed.location, '/account');
-    assert.match(await g.page(resumed.cookie), /已撤销 Agent 接入。<\/p><form method="post" action="\/account\/approve"><button>重新授权 Grok<\/button>/);
+    const resumedHtml = await g.page(resumed.cookie);
+    assert.doesNotMatch(resumedHtml, /Beta 账号已开通。/);
+    assert.match(resumedHtml, /已撤销 Agent 接入。[^<]*<\/p><form method="post" action="\/account\/approve"><button class="primary">重新启用 Agent 接入<\/button>/);
   } finally { await g.close(); await f.close(); }
 });
 
@@ -1488,13 +1530,20 @@ test('the account page offers to resend the email only on the verify status and 
   const page = async (g: AccountGateway, query: string) => (await fetch(g.url + '/account' + query)).text();
   const noButton = /resend-verification|重新发送验证邮件/;
   try {
-    const verify = await page(withClient, '?status=verify');
+    const verifyRes = await fetch(withClient.url + '/account?status=verify');
+    assert.doesNotMatch(verifyRes.headers.get('content-security-policy')!, /script-src/);
+    const verify = await verifyRes.text();
     assert.match(verify, resendForm);
     assert.match(verify, /<p role="status">请先打开 Auth0 发到你邮箱的验证邮件，验证后再重新登录。<\/p>/, 'the status still says what to do first');
     assert.match(verify, /<a class="button primary" href="\/account\/login">已验证，继续登录<\/a>/, 'and the sign-in link stays');
+    assert.doesNotMatch(verify, /setup-heading/, 'verify screen hides setupGuide');
     for (const query of ['', '?status=login', '?status=resent', '?status=link', '?status=verify&status=verify', '?status[]=verify'])
       assert.doesNotMatch(await page(withClient, query), noButton, query || 'no status');
-    assert.match(await page(withClient, '?status=resent'), /<p role="status">验证邮件已重新发送，请查收后重新登录。<\/p>/);
+    const resentRes = await fetch(withClient.url + '/account?status=resent');
+    assert.doesNotMatch(resentRes.headers.get('content-security-policy')!, /script-src/);
+    const resentHtml = await resentRes.text();
+    assert.match(resentHtml, /<p role="status">验证邮件已重新发送，请查收后重新登录。<\/p>/);
+    assert.doesNotMatch(resentHtml, /setup-heading/, 'resent screen hides setupGuide');
 
     assert.doesNotMatch(await page(without, '?status=verify'), noButton, 'no management client, no button');
     const post = (path: string) => fetch(without.url + path, { method: 'POST', redirect: 'manual', headers: { Origin: without.config.PUBLIC_URL } });

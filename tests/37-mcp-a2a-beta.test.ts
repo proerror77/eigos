@@ -143,9 +143,14 @@ test('Beta MCP consumer tools, A2A AgentCard/PRM, cross-protocol cancel, and /mc
     const inviteCode = await gateway.accounts.invite('beta@example.test', 24);
     assert.equal((await gateway.form('activate', beta.cookie, new URLSearchParams({ code: inviteCode }))).headers.get('location'), '/account');
     const tokenResponse = await gateway.form('agent-token', beta.cookie);
-    assert.equal(tokenResponse.status, 200);
-    const tokenHtml = await tokenResponse.text();
-    const tokenMatch = tokenHtml.match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/);
+    assert.equal(tokenResponse.status, 303);
+    assert.equal(tokenResponse.headers.get('location'), '/account');
+    const flashCookie = tokenResponse.headers.getSetCookie().find(value => value.startsWith('__Host-eigos-account-token='))?.split(';')[0];
+    assert(flashCookie, 'POST /account/agent-token must set the flash token cookie');
+    const tokenPage = await fetch(`${gateway.url}/account`, { headers: { Cookie: `${beta.cookie}; ${flashCookie}` } });
+    assert.equal(tokenPage.status, 200);
+    const tokenHtml = await tokenPage.text();
+    const tokenMatch = tokenHtml.match(/id="agent-token" readonly value="(eigos_agent_[A-Za-z0-9_-]{43})"/);
     assert(tokenMatch?.[1], 'Beta account must receive an eigos_agent_* token');
     const agentToken = tokenMatch[1];
 
