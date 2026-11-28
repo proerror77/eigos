@@ -857,7 +857,9 @@ test('relationship reads use the kernel while hydrating classified source and ta
   const f = await setup(document => {
     const label = { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] };
     document.objectTypes.find(type => type.apiName === 'Route')!.properties.name!.classification = label;
-    document.objectTypes.find(type => type.apiName === 'Place')!.properties.address!.classification = label;
+    const fields = document.objectTypes.find(type => type.apiName === 'Place')!.properties;
+    fields.address!.classification = label;
+    fields.sortRank = { description:'Optional protected sort field', required:false, schema:{type:'integer'} };
   });
   try {
     for (const clearance of clearances) {
@@ -885,6 +887,22 @@ test('relationship reads use the kernel while hydrating classified source and ta
     const visible = await read(clearances[2]);
     assert.equal(visible.result, 'A');
     assert.deepEqual(visible.classification, { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] });
+    const resource = f.model.document.id + '/property/Place/sortRank';
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security(ontology,type,property) VALUES($1,'Place','sortRank')`,[f.model.document.id]);
+    const base = businessGrants(f.model).filter(grant => grant.resource !== resource);
+    for (const id of ['missing-place','p1']) {
+      await setGrants(f.db,principal.owner,[...base,{resource,permission:'view_property'}]);
+      const routed = await Access.load(f.db,principal), reference = await Access.load(f.db,principal);
+      const query=querySchema.parse({type:'Place',where:{id},orderBy:[{property:'sortRank'}],limit:1});
+      const result=await queryWithKernel(f.kernel,f.model,routed,new Objects(f.db,f.model,routed),{query,offset:0});
+      assert(result);
+      const expected=await withQueryKernels(noKernel,()=>new Objects(f.db,f.model,reference).query(query));
+      assert.deepEqual(result.items,expected.items);
+      const proofs = [routed.dataRequirements(),reference.dataRequirements()];
+      await setGrants(f.db,principal.owner,base);
+      const revoked = await Access.load(f.db,principal);
+      assert.deepEqual(await Promise.all(proofs.map(proof=>revoked.canReturn(proof))),[false,false]);
+    }
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
