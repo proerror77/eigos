@@ -1,3 +1,4 @@
+import { readV50 } from './fixtures/history/v50.js';
 import { restaurantServices } from '../packages/ontology/restaurant-services.js';
 import { amapObservationDefinition } from '../packages/ontology/amap-observations.js';
 import { tableCheckReservations } from '../packages/ontology/tablecheck-reservations.js';
@@ -1011,17 +1012,8 @@ test('a hotel workflow saved under v8 replays in v9 and the current release with
   addedFunctions.add('readInteractiveRideEstimate');
   addedFunctions.add('recommendSchedule');
   addedFunctions.add('stageScheduleRecommendation');
-  const v9Definition = structuredClone(document);
+  const v9Definition = readV50();
   v9Definition.version = '9';
-  // Keep the review metadata contract pinned to the original v9 release.
-  const persistedScenario = v9Definition.objectTypes.find(type => type.apiName === 'OntologyScenario')!;
-  delete persistedScenario.interfaces.Scenario;
-  delete persistedScenario.properties.syncConflict;
-  delete persistedScenario.properties.reviewStatus;
-  v9Definition.actionTypes = v9Definition.actionTypes.filter(action => !action.rules?.some(rule => rule.op === 'reviewScenario'));
-  v9Definition.interfaceTypes = v9Definition.interfaceTypes.filter(type => type.apiName !== 'Scenario');
-
-  // Historical DiDi contracts predate PA-reported observations.
   const legacyEvidence = ['live_readonly', 'provider_mock', 'fixture'];
   v9Definition.objectTypes.find(type => type.apiName === 'SourceReceipt')!.properties.evidence!.schema.enum = legacyEvidence;
   for (const name of ['searchPlaces', 'estimateRoute', 'estimateLocations']) {
