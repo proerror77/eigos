@@ -19,7 +19,7 @@ import { mountWorkbench } from './workbench.js';
 import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js';
 import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { verifier, type VerifyToken } from './auth.js';
-import { createHostApp, type BusinessAdapter } from './host.js';
+import { createHostApp, type BusinessAdapter, type HostAppOptions } from './host.js';
 import { eigosAgentCard, mountA2AProtectedResourceMetadata } from './a2a-eigos.js';
 import { mountBuilderMcp, registerConsumerMcpTools } from './mcp-consumer.js';
 
@@ -46,15 +46,21 @@ const paTravelInstructions = [
 export function createApp(config: Config, db: Database, source: SourceResolver, verify: VerifyToken = verifier(config), extensions: RuntimeExtensions = {},
   providerFetch: { amapFetch?: typeof fetch; variFlightFetch?: typeof fetch; calendarFetch?: typeof fetch; travelPAFetch?: typeof fetch;
     dianpingFetch?: typeof fetch; tableCheckFetch?: typeof fetch; marketplaceFetch?: typeof fetch; localDeliveryFetch?: typeof fetch;
-    accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {}) {
+    accountLogin?: ReturnType<typeof auth0AccountLogin>; management?: Auth0Management } = {},
+  options?: HostAppOptions) {
   const { accountLogin, management, ...fetchers } = providerFetch;
   const capabilities = configuredCapabilities(db, config, extensions, source, fetchers);
-  const result = eigosApp(config, db, capabilities, verify, accountLogin, management);
+  const result = buildEigosApp(config, db, capabilities, verify, accountLogin, management, options);
   return { ...result, capabilities };
 }
 
 export function eigosApp(config: Config, db: Database, capabilities: import('../../packages/runtime/installation.js').InstalledRuntime,
-  verify = verifier(config), accountLogin?: ReturnType<typeof auth0AccountLogin>, management?: Auth0Management) {
+  options?: HostAppOptions) {
+  return buildEigosApp(config, db, capabilities, verifier(config), undefined, undefined, options);
+}
+
+function buildEigosApp(config: Config, db: Database, capabilities: import('../../packages/runtime/installation.js').InstalledRuntime,
+  verify = verifier(config), accountLogin?: ReturnType<typeof auth0AccountLogin>, management?: Auth0Management, options?: HostAppOptions) {
   const amendPlace = (tasks: Tasks, metadata: Metadata, p: Principal, id: string, raw: unknown) => {
     const input = taskPlaceAmendmentSchema.parse(raw);
     return 'source' in input ? amendMapPlace(tasks, metadata, capabilities.functions, p, id, input) : tasks.amendPlace(p, id, input);
@@ -170,5 +176,5 @@ export function eigosApp(config: Config, db: Database, capabilities: import('../
       }));
     },
   };
-  return createHostApp(config, db, capabilities, 'Eigos', verify, adapter);
+  return createHostApp(config, db, capabilities, 'Eigos', verify, adapter, options);
 }
