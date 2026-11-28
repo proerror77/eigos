@@ -1,3 +1,4 @@
+import { backfillScheduleReservations } from '../packages/capabilities/scheduling/reservation-upgrade.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {fixture,principal} from './fixture.js';
@@ -128,6 +129,15 @@ test('concurrent scenario merges cannot reserve the same resource twice',async()
   assert.equal((await new Objects(f.db,f.model,f.access).query({type:'ScheduledActivity'})).items.length,1);
   const occupied=await f.db.query(`SELECT count(*)::int AS n FROM ${f.db.schema}.resource_reservations WHERE state='committed'`);
   assert.equal(occupied.rows[0]!.n,1);
+  const ledger = () => f.db.query(`SELECT owner,holder,resource,allocation,occupied_at::text AS interval FROM ${f.db.schema}.resource_reservations WHERE state='committed' ORDER BY owner,holder,allocation`);
+  const original = (await ledger()).rows;
+  await f.db.query(`DELETE FROM ${f.db.schema}.resource_reservations`);
+  assert.equal(await backfillScheduleReservations(f.db,f.model.document.id),1);
+  assert.deepEqual((await ledger()).rows,original);
+  assert.equal(await backfillScheduleReservations(f.db,f.model.document.id),0);
+  await f.db.query(`UPDATE ${f.db.schema}.resource_reservations SET state='released'`);
+  assert.equal(await backfillScheduleReservations(f.db,f.model.document.id),0);
+  assert.deepEqual((await ledger()).rows,[]);
  }finally{await f.close();}
 });
 
@@ -152,7 +162,8 @@ test('the restricted database role completes PA handoff and merge without metada
     GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.objects,${f.db.schema}.links TO "${role}";
     GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.tasks,${f.db.schema}.source_calls,${f.db.schema}.scenarios,${f.db.schema}.scenario_objects,${f.db.schema}.scenario_links,${f.db.schema}.pa_requests TO "${role}";
     GRANT SELECT,INSERT ON ${f.db.schema}.task_inbox_events TO "${role}";
-      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns,${f.db.schema}.resource_reservations TO "${role}";
+      GRANT SELECT ON ${f.db.schema}.reservation_dispatches TO "${role}";
+      GRANT SELECT,INSERT,UPDATE ON ${f.db.schema}.task_turns,${f.db.schema}.resource_reservation_changes,${f.db.schema}.resource_reservations TO "${role}";
       GRANT SELECT,INSERT,UPDATE,DELETE ON ${f.db.schema}.source_values,${f.db.schema}.object_edits TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.edit_history TO "${role}";
       GRANT SELECT,INSERT ON ${f.db.schema}.link_history,${f.db.schema}.change_commits TO "${role}";

@@ -1,3 +1,4 @@
+import { backfillScheduleReservations } from '../../capabilities/scheduling/reservation-upgrade.js';
 import { businessDefinition } from './definition.js';
 import { Ontology } from '../../ontology/model.js';
 import { configuredCapabilities } from '../../capabilities/index.js';
@@ -12,6 +13,7 @@ export async function eigosInstallation(): Promise<Installation> {
   const extensions = await loadExtensions(process.env.EIGOS_EXTENSION_MODULE);
   return {
     model: new Ontology(businessDefinition), afterActivation: syncAccountGrantsAfterActivation, runtimeId: core => core,
+    async upgradeData(db,model) { await backfillScheduleReservations(db,model.document.id); },
     assemble: db => configuredCapabilities(db, config, extensions),
     driver() {
       const binary = process.env.EIGOS_HARNESS_BIN, credentialFile = process.env.EIGOS_HARNESS_CREDENTIAL_FILE;
