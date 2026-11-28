@@ -604,9 +604,8 @@ function transferDecisionReview(memory) {
   };
 }
 
-function inspectTask(task) {
+function renderTaskForm(task, body) {
   const locationRequest = task.state === 'input-required' && task.result?.kind === 'pa-request' && task.result.capability === 'location.resolve';
-  const body = element('div', {}, !locationRequest && element('p', {}, task.state + (task.error ? ' · ' + task.error : '')));
   if (task.state === 'input-required' && ['city', 'origin', 'destination'].includes(task.result?.kind)) {
     const kind = task.result.kind;
     const title = ({ city: '城市', origin: '上车点', destination: '目的地' })[kind];
@@ -753,43 +752,9 @@ function inspectTask(task) {
           'primary',
         ),
       );
-    } else {
-      const form = jsonSchemaForm(requestData.responseSchema);
-      body.append(
-        element('h3', {}, requestData.capability),
-        form.node,
-        button(
-          '回传原任务',
-          async () => {
-            await request('/tasks/' + task.id + '/pa-response', {
-              requestId: requestData.requestId,
-              response: form.read(),
-            });
-            $('#editor').close();
-            await renderProcesses();
-          },
-          'primary',
-        ),
-      );
     }
   }
-  if (task.result?.execution?.steps)
-    body.append(
-      table(
-        ['操作', '结果', '耗时'],
-        task.result.execution.steps.map((step) => [step.tool, step.outcome, step.durationMs + ' ms']),
-      ),
-    );
-  if (task.result && !locationRequest)
-    body.append(
-      element(
-        'details',
-        { class: 'section' },
-        element('summary', {}, '任务结果'),
-        element('pre', { class: 'code' }, JSON.stringify(task.result, null, 2)),
-      ),
-    );
-  modal('任务 ' + task.id.slice(0, 8), body);
+  return {handledPA:locationRequest || task.result?.capability === 'calendar.freebusy', hideResult:locationRequest};
 }
 
 function runHotelWorkflow(workflow) {
@@ -853,7 +818,7 @@ startWorkbench({
   trialPreset, preferredProcess:'EventTripStateLog', observationPreset:async () => (await import('./flight-watch.js')).flightWatch,
   tokenKey: 'eigos_token', actionKey: 'eigos_last_action',
   pages: { schedule: renderSchedule, map: renderMap, geometry: renderGeometry },
-  inspectTask, decisionReview: transferDecisionReview, runWorkflow: runHotelWorkflow,
+  renderTaskForm, decisionReview: transferDecisionReview, runWorkflow: runHotelWorkflow,
   workflowLabel: workflow => workflow.kind === 'learned-hotel-itinerary' ? '酒店行程 · 每次模拟前审批' : undefined,
   isMergeAction: action => action.apiName === 'CommitSchedulePlan',
 });
