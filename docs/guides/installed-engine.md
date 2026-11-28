@@ -64,3 +64,7 @@ npm run package:vm -- dist/vm
 ### 验收证据
 
 `tests/e2e/vm-isolation.test.ts` 在独立目录用同一制品安装两次，各自安装锁定的生产依赖，并使用独立数据库、数据库登录、Gateway、Worker、Indexer 和 PA 凭据。测试从同一用户的“家”地址和打车询价进入，故意复用对象键、消息号和会话号。它核对实际读取的地址、任务所有权、工作队列、跨环境回执拒绝，以及一侧拒绝、撤权或升级后另一侧仍能回读结果。供应商为本机 synthetic 只读来源，不创建出行订单或付款。独立测试在 PostgreSQL 的同一测试实例上使用两个禁止交叉连接的数据库，部署时也支持各自使用独立的 PostgreSQL 主机。
+
+### 部署控制器读取的版本信息
+
+VM 归档中的 `release.json` 和安装后的 `installation.json` 同时携带 EIGOS 的 `solutionVersion` 与消费的 `foundry` 锁清单。后者记录上游仓库、发行版本、源提交，以及 Engine、SDK、Native 源码包的摘要。`engine` 和 `solution` 标识本次构建的两个文件树，`native` 记录实际二进制和协议。归档整体的 SHA-256 由构建流水线在打包后产生，可以作为跨环境推进的制品标识。环境中的活动 Ontology Release、投影、数据库身份和实现绑定以运行角色执行 `verify` 返回的回执为准。旧回执没有上游锁字段时，沿用原验证和升级流程。
