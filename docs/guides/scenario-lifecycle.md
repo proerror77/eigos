@@ -91,3 +91,7 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 所有者可通过已发布的 `SubmitScenarioReviewForMerge` 提交方案、指定审阅人，并在 `merge` 中传入一个合并 Action 的名称和完整参数。该 Action 只包含一个 `applyScenario` 规则，参数必须指向本方案及提交审阅后的修订号。所有者需要该 Action 的执行权限。普通提交审阅会清除之前的合并授权。
 
 审阅人检查差异后，使用 `ApproveAndMergeScenarioReview` 传入方案 ID、修订号和所见快照摘要。事务用审阅人身份写审批，并用所有者提交时的身份重新检查原合并 Action 和实时数据权限。双方使用各自的 Action 回执。审阅失效、授权撤回或实时冲突都会使本次审批和业务编辑一起回滚。相同请求重试得到原回执。需要分别审批和合并时，仍可调用原有的审批与合并 Action。
+
+### EIGOS 业务定义版本
+
+业务定义从 v50 升为 v51。该变更向后兼容：新增一个 Scenario Interface、五个审阅 Action，元数据的 `syncConflict` 与 `reviewStatus` 都是可选属性。已有 Action 名称和旧接口参数不变。v50 的发布仍按原发布标识及定义摘要 `6ceae09f9f119815a5c0abb7ad4320547bc365c8730a24123928b43a9aebd8f6` 回读。已创建的方案继续绑定其原发布。部署时运行存储升级，准备候选并使用与该次发布绑定的 SDK 定义摘要。
