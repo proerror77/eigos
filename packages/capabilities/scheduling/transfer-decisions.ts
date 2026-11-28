@@ -1,3 +1,4 @@
+import { scenarioDecisionApprovalSchema } from '../../ontology/scenario-decision.js';
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import {
   reviewTransferInput, transferDecisionType, transferEvidenceLink, transferJudgmentSchema, transferObservation,
@@ -112,6 +113,7 @@ async function adoptedLessonIsCurrent(
 
 export function transferDecisionSupport(db: Database): ScenarioDecisionSupport {
   return {
+    parseDecision: input => scenarioDecisionApprovalSchema.parse(input),
     async inspect(context) {
       try {
         const target = await reviewTarget(db, context);
