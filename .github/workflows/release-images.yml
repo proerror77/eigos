@@ -1,5 +1,5 @@
 name: Release images
-# Publishes the Gateway and Worker images of one reviewed main commit. It runs only when started by hand.
+# Publishes the Gateway, Worker and Indexer images of one reviewed main commit. It runs only when started by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -46,7 +46,8 @@ jobs:
         run: |
           docker build --target runtime --tag eigos-release:gateway .
           docker build --target worker --tag eigos-release:worker .
-          scripts/container-smoke.sh eigos-release:gateway eigos-release:worker
+          docker build --target indexer --tag eigos-release:indexer .
+          scripts/container-smoke.sh eigos-release:gateway eigos-release:worker eigos-release:indexer
       - name: Log in to GitHub Container Registry
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,8 +58,8 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
-          # Check both tags first, so a release never publishes one role and stops on the other.
-          for role in gateway worker; do
+          # Check all role tags first, so a release never publishes one role and stops on another.
+          for role in gateway worker indexer; do
             if result=$(docker manifest inspect "$repository/$role:sha-$SOURCE_SHA" 2>&1); then
               echo "$role:sha-$SOURCE_SHA is already published and is never overwritten" >&2
               exit 1
@@ -67,7 +68,7 @@ jobs:
               exit 1
             fi
           done
-          for role in gateway worker; do
+          for role in gateway worker indexer; do
             docker tag "eigos-release:$role" "$repository/$role:sha-$SOURCE_SHA"
             docker push "$repository/$role:sha-$SOURCE_SHA"
             echo "- \`$(docker inspect --format '{{index .RepoDigests 0}}' "$repository/$role:sha-$SOURCE_SHA")\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Checks built EIGOS images without settings, network or registry access.
-# Usage: scripts/container-smoke.sh <runtime image> <worker image>
+# Usage: scripts/container-smoke.sh <runtime image> <worker image> [indexer image]
 set -euo pipefail
-runtime=$1 worker=$2
+runtime=$1 worker=$2 indexer=${3:-}
 
 docker run --rm --network none --entrypoint node "$runtime" \
   -e 'if (process.getuid() === 0) throw new Error("The image must run as a nonroot user")'
 test "$(docker image inspect "$worker" --format '{{json .Config.Cmd}}')" = '["node","dist/apps/worker/main.js"]'
+if [[ -n "$indexer" ]]; then
+  test "$(docker image inspect "$indexer" --format '{{json .Config.Cmd}}')" = '["node","dist/apps/indexer/main.js"]'
+fi
 
 for entry in gateway worker indexer; do
   # Static imports load before an entry point reads its settings, so a missing package fails first.
