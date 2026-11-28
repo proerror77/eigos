@@ -25,6 +25,7 @@ import { aggregateWithKernel, evaluateWithKernel, KernelClient, queryWithKernel 
 import { ObjectSets } from '../../packages/runtime/object-sets.js';
 import { Objects, querySchema } from '../../packages/runtime/objects.js';
 import { fixture, principal } from '../../tests/fixture.js';
+import { measureScenarioRebase } from './scenario-rebase.js';
 
 const flag = (name: string) => process.argv.find(arg => arg.startsWith(`--${name}=`))?.split('=')[1];
 const sizes = (flag('sizes') ?? '100000').split(',').map(Number);
@@ -243,6 +244,7 @@ for (const n of sizes) {
   } finally { await f.close(); await rm(data, { recursive: true, force: true }); }
 }
 const out = flag('out');
-const summary = { benchmark: 'engine-08', at: new Date().toISOString(), platform: `${process.platform}-${process.arch}`, node: process.version, runs, sizes: report };
+const scenarioRebase = await measureScenarioRebase();
+const summary = { scenarioRebase, benchmark: 'engine-08', at: new Date().toISOString(), platform: `${process.platform}-${process.arch}`, node: process.version, runs, sizes: report };
 if (out) await writeFile(out, JSON.stringify(summary, null, 1) + '\n');
 console.log(JSON.stringify({ done: true, out }));
