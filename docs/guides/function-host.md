@@ -402,3 +402,17 @@ Scenario 离线求值保持隔离。需要外部写入的业务流使用经授�
 
 上线时先完成 schema 升级。生产运行角色需要对 `function_invocations`
 执行 SELECT、INSERT、DELETE，并需要对该表的 identity sequence 有 USAGE。
+
+## 模型与流式组件
+
+Foundry Engine 和 SDK 提供协议 4。EIGOS 的读函数实现可以声明 `"models":["Writer"],"stream":"text"`。发布时，模型别名、端点、供应商、模型、密钥引用和输出 token 上限进入函数绑定。修改映射后重新准备发布。普通函数沿用当前返回值契约，流式函数额外提供提前到达的 UTF-8 文本。消费方在收到最终结果后才认定调用成功。
+
+在 Gateway、Worker 和 Indexer 使用一致的 `EIGOS_FUNCTION_MODELS_FILE`，例如：
+
+```json
+{"Writer":{"provider":"ModelService","model":"writer-v1","endpoint":"https://models.example.com/v1/chat/completions","secret":"writer","maxTokens":512}}
+```
+
+使用与组件 Source 相同的加密密钥包和解封密钥配置。模型服务需支持 Chat Completions SSE（含 `stream_options.include_usage`）。每个 owner 要有准确匹配供应商和模型的有效模型出口许可，其级别和分区须覆盖调用读取的数据。端点、凭据和网络跳转由运行时控制。撤回权限、达到 deadline 或消费方断开会中止后续传输。调用记录中的 token 是供应商已报告的值，`reportedCalls` 小于 `calls` 表示有调用没有完整报告；提前中断时只保留已经收到的 token 计数。
+
+在组件内调用 `language-model.generate(alias, messagesJson)`，循环调用 `next()`，`none` 表示结束。每次调用至多打开 8 次生成，同一时刻读取一个生成。用 `streaming.emit(text)` 提前发送文本，所有分段共享函数的 `outputBytes` 上限。函数最后仍按发布的 `returns` 返回 JSON。SDK 可用 `for await (const event of client.evaluateStream(name,input))` 消费 `chunk` 和 `result`。HTTP 客户端向 `POST /ontology/functions` 发送 `Accept: text/event-stream`，每条 `data` 消息包含 `type`。流在中途失败时发出 `error`，取消或断路可能直接关闭连接。MCP `stream_ontology_function` 接受标准 `progressToken`，每个进度消息携带一段文本。

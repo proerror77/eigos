@@ -92,11 +92,7 @@
 
 ## 09：规模化
 
-分区、Saga、事件风暴、供应商治理和分层 Agent 运行时，各自另行设计。前提是上面各项完成之后，用 Engine Benchmark 08 和生产数据确认瓶颈在哪里，再定先做哪一项：
-- **分区：** 按 owner 把对象和日志表分区，迁移要在线进行；
-- **Saga：** 跨供应商的多步履约，每步带补偿 Action，状态存在 Ontology 中；
-- **供应商治理：** 每个供应商的出口策略、配额、凭据轮换和故障隔离；
-- **分层 Agent 运行时：** 规划、执行、观察分层，各层用 05.4 的订阅衔接。
+[Foundry 规模化设计](https://github.com/proerror77/MDN-Man-Do-Nothing-Foundry/blob/main/docs/scaling.md) 定义了在线分区与回滚、Saga、事件风暴、供应商隔离和分层 Agent 的恢复语义与验收方法。EIGOS 提供 Engine Benchmark 08、排程与供应商业务验收、VM 运行角色及生产样本；通用实现跟随锁定的 Foundry 发行版本。东京目前的排队样本不足以选择生产分区规模。
 
 ## 依赖与顺序
 

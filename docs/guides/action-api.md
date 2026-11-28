@@ -64,3 +64,6 @@ const result = await client.query({ type: 'Place', limit: 10 })
 ```
 
 生成类型提供对象属性、Action 参数以及读取 Function 的输入和返回值。服务端始终校验发布契约和权限。发布结构变更时，用目标环境的新定义重新生成类型。
+
+
+热点对象并发与逐字段比较沿用上游 [Foundry 平台运行时](https://github.com/proerror77/MDN-Man-Do-Nothing-Foundry/blob/main/docs/platform-concurrency.md)。EIGOS 通过既有 Action 入口提交，独立请求的权限、回执和租约均保留。

@@ -1,3 +1,4 @@
+import { scenarioDecisionApprovalSchema, type ScenarioDecision } from '../../ontology/scenario-decision.js';
 import { Conflict, NotFound, digest } from '../../core/identity.js';
 import {
   reviewTransferInput, transferDecisionType, transferEvidenceLink, transferJudgmentSchema, transferObservation,
@@ -110,8 +111,9 @@ async function adoptedLessonIsCurrent(
   return Boolean(lesson && lesson.assessment !== 'insufficient' && lesson.version === reference.version);
 }
 
-export function transferDecisionSupport(db: Database): ScenarioDecisionSupport {
+export function transferDecisionSupport(db: Database): ScenarioDecisionSupport<ScenarioDecision,ScenarioDecisionMemory> {
   return {
+    parseDecision: input => scenarioDecisionApprovalSchema.parse(input),
     async inspect(context) {
       try {
         const target = await reviewTarget(db, context);

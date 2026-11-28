@@ -101,6 +101,23 @@ OAuth 的任务读写权限用于原任务及 PA 回传；直接 Scenario 操作
 
 工程测试覆盖真实 PostgreSQL 事务、权限隔离、时效、原任务恢复、Scenario 冲突与并发合并。进程 E2E 使用独立 Gateway/Worker，MCP 提交、A2A 回传、MCP 检查及显式合并。模型决策和 PA Calendar 都是明确标注的合成夹具。真实用户 PA 的 Calendar 适配、生产部署和真实日历联调需要对应环境验收。
 
+## 时序模型模拟
+
+数值时间序列的属性 schema 使用 JSON 数组和 `format: "eigos-timeseries"`。
+标准定义可从 `packages/ontology/time-series.ts` 的
+`timeSeriesJsonSchema` 复用。每点包含 ISO 8601 时间 `t` 和数值 `v`。
+时间按毫秒严格递增，每个序列最多保存 1 万点。
+
+派生属性可声明 `{op:"timeseries",property:"demandHistory",aggregate:"avg",
+window:{size:2,step:1}}`。窗口大小和步长以点数计算，每个结果使用窗口
+最后一点的时间。读取沿用原属性的可见性。该表达式由参考查询求值。
+
+把预测契约声明为 `kind: "model"` 的 Function，再由已有的
+Function-backed Action 执行。先在 Scenario 中覆盖输入属性，再对该
+Scenario 提交模型 Action，预测字段留在该 Scenario。调用
+`compare_scenarios` 可对同一指标读取正式数据基线和多个方案修订。
+[Vertex Scenario](https://www.palantir.com/docs/foundry/vertex/scenarios-overview/) · [Functions on models](https://www.palantir.com/docs/foundry/functions/functions-on-models/)
+
 ## 正式排程的资源占用
 
 确认方案时，Action 在同一事务按计划的当前活动和必要资源更新
@@ -108,7 +125,10 @@ OAuth 的任务读写权限用于原任务及 PA 回传；直接 Scenario 操作
 GiST 排他约束拒绝同一资源的重叠预留。若更新与其他持有人冲突，原预留
 和本次 Action 的状态一起回滚。排程使用本体和所有者作用域内的资源身份。
 
-数据库管理员在 schema 升级安装 PostgreSQL 自带的 `btree_gist` 扩展，
-并向执行排程的运行角色授予该表的 SELECT、INSERT 和 UPDATE。已有
-排程仍沿用已发布图中的冲突校验。预留表覆盖新确认或重新确认的计划。
-[Ontology 资源与排程约束](https://www.palantir.com/docs/foundry/dynamic-scheduling/scheduling-overview/)
+数据库升级安装 PostgreSQL 自带的 `btree_gist` 扩展。EIGOS 安装的 upgrade 会读取正式投影中已确认的计划；旧定义缺少状态字段时，通过原 `CommitSchedulePlan` 回执识别。升级在事务内把活动与计划资源恢复为原占用，发现重叠就整次回滚。已有账本记录的计划保留其新占用、暂存或释放状态，重复升级不会重新占用已释放资源。运行角色需要对 `resource_reservations` 的 SELECT、INSERT、UPDATE 及对 `reservation_dispatches` 的 SELECT、INSERT、DELETE。
+
+发布 Action 时可以声明 `reservation: { holderParameter: "holder", allocationsParameter: "allocations", state: "committed" }`。持有人参数必须声明对象类型。每项预留包含 `allocation`、可读的 `resource` 对象引用、`start` 与 `end`。普通 Action 与排程共享同一套 owner 和本体资源键。`sharedSource` 可指定已发布的数据源，调用者还需该源的派发权限；同一源下代表同一共享资源的引用使用跨 owner 的排他键。释放 Action 声明 `state: "released"` 并传入空列表。
+
+需要供应商写入的 Function 继续通过原 `assertDispatch` 和外部操作记录请求。在原派发事务内暂存新旧占用区间的并集。供应商结果未知时，账本保留两组区间并将变更绑定原请求。核对原回执后由原 Action 提交最终占用或释放。独立请求不能替尚未核对的供应商请求释放资源。Scenario 只在正式合并事务写入账本。
+
+若供应商确认来自提交后的外发副作用，发布者可在预留声明加 `confirmationEffect`，指向同一 Action 已声明的效果名称。在原 Action 和外发意图提交时保留新旧区间；只有该效果的成功确认事务会切换到最终占用。可确定没有执行的取消恢复旧占用，未知结果保留预留并沿用原幂等键重试。需要外部确认的操作经原正式 Action 提交及授权；普通 Scenario 的预留在合并时检查。普通 Action 撤销会在同一事务核对原预留日志并恢复可用区间。已经完成的供应商操作需通过授权的补偿 Action 处理。

@@ -45,7 +45,12 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 在工作台「方案比较」打开自己的持久方案，选择「邀请审阅」并填写对方从「我的身份」复制的审阅身份。受邀账号可在「方案比较」或「流程运行」的「受邀审阅」中打开差异并批准该修订。使用「同步正式数据」将兼容的正式数据变更带入方案。同步产生新修订时需要重新审阅，冲突由运行层返回。这里沿用同一发布内的显式变基和已发布合并 Action。参考 [Palantir Scenario 隔离与合并](https://www.palantir.com/docs/foundry/ontology/overview-ontology-scenario)。
 
-审阅者使用 `inspect_scenario_review({id})` 读取拟议属性和 Link 的差异。创建者和审阅者都要满足当前对象、行、字段及 Link 权限。审阅者通过该接口读取被邀请方案的差量，提交 `approve_scenario_review({id,revision,snapshot})`。合并由数据所属账号通过有权执行的已发布 Action 提交，并复核当前邀请、审阅者权限及准确版本。快照绑定差异、录入顺序和修订号。修改方案、变基或修改审阅者名单均要求重新批准。[Palantir 持久方案审阅](https://www.palantir.com/docs/foundry/ontology/persisted-scenario)
+审阅者使用 `inspect_scenario_review({id})` 读取拟议属性和 Link 的差异。创建者和审阅者都要满足当前对象、行、字段及 Link 权限。审阅者通过该接口读取被邀请方案的差量，提交 `approve_scenario_review({id,revision,snapshot})`。合并由数据所属账号通过有权执行的已发布 Action 提交，并复核当前邀请、审阅者权限及准确版本。快照绑定差异、录入顺序和修订号。修改方案、变基或修改审阅者名单均要求重新批准。
+已发布的 `SubmitScenarioReview`、`ApproveScenarioReview` 和
+`RejectScenarioReview` 以相同的权限与修订校验记录正式 Action。旧邀请和批准
+接口在支持的发布上调用这些 Action，回执格式保持兼容。驳回接口为
+`reject_scenario_review({id,revision,snapshot})`，同一被驳回修订需取得新修订
+后才能重新审阅。方案对象通过 `reviewStatus` 显示当前修订的审阅结果。[Palantir 持久方案审阅](https://www.palantir.com/docs/foundry/ontology/persisted-scenario)
 
 ## 内部排程重规划
 
@@ -63,7 +68,7 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 
 `packages/sdk/client.ts` 导出 `OntologyClient`、`ScenarioClient` 和 `OntologyHttpError`。宿主提供服务地址、可选 Ontology 名称和 Bearer token 或取 token 的函数。客户端支持查询、Function、Action、服务调用及 Scenario 生命周期。
 
-通过 `client.scenario(id)` 获取具备场景范围的客户端。Query、Function 和编辑 Action 自动携带 scenarioId。`merge`、`rebase` 和 `discard` 要求提供已读取的 revision。审阅使用 `inviteReviewers`、`inspectReview` 和 `approveReview`。临时客户端可使用 `closeSession` 关闭所属会话。HTTP 错误保留响应状态与错误内容，取消信号传给实际 HTTP 请求。
+通过 `client.scenario(id)` 获取具备场景范围的客户端。Query、Function 和编辑 Action 自动携带 scenarioId。`merge`、`rebase` 和 `discard` 要求提供已读取的 revision。审阅使用 `inviteReviewers`、`inspectReview`、`approveReview` 和 `rejectReview`。临时客户端可使用 `closeSession` 关闭所属会话。HTTP 错误保留响应状态与错误内容，取消信号传给实际 HTTP 请求。
 
 ## 方案评估
 
@@ -80,3 +85,13 @@ Scenario 的对象和关系差量由已有 Query、Function、Action 运行层�
 ## 验证
 
 回归覆盖临时会话归属、关闭与过期清理，元数据共享及撤销，Struct 编辑和通用合并，Action 补偿及更新冲突，待投递副作用取消和执行中拒绝，重规划放弃与合并，以及过去时段的最终提交拒绝。日历测试使用明确标注的合成 PA 数据。
+
+### 审批并合并一个已授权的方案
+
+所有者可通过已发布的 `SubmitScenarioReviewForMerge` 提交方案、指定审阅人，并在 `merge` 中传入一个合并 Action 的名称和完整参数。该 Action 只包含一个 `applyScenario` 规则，参数必须指向本方案及提交审阅后的修订号。所有者需要该 Action 的执行权限。普通提交审阅会清除之前的合并授权。
+
+审阅人检查差异后，使用 `ApproveAndMergeScenarioReview` 传入方案 ID、修订号和所见快照摘要。事务用审阅人身份写审批，并用所有者提交时的身份重新检查原合并 Action 和实时数据权限。双方使用各自的 Action 回执。审阅失效、授权撤回或实时冲突都会使本次审批和业务编辑一起回滚。相同请求重试得到原回执。需要分别审批和合并时，仍可调用原有的审批与合并 Action。
+
+### EIGOS 业务定义版本
+
+业务定义从 v50 升为 v51。该变更向后兼容：新增一个 Scenario Interface、五个审阅 Action，元数据的 `syncConflict` 与 `reviewStatus` 都是可选属性。已有 Action 名称和旧接口参数不变。v50 的发布仍按原发布标识及定义摘要 `6ceae09f9f119815a5c0abb7ad4320547bc365c8730a24123928b43a9aebd8f6` 回读。已创建的方案继续绑定其原发布。部署时运行存储升级，准备候选并使用与该次发布绑定的 SDK 定义摘要。

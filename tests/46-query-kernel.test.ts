@@ -104,6 +104,24 @@ test('the query kernel returns the reference result for every supported Object S
   } finally { await f.kernel.stop(); await f.close(); }
 });
 
+test('bounded traversal detects an oversized intermediate step even when the final set contracts', { skip: !binary }, async () => {
+  const f = await setup();
+  try {
+    const start = { op:'refs', objects:[place('p1')] };
+    const path = [{link:'departingRoutes'},{link:'origin'}];
+    const traverse = (frontierLimit:number) => ({op:'traverse',set:start,path,frontierLimit});
+    const exact = { set:traverse(3),limit:1 };
+    const ref = await f.sets.evaluate(f.access,f.model,exact);
+    const result = await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,exact as never);
+    assert(result);
+    assert.deepEqual(values(result.items),values(ref.items));
+    assert.equal(result.total,1);
+    const tooWide = {set:traverse(2),limit:1};
+    assert.equal(await evaluateWithKernel(f.kernel,f.model,f.access,f.graph,tooWide as never),undefined);
+    await assert.rejects(f.sets.evaluate(f.access,f.model,tooWide),/frontier limit/);
+  } finally { await f.kernel.stop(); await f.close(); }
+});
+
 test('the query kernel aggregates like the reference', { skip: !binary }, async () => {
   const f = await setup();
   try {
@@ -839,12 +857,21 @@ test('relationship reads use the kernel while hydrating classified source and ta
   const f = await setup(document => {
     const label = { sensitivity: 'CONFIDENTIAL' as const, compartments: ['FINANCE'] };
     document.objectTypes.find(type => type.apiName === 'Route')!.properties.name!.classification = label;
-    document.objectTypes.find(type => type.apiName === 'Place')!.properties.address!.classification = label;
+    const fields = document.objectTypes.find(type => type.apiName === 'Place')!.properties;
+    fields.address!.classification = label;
+    fields.sortRank = { description:'Optional protected sort field', required:false, schema:{type:'integer'} };
   });
   try {
     for (const clearance of clearances) {
       await compareFollow(f, clearance, { ref: route('a'), link: 'origin' });
       await compareFollow(f, clearance, { ref: place('p1'), link: 'departingRoutes' });
+    }
+    for (const clearance of clearances) {
+      await compareQuery(f,clearance,{type:'Place',where:{id:'p1'},orderBy:[{property:'name'}]});
+      const access = await Access.load(f.db,principal), graph = new Objects(f.db,f.model,access);
+      const partial = await access.measureEgress(() => queryWithKernel(f.kernel,f.model,access,graph,{
+        query:querySchema.parse({type:'Place',orderBy:[{property:'name'}],limit:1}),offset:0 }),clearance);
+      assert.equal(partial.result,undefined,'a partial page cannot account for classified cells outside the page');
     }
     const read = async (clearance: Clearance) => {
       const access = await Access.load(f.db, principal), graph = new Objects(f.db, f.model, access);
@@ -860,6 +887,22 @@ test('relationship reads use the kernel while hydrating classified source and ta
     const visible = await read(clearances[2]);
     assert.equal(visible.result, 'A');
     assert.deepEqual(visible.classification, { sensitivity: 'CONFIDENTIAL', compartments: ['FINANCE'] });
+    const resource = f.model.document.id + '/property/Place/sortRank';
+    await f.db.query(`INSERT INTO ${f.db.schema}.property_security(ontology,type,property) VALUES($1,'Place','sortRank')`,[f.model.document.id]);
+    const base = businessGrants(f.model).filter(grant => grant.resource !== resource);
+    for (const id of ['missing-place','p1']) {
+      await setGrants(f.db,principal.owner,[...base,{resource,permission:'view_property'}]);
+      const routed = await Access.load(f.db,principal), reference = await Access.load(f.db,principal);
+      const query=querySchema.parse({type:'Place',where:{id},orderBy:[{property:'sortRank'}],limit:1});
+      const result=await queryWithKernel(f.kernel,f.model,routed,new Objects(f.db,f.model,routed),{query,offset:0});
+      assert(result);
+      const expected=await withQueryKernels(noKernel,()=>new Objects(f.db,f.model,reference).query(query));
+      assert.deepEqual(result.items,expected.items);
+      const proofs = [routed.dataRequirements(),reference.dataRequirements()];
+      await setGrants(f.db,principal.owner,base);
+      const revoked = await Access.load(f.db,principal);
+      assert.deepEqual(await Promise.all(proofs.map(proof=>revoked.canReturn(proof))),[false,false]);
+    }
   } finally { await f.kernel.stop(); await f.close(); }
 });
 

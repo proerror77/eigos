@@ -883,12 +883,13 @@ async function renderFunctionInvocations() {
       .map(([operation, values]) => `${operation} ×${values.count} · ${values.durationMs.toFixed(1)} ms`).join(' / ');
     results.replaceChildren(
       data.items.length ? table(
-        ['时间', '版本', '调用者', '状态', '耗时', '宿主耗时', 'Fuel', 'Ontology 回调'],
+        ['时间', '版本', '调用者', '状态', '耗时', '宿主耗时', 'Fuel', '模型用量', '宿主回调'],
         data.items.map(item => [
           new Date(item.startedAt).toLocaleString(), item.version ?? '内置', item.owner,
           item.status === 'returned' ? '成功' : item.errorCode,
           item.durationMs + ' ms', item.hostMs === null ? null : item.hostMs + ' ms',
-          item.fuelUsed?.toLocaleString(), callbackText(item.callbacks),
+          item.fuelUsed?.toLocaleString(), item.modelUsage?.map(row => row.alias + ' · 输入 ' + row.inputTokens + ' / 输出 ' + row.outputTokens
+            + (row.reportedCalls < row.calls ? '（' + (row.calls - row.reportedCalls) + ' 次无完整报告）' : '')).join('，'), callbackText(item.callbacks),
         ]),
       ) : empty('过去 30 天没有此函数的调用记录。'),
       ...(data.cursor ? [button('更早的调用', () => load(data.cursor))] : []),

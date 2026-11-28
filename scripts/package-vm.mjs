@@ -38,9 +38,15 @@ const model = new Ontology(
 if (model.document.id !== 'Eigos') throw new Error('EIGOS registration requires its Eigos definition');
 await writeFile(join(solution, 'ontology.json'), JSON.stringify(model.document) + '\n');
 const native = {};
-for (const [name, variable, protocol] of [
-  ['kernel', 'EIGOS_KERNEL_BIN', 2],
-  ['function-host', 'EIGOS_FUNCTION_HOST_BIN', 3],
+async function functionHostProtocol() {
+  const source = await readFile('function-host/src/main.rs', 'utf8');
+  const version = /^const PROTOCOL: u32 = ([0-9]+);$/m.exec(source);
+  if (!version) throw new Error('Missing protocol declaration in the pinned function host source');
+  return Number(version[1]);
+}
+for (const [name, variable] of [
+  ['kernel', 'EIGOS_KERNEL_BIN'],
+  ['function-host', 'EIGOS_FUNCTION_HOST_BIN'],
 ]) {
   const binary = process.env[variable];
   if (binary) {
@@ -49,7 +55,7 @@ for (const [name, variable, protocol] of [
     await chmod(join(core, 'bin', name), 0o755);
     native[name] = {
       sha256: sha256(await readFile(binary)),
-      protocol,
+      protocol: name === 'function-host' ? await functionHostProtocol() : 2,
       ...(name === 'function-host' ? { world: 'eigos:function/handler@0.2.0' } : {}),
     };
   }
