@@ -16,6 +16,11 @@ import { jwtVerifier } from '../apps/gateway/auth.js';
 
 const modelFile=Buffer.from('solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n');
 
+async function workbenchScripts() {
+  const assets = ['../apps/ontology-workbench/core.js', '../apps/workbench/app.js'];
+  return (await Promise.all(assets.map(path => readFile(new URL(path, import.meta.url), 'utf8')))).join('\n');
+}
+
 test('workbench renders relationship conflicts, manages Scenario reviews and scopes queries', async () => {
   const buttons = new Map<string, () => Promise<void>>();
   const controls: { value: string; placeholder?: string }[] = [];
@@ -30,7 +35,7 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
   const processRule = { id: 'process-rule-fixture', revision: 2, name: 'Late trip', enabled: true,
     process: { type: 'EventTripStateLog', to: 'authorized', dwellSeconds: 7200 }, workflow: 'workflow-fixture' };
   const context = {
-    document: { querySelector: node, querySelectorAll: () => [] },
+    document: { querySelector: (selector: string) => selector === '#ontology-name' ? { ...node(), value: 'Eigos' } : node(), querySelectorAll: () => [] },
     sessionStorage: { getItem: () => null },
     window: { addEventListener() {} },
     uiElement: (_tag: string, attributes: Record<string, unknown> = {}, ...children: unknown[]) => {
@@ -80,7 +85,7 @@ test('workbench renders relationship conflicts, manages Scenario reviews and sco
       return { items: [] };
     },
   };
-  const source = await readFile(new URL('../apps/workbench/app.js', import.meta.url), 'utf8');
+  const source = await workbenchScripts();
   const workbench = runInNewContext(source + `
     element = uiElement;
     select = uiSelect;
@@ -171,7 +176,14 @@ test('workbench serves guarded assets and normal HTTP model, media and SDK scena
   const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};
   try{
     const html=await fetch(base+'/workbench/');assert.equal(html.status,200);assert((await html.text()).includes('Ontology 工作台'));assert(html.headers.get('content-security-policy')?.includes("object-src 'none'"));
-    assert.equal((await fetch(base+'/workbench/app.js')).status,200);
+    const shell = await (await fetch(base+'/workbench/')).text();
+    assert.match(shell, /value="Eigos"/);
+    assert.match(shell, /data-page="schedule"/);
+    assert.match(shell, /data-page="map"/);
+    assert.match(await (await fetch(base+'/workbench/app.js')).text(), /runHotelWorkflow/);
+    const core = await (await fetch(base+'/workbench/core.js')).text();
+    assert.match(core, /function renderModel/);
+    assert.doesNotMatch(core, /runHotelWorkflow|CommitSchedulePlan/);
     assert.equal(html.headers.get('permissions-policy'),'geolocation=(self)');
     assert.equal((await fetch(base+'/workbench/task-location.js')).status,200);
     assert.equal((await fetch(base+'/ontology/media',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:modelFile})).status,401);
@@ -419,7 +431,7 @@ test('workbench pages large relationships through the authorized Link query', as
     revision: 1, properties: { name: 'Activity ' + index } });
   const page = (start: number, length: number) => Array.from({ length }, (_, index) => activity(start + index));
   const context = {
-    document: { querySelector: node, querySelectorAll: () => [] },
+    document: { querySelector: (selector: string) => selector === '#ontology-name' ? { ...node(), value: 'Eigos' } : node(), querySelectorAll: () => [] },
     sessionStorage: { getItem: () => null },
     window: { addEventListener() {} },
     uiElement: (_tag: string, attributes: Record<string, unknown> = {}) => ({ ...node(), ...attributes }),
@@ -439,7 +451,7 @@ test('workbench pages large relationships through the authorized Link query', as
       return { items: [] };
     },
   };
-  const source = await readFile(new URL('../apps/workbench/app.js', import.meta.url), 'utf8');
+  const source = await workbenchScripts();
   const workbench = runInNewContext(source + `
     element = uiElement;
     button = uiButton;
@@ -468,8 +480,8 @@ test('workbench pages large relationships through the authorized Link query', as
 test('workbench explains blocked historical drafts and creates an empty recovery proposal through the normal lifecycle',async()=>{
   const buttons=new Map<string,()=>Promise<void>>(),tables:{headers:string[];rows:any[][]}[]=[],requests:{path:string;input:any}[]=[];
   const node=()=>({append(){},replaceChildren(){},close(){}});
-  const source=await readFile(new URL('../apps/workbench/app.js',import.meta.url),'utf8');
-  const context={document:{querySelector:node,querySelectorAll:()=>[]},sessionStorage:{getItem:()=>null},window:{addEventListener(){}},
+  const source=await workbenchScripts();
+  const context={document:{querySelector:(selector:string)=>selector==='#ontology-name'?{...node(),value:'Eigos'}:node(),querySelectorAll:()=>[]},sessionStorage:{getItem:()=>null},window:{addEventListener(){}},
     crypto:{randomUUID:()=>'recovery-request'},uiNode:node,
     uiElement:()=>node(),uiButton:(label:string,action:()=>Promise<void>)=>{buttons.set(label,action);return {label};},
     uiTable:(headers:string[],rows:any[][])=>{tables.push({headers,rows});return node();},

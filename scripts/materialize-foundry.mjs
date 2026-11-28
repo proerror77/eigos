@@ -41,7 +41,7 @@ export function materialize(target = root, { native = false, engineOnly = false 
       for (const entry of readdirSync(base, { recursive: true, withFileTypes: true })) {
         if (!entry.isFile()) continue;
         const path = join(entry.parentPath, entry.name).slice(base.length + 1);
-        if (!engineOnly && (path === 'implementation.json' || path === 'package.json')) continue;
+        if (!engineOnly && (path.startsWith('deployment/') || path === 'LICENSE' || path === 'implementation.json' || path === 'package.json')) continue;
         const relative = join(engine || source ? '' : 'packages', path);
         const file = join(target, relative),
           origin = join(base, path),

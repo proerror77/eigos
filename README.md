@@ -205,6 +205,8 @@ Luma 默认沿用原 PA 已连接的 MCP。未来执行需要 PA 持续处理 `l
 
 `/workbench/` 提供同一套服务的浏览器入口，包括建模提案、对象及关系探索、查询、Scenario、排程和规则。三维文件与标注是独立的可选应用领域。
 
+通用建模、审阅、发布和对象探索界面来自锁定的 Foundry Engine。EIGOS 业务包在同一工作台注册排程、地图、三维对象、酒店行程与出行授权页面。独立客户通过 Foundry Gateway 的 `/workbench/` 使用自己的业务定义。
+
 ### 工作台账户登录
 
 在既有 Auth0 租户中为工作台使用 Native 类型的公开客户端，启用 Device Code grant、OIDC 和团队使用的连接。沿用 Gateway 的 issuer、audience 及 tenant claim。该客户端签发的 JWT 应包含该客户端的 `azp` 或 `client_id`、有效的 tenant claim 和 `ontology:read`。同一账号继续使用原有 owner 和 Ontology 权限。客户端访问 scope 与建模、审核或对象数据授权分别由身份提供方和 EIGOS 权限管理。
