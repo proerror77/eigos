@@ -6,7 +6,8 @@
  * Deployed to Auth0 by an operator; nothing in the gateway imports it. It runs on Auth0's Node 22 with the
  * global fetch and uses no npm package. Every setting is an Action secret:
  *
- *   EIGOS_AUDIENCES                 comma separated API identifiers that mean "an EIGOS API token is requested"
+ *   EIGOS_AUDIENCES                 comma separated API identifiers that mean "an EIGOS API token is requested",
+ *                                   for example https://<gateway>/mcp,https://<gateway>/a2a
  *   EIGOS_CLIENT_IDS                comma separated client IDs of the EIGOS applications: the account portal, Grok, …
  *   EIGOS_CONNECTIONS               comma separated connections the account portal signs in with, for example
  *                                   Username-Password-Authentication,google-oauth2
@@ -142,15 +143,32 @@ function createPostLogin({ fetch, now = Date.now }) {
     return response;
   };
 
-  /** The verified account with the user's email that ranks first, if it ranks before the user and the portal can sign in to it. */
-  const primaryFor = async (event, api, connections) => {
-    const response = await management(event, api, 'GET', `/api/v2/users-by-email?email=${encodeURIComponent(event.user.email)}`);
+  const fetchUsersByEmail = async (event, api, email) => {
+    const response = await management(event, api, 'GET', `/api/v2/users-by-email?email=${encodeURIComponent(email)}`);
     if (!response.ok) throw new Error(`Auth0 users-by-email request failed with status ${response.status}`);
     const users = await response.json();
     if (!Array.isArray(users)) throw new Error('Auth0 users-by-email response is not a list');
+    return users;
+  };
+
+  /**
+   * The verified account with the user's email that ranks first, if it ranks before the user and the portal can sign in to it.
+   * Auth0's users-by-email lookup is case-sensitive, so when the incoming email contains uppercase letters we also check its
+   * lowercase form (where social providers such as Google normally store addresses) without adding a second request for lowercase emails.
+   */
+  const primaryFor = async (event, api, connections) => {
+    const email = event.user.email;
+    const lower = email.toLowerCase();
+    const users = await fetchUsersByEmail(event, api, email);
+    if (lower !== email) {
+      const seen = new Set(users.map(user => user.user_id));
+      for (const user of await fetchUsersByEmail(event, api, lower)) {
+        if (!seen.has(user.user_id)) users.push(user);
+      }
+    }
     return users
       .filter(user => user.user_id !== event.user.user_id && user.email_verified === true
-        && portalConnection(user, connections) !== undefined && ranksBefore(user, event.user))
+        && sameEmail(user.email, email) && portalConnection(user, connections) !== undefined && ranksBefore(user, event.user))
       .sort((a, b) => ranksBefore(a, b) ? -1 : ranksBefore(b, a) ? 1 : 0)[0];
   };
 
@@ -174,8 +192,10 @@ function createPostLogin({ fetch, now = Date.now }) {
     // becoming another account. Refresh exchanges cannot redirect, so they do not look for duplicates. No request parameter may
     // switch the check off, because the caller controls them: the link verification login is checked like any other, and passes
     // because it signs in as the account that ranks first, so nobody ranks before it.
+    const hasEmail = typeof event.user.email === 'string' && event.user.email.trim() !== '';
+    const hasSingleIdentity = Array.isArray(event.user.identities) && event.user.identities.length === 1;
     const looksForDuplicates = event.transaction?.protocol !== 'oauth2-refresh-token'
-      && event.user.email_verified === true && event.user.identities.length === 1;
+      && event.user.email_verified === true && hasEmail && hasSingleIdentity;
     const connections = looksForDuplicates ? list(event, 'EIGOS_CONNECTIONS') : [];
     const primary = looksForDuplicates ? await primaryFor(event, api, connections) : undefined;
     if (primary) {
@@ -200,8 +220,10 @@ function createPostLogin({ fetch, now = Date.now }) {
     } catch {
       // An invalid, expired or missing token leaves primaryId unset and is refused below.
     }
-    // Only a verified account is ever merged. The Action pauses only such logins, but the merge does not rely on that.
-    if (event.user.email_verified !== true || typeof primaryId !== 'string' || primaryId === '') return refuse(api);
+    const identity = Array.isArray(event.user.identities) && event.user.identities.length === 1 ? event.user.identities[0] : undefined;
+    // Only a verified single-identity account is ever merged. The Action pauses only such logins, but the merge does not rely on that.
+    if (event.user.email_verified !== true || typeof primaryId !== 'string' || primaryId === ''
+      || !identity?.provider || !identity?.user_id) return refuse(api);
 
     const response = await management(event, api, 'GET', `/api/v2/users/${encodeURIComponent(primaryId)}`);
     const primary = response.ok ? await response.json() : undefined;
@@ -225,7 +247,6 @@ function createPostLogin({ fetch, now = Date.now }) {
       if (!stamp.ok) return refuse(api);
     }
 
-    const identity = event.user.identities[0];
     const linked = await management(event, api, 'POST', `/api/v2/users/${encodeURIComponent(primaryId)}/identities`,
       { provider: identity.provider, user_id: identity.user_id });
     if (!linked.ok) return refuse(api);

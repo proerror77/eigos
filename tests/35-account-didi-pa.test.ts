@@ -103,7 +103,12 @@ test('two personal PA instances can claim only one authorized DiDi order from th
     await setGrants(f.db, 'account-actions:' + owner, grants);
     const { cookie } = await g.login(user, email);
     assert(await g.accounts.approveApplication(owner, email));
-    const token = (await (await g.form('agent-token', cookie)).text()).match(/Bearer (eigos_agent_[A-Za-z0-9_-]{43})/)?.[1];
+    const tokenRes = await g.form('agent-token', cookie);
+    assert.equal(tokenRes.status, 303);
+    const flash = tokenRes.headers.getSetCookie().find(value => value.startsWith('__Host-eigos-account-token='))?.split(';')[0];
+    assert(flash);
+    const tokenHtml = await (await fetch(g.url + '/account', { headers: { Cookie: `${cookie}; ${flash}` } })).text();
+    const token = tokenHtml.match(/id="agent-token" readonly value="(eigos_agent_[A-Za-z0-9_-]{43})"/)?.[1];
     assert(token);
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', g.url),
       { requestInit: { headers: { Authorization: 'Bearer ' + token } } }));

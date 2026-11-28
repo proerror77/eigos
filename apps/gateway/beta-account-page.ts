@@ -24,7 +24,7 @@ const styles = `
   h1 { font: 800 clamp(2rem, 4.2vw, 3.65rem)/1.16 Arial, system-ui, sans-serif; letter-spacing: -.04em; }
   h2 { font-size: clamp(1.5rem, 3vw, 2.15rem); line-height: 1.25; letter-spacing: -.035em; }
   h3 { font-size: 1.05rem; line-height: 1.3; }
-  .hero-main > p, .hero-main > form, .hero-main > details, .hero-main > .connections { margin-top: 1rem; }
+  .hero-main > p, .hero-main > form, .hero-main > details, .hero-main > .connections, .hero-main > .token-panel { margin-top: 1rem; }
   .lead { max-width: 31rem; color: #cbd0d2; }
   .actions { display: flex; align-items: center; gap: .75rem 1.25rem; flex-wrap: wrap; }
   .hero-main .actions { margin-top: 1.5rem; }
@@ -63,11 +63,19 @@ const styles = `
   textarea { resize: vertical; }
   .beta-form button { justify-self: start; }
   details { padding-block: .7rem; border-top: 1px solid #4e5458; }
-  summary { width: fit-content; cursor: pointer; }
+  summary { width: fit-content; cursor: pointer; font-weight: 650; }
   details form { margin-top: .65rem; }
   .connections { display: grid; gap: 1rem; }
   .connections > section { padding-block: .65rem; border-top: 1px solid #4e5458; }
   .connections :is(p, form, dl) { margin-top: .5rem; }
+  .token-panel { padding: 1.1rem; border: 1px solid var(--signal); border-radius: .65rem; background: #242b31; }
+  .token-panel h2 { font-size: 1.15rem; letter-spacing: 0; }
+  .token-panel > p { margin-top: .45rem; color: #cbd0d2; font-size: .93rem; }
+  .token-field { margin-top: .85rem; }
+  .token-field label { display: block; font-weight: 650; font-size: .9rem; }
+  .token-field :is(input, textarea) { margin-top: .3rem; font: .85rem/1.45 ui-monospace, monospace; }
+  .token-panel .actions, .token-field .actions { margin-top: .55rem; }
+  .hero-main .copy-status { color: #cbd0d2; }
   code { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
   dt { font-weight: 650; }
   dd { margin: 0 0 .5rem; overflow-wrap: anywhere; }
@@ -96,11 +104,16 @@ const styles = `
   }
 `;
 
-const steps = ['验证邮箱并登录', 'Waiting List · 等待审核', '连接自己的 Agent'] as const;
+const inviteSteps = ['验证邮箱并登录', 'Waiting List · 等待审核', '连接自己的 Agent'] as const;
+const openSteps = ['验证邮箱并登录', '连接自己的 Agent'] as const;
 export type BetaStep = 1 | 2 | 3;
 
-export function betaAccountPage(heading: string, content: string, step: BetaStep, guide: string, footer: string) {
-  const timeline = steps.map((label, index) => `<li${index + 1 === step ? ' aria-current="step"' : ''}>
+export function betaAccountPage(heading: string, content: string, step: BetaStep, guide: string, footer: string,
+  mode: 'invite' | 'open' = 'invite') {
+  const steps = mode === 'open' ? openSteps : inviteSteps;
+  const activeStep = mode === 'open' && step === 3 ? 2 : step;
+  const pathHeading = mode === 'open' ? '接入流程' : '内测流程';
+  const timeline = steps.map((label, index) => `<li${index + 1 === activeStep ? ' aria-current="step"' : ''}>
     <span class="step-number" aria-hidden="true">0${index + 1}</span><span class="step-label">${label}</span></li>`).join('');
   return `<!doctype html>
   <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -111,7 +124,7 @@ export function betaAccountPage(heading: string, content: string, step: BetaStep
   <main class="shell">
     <section class="hero" aria-labelledby="account-heading">
       <div class="hero-main"><h1 id="account-heading">${heading}</h1>${content}</div>
-      <aside class="path" aria-labelledby="path-heading"><h2 id="path-heading">内测流程</h2><ol>${timeline}</ol></aside>
+      <aside class="path" aria-labelledby="path-heading"><h2 id="path-heading">${pathHeading}</h2><ol>${timeline}</ol></aside>
     </section>
     ${guide}
     ${footer ? `<footer class="portal-footer">${footer}</footer>` : ''}
