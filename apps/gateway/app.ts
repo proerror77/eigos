@@ -20,7 +20,8 @@ import { mountAccountPortal, type auth0AccountLogin } from './account-portal.js'
 import { auth0Management, type Auth0Management } from './auth0-management.js';
 import { verifier, type VerifyToken } from './auth.js';
 import { createHostApp, type BusinessAdapter } from './host.js';
-import { agentCard } from './a2a.js';
+import { eigosAgentCard, mountA2AProtectedResourceMetadata } from './a2a-eigos.js';
+import { mountBuilderMcp, registerConsumerMcpTools } from './mcp-consumer.js';
 
 const rideQuoteRequestSchema = completeWithActionRequestSchema.pick({ requestId: true }).extend({
   ontology: z.literal('Eigos').optional(),
@@ -63,8 +64,11 @@ export function eigosApp(config: Config, db: Database, capabilities: import('../
       const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
       return [quoteOnly ? rideQuoteInstructions : '', taskInstructions].filter(Boolean).join(' ');
     },
-    card: agentCard(config.PUBLIC_URL),
-    profile(app) { app.get(SHOPIFY_AGENT_PROFILE_PATH, (_req, res) => res.json(shopifyCatalogProfile())); },
+    card: eigosAgentCard(config.PUBLIC_URL, config, capabilities),
+    profile(app) {
+      app.get(SHOPIFY_AGENT_PROFILE_PATH, (_req, res) => res.json(shopifyCatalogProfile()));
+      mountA2AProtectedResourceMetadata(app, config);
+    },
     mountPortal: (app, members) => mountAccountPortal(app, config, members, accountLogin, management ?? auth0Management(config)),
     mountWorkbench: app => mountWorkbench(app, config, verify),
     submitDescription: 'Submit a natural-language goal. To batch rapid messages, pass the same conversationId from your chat host and a distinct, stable requestId per message. Set learnHotelWorkflow when asked to learn and save a hotel itinerary, or replayHotelWorkflow with a saved ID and new date when asked to reuse one. Forward the goal without proposing tool steps. PA information requests resume on the original task.',
@@ -84,6 +88,7 @@ export function eigosApp(config: Config, db: Database, capabilities: import('../
         res.json(publicTask(await tasks.answerInput(principal(req), String(req.params.id), req.body))));
       app.post('/tasks/:id/place-amendment', async (req, res) =>
         res.json(publicTask(await amendPlace(tasks, metadata, principal(req), String(req.params.id), req.body))));
+      mountBuilderMcp(app, config, db, metadata, capabilities, principal);
     },
     registerTools({ server, tasks, metadata, p, member, quoteOnly, response, publicTask, authorize, completeQuote }) {
       if (quoteOnly) server.registerTool('complete_with_action', {
@@ -91,6 +96,7 @@ export function eigosApp(config: Config, db: Database, capabilities: import('../
         inputSchema: rideQuoteRequestSchema,
       }, input => response(() => completeQuote(input)));
       if (member) {
+        registerConsumerMcpTools({ server, db, tasks, metadata, capabilities, p, response, authorize, publicTask });
         server.registerTool('select_task_places', {
           description: 'Confirm the original task’s current place candidates after the user has reviewed them.',
           inputSchema: z.strictObject({ taskId: z.uuid(), places: placeSelectionSchema }),
