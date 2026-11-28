@@ -21,3 +21,6 @@ CMD ["node", "dist/apps/gateway/main.js"]
 
 FROM runtime AS worker
 CMD ["node", "dist/apps/worker/main.js"]
+
+FROM runtime AS indexer
+CMD ["node", "dist/apps/indexer/main.js"]

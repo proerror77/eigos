@@ -33,7 +33,13 @@ node dist/engine/apps/engine.js publish
 
 ## Linux VM 发行与隔离验收
 
-EIGOS 服务使用完整的 `Eigos` 定义及现有 Gateway 适配、业务连接器和 Worker。CI 的 `installed-vm` 作业在 Ubuntu 24.04 x86_64 打包，在仓库外安装两个副本并验证；通过后保留 `eigos-vm-linux-x64` 构建制品 14 天。包内的 `engine/` 是独立编译的公共代码、依赖锁和原生执行器，`solution/` 是业务代码、工作台资源和导出的 Ontology。二者各有内容摘要。安装器校验字节并拒绝路径冲突。生产发行可以复用同一流程生成优化构建。
+EIGOS 服务使用完整的 `Eigos` 定义及现有 Gateway 适配、业务连接器和 Worker。CI 的 `installed-vm` 作业在 Ubuntu 24.04 x86_64 打包，在仓库外安装两个副本并验证；原生执行器采用 Cargo release 配置。归档通过升级与恢复演练后，CI 保留 `eigos-vm-linux-x64-release-candidate-v1` 制品 14 天。包内的 `engine/` 是独立编译的公共代码、依赖锁和原生执行器，`solution/` 是业务代码、工作台资源和导出的 Ontology。二者各有内容摘要。安装器校验字节并拒绝路径冲突。
+
+### 正式发行与恢复证据
+
+在 Ubuntu CI 的独立 systemd 环境中，演练先安装带合成旧 Ontology 版本的基线，由测试 PA 保存地址。控制器用本次归档升级，在候选版本健康检查失败后停服，从 PostgreSQL dump 和状态目录备份还原，并切回旧代码。控制器执行 `recover` 后，原 PA 读回原任务和地址。再次应用同一份归档时，演练在安装完成后丢弃适配器回执，由 `verify` 核对候选现场，再用原 PA 回读。证据文件 `vm-rehearsal.json` 记录两个归档摘要、活动 Release、任务 ID 和各段演练耗时。该站点使用本机连接与合成数据，正式 Staging 仍需单独验收站点备份、入口和凭据。
+
+正式发行由操作员在获准后执行。选定当前 `main` 的成功 push CI，在该提交上创建并推送 `vm-<提交前12位>` 标签，然后从 `main` 手动运行 **Publish verified EIGOS VM archive**，填入该次 CI run ID。工作流核对标签、CI 来源、包内版本、演练证据与整个归档摘要，将归档、校验文件和演练记录上传到同一 GitHub Release。需要独立审批时，在仓库为 `eigos-vm-release` 环境配置审核者。环境部署时以该 Release 中的 SHA-256 建立计划。
 
 ### 在构建机上复现
 

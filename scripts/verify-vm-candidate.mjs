@@ -1,0 +1,31 @@
+// Check the same files on the CI runner and after downloading its artifact for publication.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const [dir, source] = process.argv.slice(2);
+assert.match(source, /^[a-f0-9]{40}$/);
+const name = 'eigos-vm-linux-x64.tar.gz';
+const archive = join(dir, name);
+const hash = createHash('sha256');
+for await (const chunk of createReadStream(archive)) hash.update(chunk);
+const digest = hash.digest('hex');
+assert.equal(await readFile(archive + '.sha256', 'utf8'), digest + '  ' + name + '\n');
+const result = JSON.parse(await readFile(join(dir, 'vm-rehearsal.json'), 'utf8'));
+assert.equal(result.source, source);
+assert.equal(result.archiveSha256, digest);
+assert.equal(result.restored, true);
+assert.equal(result.reconciled, true);
+assert.ok(result.originalTask && result.baselineRelease && result.candidateRelease);
+assert.notEqual(result.baselineRelease, result.candidateRelease);
+const release = JSON.parse(execFileSync('tar', ['-xzOf', archive, './release.json'], { encoding: 'utf8' }));
+assert.equal(release.format, 'eigos-vm-v1');
+assert.equal(release.source, source);
+assert.equal(release.platform, 'linux-x64');
+assert.equal(release.solutionVersion, JSON.parse(await readFile('package.json', 'utf8')).version);
+assert.deepEqual(release.foundry, JSON.parse(await readFile('vendor/mdn-foundry/manifest.json', 'utf8')));
+for (const key of ['kernel', 'function-host']) assert.match(release.native[key].sha256, /^[a-f0-9]{64}$/);
+console.log('Verified EIGOS VM archive ' + digest + ' for ' + source);

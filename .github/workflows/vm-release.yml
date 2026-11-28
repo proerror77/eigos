@@ -1,0 +1,42 @@
+name: Publish verified EIGOS VM archive
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful main push CI run for the tagged release commit
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: eigos-vm-release
+    concurrency: eigos-vm-release
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release provenance and publish the rehearsed archive
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          tag="vm-${GITHUB_SHA:0:12}"
+          [[ "$(git rev-parse "refs/tags/$tag^{commit}")" == "$GITHUB_SHA" ]]
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" | jq -e --arg sha "$GITHUB_SHA" \
+            '.path == ".github/workflows/ci.yml" and .event == "push" and .head_branch == "main" and .head_sha == $sha and .conclusion == "success"'
+          gh run download "$RUN_ID" -n eigos-vm-linux-x64-release-candidate-v1 -D candidate
+          node scripts/verify-vm-candidate.mjs candidate "$GITHUB_SHA"
+          gh release create "$tag" --verify-tag --title "EIGOS VM ${GITHUB_SHA:0:12}" \
+            --notes "Verified Linux x64 VM archive from main CI run $RUN_ID, source $GITHUB_SHA." \
+            candidate/eigos-vm-linux-x64.tar.gz candidate/eigos-vm-linux-x64.tar.gz.sha256 candidate/vm-rehearsal.json
