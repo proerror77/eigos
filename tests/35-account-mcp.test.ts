@@ -12,8 +12,13 @@ import { accountGroup, Accounts } from '../packages/runtime/accounts.js';
 import { accountGateway, type AccountGateway } from './account-harness.js';
 import { fixture, route } from './fixture.js';
 
-const accountMcpTools = ['apply_ontology_action', 'claim_task_dispatch', 'complete_with_action', 'describe_ontology', 'execute_ontology', 'get_task', 'query_ontology', 'respond_to_task',
-  'search_restaurants', 'select_task_places', 'submit_task', 'supply_task_input'];
+const accountMcpTools = [
+  'action_FindRestaurants', 'action_SearchFliggyFlights', 'action_SearchFliggyHotels',
+  'apply_ontology_action', 'cancel_task', 'claim_task_dispatch', 'complete_with_action', 'describe_ontology', 'execute_ontology',
+  'function_readFliggyFlights', 'function_readFliggyHotels', 'function_readMapPlace', 'function_readRestaurantSearch',
+  'function_readServiceSearch', 'function_readServiceSearchPages', 'function_readWeather', 'function_searchMapPlaces',
+  'get_task', 'query_ontology', 'respond_to_task', 'search_restaurants', 'select_task_places', 'submit_task', 'supply_task_input',
+];
 
 test('invited accounts use OAuth and portable MCP/A2A access with shared Beta capabilities and owner isolation', async () => {
   const departureDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
