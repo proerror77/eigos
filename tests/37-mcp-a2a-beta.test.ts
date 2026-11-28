@@ -100,7 +100,7 @@ test('Beta MCP consumer tools, A2A AgentCard/PRM, cross-protocol cancel, and /mc
 
     await syncAccountGrants(f.db, f.model);
 
-    // 1. A2A AgentCard exposes dynamic EIGOS skills + Bearer, OAuth2, and OpenID Connect security schemes.
+    // 1. A2A AgentCard exposes dynamic EIGOS skills and only the Bearer security scheme accepted by /a2a.
     const cardResponse = await gateway.call('/.well-known/agent-card.json');
     assert.equal(cardResponse.status, 200);
     const card = await cardResponse.json();
@@ -110,23 +110,9 @@ test('Beta MCP consumer tools, A2A AgentCard/PRM, cross-protocol cancel, and /mc
     for (const expectedSkill of ['mapsAndWeather', 'dining', 'travelOffers', 'rideQuote', 'schedulePlanning']) {
       assert(skillIds.has(expectedSkill), `Expected AgentCard skill ${expectedSkill}, got ${[...skillIds].join(', ')}`);
     }
+    assert.deepEqual(Object.keys(card.securitySchemes), ['bearer']);
     assert.equal(card.securitySchemes.bearer.httpAuthSecurityScheme.scheme, 'Bearer');
-    assert.equal(
-      card.securitySchemes.oauth2.oauth2SecurityScheme.flows.authorizationCode.authorizationUrl,
-      `${gateway.config.OAUTH_ISSUER}authorize?audience=${encodeURIComponent(gateway.config.PUBLIC_URL + '/a2a')}`,
-    );
-    assert.equal(
-      card.securitySchemes.oauth2.oauth2SecurityScheme.flows.authorizationCode.tokenUrl,
-      `${gateway.config.OAUTH_ISSUER}oauth/token`,
-    );
-    assert.deepEqual(
-      Object.keys(card.securitySchemes.oauth2.oauth2SecurityScheme.flows.authorizationCode.scopes).sort(),
-      ['tasks:read', 'tasks:write'],
-    );
-    assert.equal(
-      card.securitySchemes.openIdConnect.openIdConnectSecurityScheme.openIdConnectUrl,
-      `${gateway.config.OAUTH_ISSUER}.well-known/openid-configuration`,
-    );
+    assert.deepEqual(card.securityRequirements, [{ schemes: { bearer: {} } }]);
 
     // 2. RFC 9728 Protected Resource Metadata for /a2a.
     const a2aPrmResponse = await gateway.call('/.well-known/oauth-protected-resource/a2a');

@@ -92,16 +92,12 @@ function summarizeProfile(profile: AgentProfile): { id: string; name: string; de
   };
 }
 
-function normalizeIssuer(issuer: string): string {
-  return issuer.endsWith('/') ? issuer : issuer + '/';
-}
-
 /**
  * Builds the EIGOS A2A AgentCard with dynamic skills derived from published EIGOS
- * `agentProfiles` (plus any runtime `publicSkills`) and full `bearer` + `oauth2` + `openIdConnect`
- * security schemes when `OAUTH_ISSUER` is configured.
+ * `agentProfiles` (plus any runtime `publicSkills`) and the `bearer` security scheme
+ * accepted by the A2A gateway (`eigos_agent_*` PA tokens and first-party OAuth 2.0 JWTs).
  */
-export function eigosAgentCard(publicUrl: string, config: Config, capabilities?: InstalledRuntime): AgentCard {
+export function eigosAgentCard(publicUrl: string, capabilities?: InstalledRuntime): AgentCard {
   const skillsById = new Map<string, { id: string; name: string; description: string; tags: string[] }>();
 
   for (const profile of businessAgentProfiles) {
@@ -123,8 +119,8 @@ export function eigosAgentCard(publicUrl: string, config: Config, capabilities?:
     bearer: {
       httpAuthSecurityScheme: {
         scheme: 'Bearer',
-        bearerFormat: 'JWT or eigos_agent token',
-        description: 'Bearer authentication using an OAuth 2.0 JWT or an EIGOS persistent PA token (eigos_agent_*).',
+        bearerFormat: 'eigos_agent token or JWT',
+        description: 'Bearer authentication using an EIGOS persistent PA token (eigos_agent_*) or a first-party OAuth 2.0 JWT.',
       },
     },
   };
@@ -132,37 +128,6 @@ export function eigosAgentCard(publicUrl: string, config: Config, capabilities?:
   const securityRequirements: Array<{ schemes: Record<string, { list: string[] }> }> = [
     { schemes: { bearer: { list: [] } } },
   ];
-
-  if (config.OAUTH_ISSUER) {
-    const issuer = normalizeIssuer(config.OAUTH_ISSUER);
-    const a2aResource = `${publicUrl}/a2a`;
-    securitySchemes.oauth2 = {
-      oauth2SecurityScheme: {
-        description: 'OAuth 2.0 Authorization Code flow with PKCE for EIGOS A2A.',
-        oauth2MetadataUrl: `${issuer}.well-known/oauth-authorization-server`,
-        flows: {
-          authorizationCode: {
-            authorizationUrl: `${issuer}authorize?audience=${encodeURIComponent(a2aResource)}`,
-            tokenUrl: `${issuer}oauth/token`,
-            scopes: {
-              'tasks:read': 'Read your EIGOS tasks, status updates, and results',
-              'tasks:write': 'Submit, respond to, and cancel your EIGOS tasks',
-            },
-          },
-        },
-      },
-    };
-    securitySchemes.openIdConnect = {
-      openIdConnectSecurityScheme: {
-        description: 'OpenID Connect Discovery for the EIGOS authorization server.',
-        openIdConnectUrl: `${issuer}.well-known/openid-configuration`,
-      },
-    };
-    securityRequirements.push(
-      { schemes: { oauth2: { list: [...accountTaskScopes] } } },
-      { schemes: { openIdConnect: { list: [] } } },
-    );
-  }
 
   return AgentCard.fromJSON({
     name: 'EIGOS',

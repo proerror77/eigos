@@ -64,7 +64,7 @@ export function eigosApp(config: Config, db: Database, capabilities: import('../
       const taskInstructions = member ? `The five shared Beta queries are ready without supplier setup. Discover authorized business Actions with describe_ontology. Keep the original task ID. When it is waiting for your PA, use respond_to_task with its exact request ID and response schema. For didi.authorize, check the user's own DiDi MCP connection. If it is missing, present input.authorizationUrl as a clickable link and keep the original request pending until the user returns. Keep all supplier keys in the PA's private configuration. For didi.read, use the requested tool and return the normalized observation and receipt. For ride.confirm_immediate_order, get human confirmation of the exact current fare and vehicle. For didi.place_order, use the PA's durable DiDi runner for the approved request. Present pa_reported results as received by the PA. ${paTravelInstructions}` : paTravelInstructions;
       return [quoteOnly ? rideQuoteInstructions : '', taskInstructions].filter(Boolean).join(' ');
     },
-    card: eigosAgentCard(config.PUBLIC_URL, config, capabilities),
+    card: eigosAgentCard(config.PUBLIC_URL, capabilities),
     profile(app) {
       app.get(SHOPIFY_AGENT_PROFILE_PATH, (_req, res) => res.json(shopifyCatalogProfile()));
       mountA2AProtectedResourceMetadata(app, config);

@@ -49,7 +49,7 @@ EIGOS Beta 账号采用两步极简接入流程：
 
 ### 3. A2A 接入与发现
 
-- **Agent Card**：`GET /.well-known/agent-card.json` 动态根据已发布的 EIGOS 能力与 Beta 查询生成 `skills`（覆盖天气、地点、餐厅、机票、酒店、打车估价、日程规划等），并声明 `bearer` 安全方案；配置 `OAUTH_ISSUER` 时，同时声明 `oauth2`（Authorization Code，`tasks:read` / `tasks:write`）与 `openIdConnect`（指向 `<OAUTH_ISSUER>.well-known/openid-configuration`）。
+- **Agent Card**：`GET /.well-known/agent-card.json` 动态根据已发布的 EIGOS 能力与 Beta 查询生成 `skills`（覆盖天气、地点、餐厅、机票、酒店、打车估价、日程规划等），并声明 `/a2a` 实际接受的 `bearer` 安全方案（`eigos_agent_*` 永久接入令牌或第一方 OAuth 2.0 JWT；在 Foundry 网关支持 `/a2a` 成员 OAuth 前不对外宣称 A2A OAuth 授权流）。
 - **Protected Resource Metadata**：配置 `OAUTH_ISSUER` 时，提供 `GET /.well-known/oauth-protected-resource/a2a`（RFC 9728 元数据）。
 - **任务与 Action 互通**：A2A 使用 `SendMessage` 提交自然语言文本任务，或使用单个 `parts[].data` 传入 `{ action: { action: "PublishedAction", input: {...} }, read?: { function, resultParameter } }`（也支持在 `action` 内用 `interface` 选择能力），复用 `messageId` 可回读同一任务。用 `GetTask` 读取任务，用带 `taskId` 和 `paResponse` 的 `SendMessage` 提交 PA 响应。同一账号通过 `/a2a` 与 `/mcp` 共享任务视图：可在 `/a2a` 提交任务，并在 `/mcp` 用 `get_task` 读取或 `cancel_task` 取消（反之亦然）。
 
