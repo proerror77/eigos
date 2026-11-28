@@ -1,3 +1,4 @@
+import type { ScenarioDecisionMemory } from '../packages/ontology/scenario-decision.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
@@ -108,7 +109,7 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
     }
 
     const first = await propose(0);
-    const firstReview = await first.review.inspectReview();
+    const firstReview = await first.review.inspectReview<ScenarioDecisionMemory>();
     const firstMemory = firstReview.decisionMemory;
     assert.ok(firstMemory);
     assert.deepEqual(firstMemory.prior, []);
@@ -139,7 +140,7 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
 
     const second = await propose(1);
     assert.notEqual(second.date, first.date);
-    const baselineReview = await second.review.inspectReview();
+    const baselineReview = await second.review.inspectReview<ScenarioDecisionMemory>();
     const baseline = baselineReview.decisionMemory;
     assert.ok(baseline);
     assert.deepEqual(baseline.prior, []);
@@ -176,7 +177,7 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
     assert.deepEqual(originalObservation?.ref, observation);
     const retrospective = transferResultSchema.parse((await graph.read(decision.ref)).properties.result);
 
-    const secondReview = await second.review.inspectReview();
+    const secondReview = await second.review.inspectReview<ScenarioDecisionMemory>();
     assert.deepEqual(secondReview.decisionMemory?.prior, [{
       decision: decision.ref, version: digest(retrospective), date: first.date, judgment, expectedBufferMinutes: 15,
       actualTravelMinutes: 35, actualBufferMinutes: 5, assessment: 'refuted', lesson, appliesWhen,
@@ -192,7 +193,7 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
 
     await setGrants(f.db, reviewer.owner, readGrants.filter(grant =>
       grant.resource !== 'Eigos/object/' + transferObservationType));
-    assert.deepEqual((await second.review.inspectReview()).decisionMemory?.prior, []);
+    assert.deepEqual((await second.review.inspectReview<ScenarioDecisionMemory>()).decisionMemory?.prior, []);
     await setGrants(f.db, reviewer.owner, readGrants);
     await second.proposal.apply({
       action: 'SaveScheduleActivity', requestId: 'apply-observed-travel-time',
@@ -200,7 +201,7 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
         id: 'meeting', name: baselineActivity.properties.name, start: updatedDeparture, end: comparison.arriveBy },
     });
     await assert.rejects(second.review.approveReview(secondReview.revision, secondReview.snapshot, { decision: judgment }), /review changed/);
-    const refreshed = await second.review.inspectReview();
+    const refreshed = await second.review.inspectReview<ScenarioDecisionMemory>();
     assert.equal(refreshed.decisionMemory?.prior[0]?.lesson, lesson);
     assert.equal(refreshed.decisionMemory?.departure, updatedDeparture);
     assert.equal(refreshed.decisionMemory?.arriveBy, comparison.arriveBy);
@@ -256,11 +257,11 @@ test('a confirmed hotel transfer lesson changes the next approved departure and 
     assert.equal(digest(originalFacts), retrospective.observationDigest);
 
     const later = await propose(2);
-    assert.equal((await later.review.inspectReview()).decisionMemory?.prior[0]?.version, adoptedLesson.version);
+    assert.equal((await later.review.inspectReview<ScenarioDecisionMemory>()).decisionMemory?.prior[0]?.version, adoptedLesson.version);
     await producerClient.service('submit_index', { ...reading, offset: 2, observedAt: minutesAfter(reading.observedAt, 1),
       rows: [{ ...reading.rows[0]!, arrivedAt: minutesAfter(firstMemory.departure, 36) }] });
     assert.equal(await new Indexing(f.db, f.metadata).runOne(), true);
-    assert.deepEqual((await later.review.inspectReview()).decisionMemory?.prior, []);
+    assert.deepEqual((await later.review.inspectReview<ScenarioDecisionMemory>()).decisionMemory?.prior, []);
     const history = await ownerClient.service<{ items: { source: string; after: Record<string, unknown> }[] }>(
       'edit_history', { object: originalReceipt.ref },
     );
