@@ -151,6 +151,8 @@ test('two separately installed EIGOS environments isolate saved homes, trip esti
         ).stdout.trim(),
       );
     const receipt = await cli('install');
+    assert.equal(receipt.solutionVersion, JSON.parse(await readFile('package.json', 'utf8')).version);
+    assert.deepEqual(receipt.foundry, JSON.parse(await readFile('vendor/mdn-foundry/manifest.json', 'utf8')));
     assert.deepEqual(await cli('install'), receipt);
     assert.deepEqual(await cli('verify', runtimeURL.href), receipt);
     const accounts = new Accounts(db, 'invite');

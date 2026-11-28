@@ -63,6 +63,8 @@ for (const [name, variable] of [
 if (Object.keys(native).length === 1) throw new Error('Supply both native binaries for the native VM profile');
 const release = {
   format: 'eigos-vm-v1',
+  solutionVersion: runtimePackage.version,
+  foundry: JSON.parse(await readFile('vendor/mdn-foundry/manifest.json', 'utf8')),
   source: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   platform: process.platform + '-' + process.arch,
   native: Object.keys(native).length ? native : null,
