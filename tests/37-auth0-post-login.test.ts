@@ -477,3 +477,69 @@ test('no link redirect for unverified duplicates, refresh tokens or the link ver
     assert.equal(management.requests.some(request => request.path === '/api/v2/users-by-email'), lookup, name);
   }
 });
+
+test('EIGOS_AUDIENCES supports both /mcp and /a2a audiences', async () => {
+  const bothAudiences = { ...secrets, EIGOS_AUDIENCES: 'https://eigos.example/mcp, https://eigos.example/a2a' };
+  const a2a = { secrets: bothAudiences, resource_server: { identifier: 'https://eigos.example/a2a' } };
+
+  // Unverified email is denied for /a2a just like /mcp.
+  const denied = fakeApi(), noLookup = fakeManagement([]);
+  await createPostLogin({ fetch: noLookup.fetch }).onExecutePostLogin(login({ ...newer, email_verified: false }, a2a), denied.api);
+  assert.deepEqual(denied.calls.deny, [notVerified]);
+  assert.deepEqual([denied.calls.idToken, denied.calls.accessToken, denied.calls.metadata], [{}, {}, []]);
+
+  // Verified email receives tenant claim in both ID and access tokens for /a2a.
+  const ok = fakeApi();
+  await createPostLogin({ fetch: fakeManagement([older]).fetch, now: () => at }).onExecutePostLogin(login(older, a2a), ok.api);
+  assert.deepEqual(ok.calls.deny, []);
+  assert.deepEqual([ok.calls.idToken, ok.calls.accessToken], [{ tenant_id: 'personal' }, { tenant_id: 'personal' }]);
+});
+
+test('mixed-case email also checks lowercase duplicate in users-by-email', async () => {
+  const mixedNewer: Profile = { ...newer, email: 'Amy@Example.Test' };
+  const { api, calls } = fakeApi(), management = fakeManagement([older, mixedNewer]);
+  await createPostLogin({ fetch: management.fetch }).onExecutePostLogin(login(mixedNewer), api);
+  assert.deepEqual(payloads(calls), [{ primary: 'google-oauth2|1', connection: 'google-oauth2' }]);
+  assert.deepEqual(
+    management.requests.filter(request => request.path === '/api/v2/users-by-email').map(request => request.query.email),
+    ['Amy@Example.Test', 'amy@example.test'],
+  );
+
+  // Already-lowercase email makes only a single lookup request.
+  const lowerRun = fakeApi(), lowerMgmt = fakeManagement([older, newer]);
+  await createPostLogin({ fetch: lowerMgmt.fetch }).onExecutePostLogin(login(newer), lowerRun.api);
+  assert.deepEqual(
+    lowerMgmt.requests.filter(request => request.path === '/api/v2/users-by-email').map(request => request.query.email),
+    ['amy@example.test'],
+  );
+});
+
+test('missing identities or email edge cases never crash execute or stamp on continue', async () => {
+  const noIdentities = { ...newer, identities: undefined as unknown as Profile['identities'] };
+  const emptyIdentities = { ...newer, identities: [] };
+  const missingEmail = { ...newer, email: '' };
+
+  for (const [name, user] of [['missing identities', noIdentities], ['empty identities', emptyIdentities], ['empty email', missingEmail]] as const) {
+    const { api, calls } = fakeApi(), management = fakeManagement([older, newer]);
+    await createPostLogin({ fetch: management.fetch }).onExecutePostLogin(login(user), api);
+    assert.deepEqual(calls.deny, [], name);
+    assert.deepEqual(calls.redirects, [], name);
+    assert.deepEqual(calls.idToken, { tenant_id: 'personal' }, name);
+    assert.equal(management.requests.length, 0, name);
+  }
+
+  // onContinuePostLogin refuses cleanly before stamping or linking when identities are missing, empty, or already linked.
+  const alreadyLinked = { ...newer, identities: [...newer.identities, { provider: 'google-oauth2', user_id: '3', connection: 'google-oauth2' }] };
+  const malformedIdentity = { ...newer, identities: [{ provider: '', user_id: '2', connection: 'Username-Password-Authentication' }] };
+  for (const [name, user] of [
+    ['missing identities', noIdentities],
+    ['empty identities', emptyIdentities],
+    ['already linked', alreadyLinked],
+    ['missing provider', malformedIdentity],
+  ] as const) {
+    const { api, calls } = fakeApi({ primary: older.user_id }), management = fakeManagement([older, newer]);
+    await createPostLogin({ fetch: management.fetch }).onContinuePostLogin(login(user), api);
+    assert.deepEqual(calls.deny, [notLinked], name);
+    assert.deepEqual([management.stamps, management.links, management.requests], [[], [], []], name);
+  }
+});
