@@ -147,11 +147,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Build the Gateway and Worker images without publishing them
+      - name: Build the Gateway, Worker and Indexer images without publishing them
         run: |
           docker build --target runtime --tag eigos-ci:runtime .
           docker build --target worker --tag eigos-ci:worker .
-      - run: scripts/container-smoke.sh eigos-ci:runtime eigos-ci:worker
+          docker build --target indexer --tag eigos-ci:indexer .
+      - run: scripts/container-smoke.sh eigos-ci:runtime eigos-ci:worker eigos-ci:indexer
   installed-vm:
     runs-on: ubuntu-24.04
     timeout-minutes: 65
